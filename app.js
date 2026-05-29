@@ -22,8 +22,13 @@ esriDarkLayer.addTo(map);
 
 // --- 6-Hour Loop Logic ---
 
-// Calculate timestamps for the past 6 hours
+// Get current time and snap it down to the nearest 15-minute mark
 const endTime = new Date();
+endTime.setMinutes(Math.floor(endTime.getMinutes() / 15) * 15);
+endTime.setSeconds(0);
+endTime.setMilliseconds(0);
+
+// Calculate start time (6 hours ago)
 const startTime = new Date(endTime.getTime() - 6 * 60 * 60 * 1000);
 const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
 
@@ -73,4 +78,4 @@ const overlays = {
 
 L.control.layers(baseMaps, overlays).addTo(map);
 
-console.log("Leaflet map initialized successfully with 6-hour loop and Esri basemap.");
+console.log("Leaflet map initialized successfully with time-snapped 6-hour loop and Esri basemap.");
