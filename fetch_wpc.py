@@ -7,6 +7,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 # ERO points to the live NOAA Enterprise GIS database
 ERO_REST_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query"
@@ -49,25 +50,74 @@ def fetch_and_process_ero():
 def fetch_and_process_mpds():
     print("Fetching active MPDs from WPC FTP...")
     try:
+        # 1. Scrape the reliable KML directory to find exactly what numbers are active
+        kml_url = f"https://www.wpc.ncep.noaa.gov/kml/mpd/?t={int(time.time())}"
+        try:
+            kml_resp = requests.get(kml_url, headers=NO_CACHE_HEADERS)
+            active_kml_nums = re.findall(r'mpd(\d{3,4})\.kml', kml_resp.text, re.IGNORECASE)
+            active_kml_nums = [int(n) for n in set(active_kml_nums)]
+        except:
+            active_kml_nums = []
+
+        # 2. Get zip filenames from the FTP HTML directory (which might be cached)
         cache_bust_url = f"{MPD_FTP_URL}?t={int(time.time())}"
         response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
-        response.raise_for_status()
         
-        # Clean regex: gets any zip file with 'mpd' in the name
         raw_links = re.findall(r'href="([^"]*mpd[^"]*\.zip)"', response.text, re.IGNORECASE)
         if not raw_links: return None
             
         zip_files = [link.split('/')[-1] for link in raw_links]
         
         def extract_mpd_num(filename):
-            match = re.search(r'\d+', filename)
+            match = re.search(r'\d{3,4}', filename)
             return int(match.group()) if match else 0
             
-        # Sort strictly by MPD number and grab the most recent 15
+        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
+        
+        # 3. KML SYNC: If the KML directory shows a new MPD that the FTP cache missed, add it!
+        if zip_files and active_kml_nums:
+            ftp_max_num = extract_mpd_num(zip_files[-1])
+            kml_max_num = max(active_kml_nums)
+            
+            if kml_max_num > ftp_max_num:
+                latest_format = zip_files[-1]
+                match = re.search(r'\d{3,4}', latest_format)
+                if match:
+                    num_length = len(match.group())
+                    for missing_num in range(ftp_max_num + 1, kml_max_num + 1):
+                        if missing_num in active_kml_nums:
+                            probe_filename = re.sub(r'\d{3,4}', str(missing_num).zfill(num_length), latest_format)
+                            zip_files.append(probe_filename)
+                            print(f"KML Sync: Bypassed FTP Cache to add missing MPD -> {probe_filename}")
+
+        # 4. SAFE LOOK-AHEAD PROBE: Guess the next 2 numbers just in case everything is cached
+        now = datetime.now(timezone.utc)
+        
+        if zip_files:
+            max_num = extract_mpd_num(zip_files[-1])
+            latest_format = zip_files[-1]
+            match = re.search(r'\d{3,4}', latest_format)
+            
+            if match:
+                num_length = len(match.group())
+                for offset in range(1, 3):
+                    probe_num = max_num + offset
+                    probe_filename = re.sub(r'\d{3,4}', str(probe_num).zfill(num_length), latest_format)
+                    probe_url = f"{MPD_FTP_URL}{probe_filename}?t={int(time.time())}"
+                    
+                    head_resp = requests.head(probe_url, headers=NO_CACHE_HEADERS)
+                    if head_resp.status_code == 200:
+                        last_mod = head_resp.headers.get("Last-Modified")
+                        if last_mod:
+                            file_time = parsedate_to_datetime(last_mod)
+                            # CRITICAL: Only accept if the file was generated in the last 24 hours (prevents old files)
+                            if (now - file_time).total_seconds() < 86400:
+                                print(f"Proactive Cache Bypass: Found NEW active MPD -> {probe_filename}")
+                                zip_files.append(probe_filename)
+        
         zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
         recent_zips = zip_files[-15:]
         
-        now = datetime.now(timezone.utc)
         mpd_gdfs = []
         
         for zip_filename in recent_zips:
@@ -87,20 +137,24 @@ def fetch_and_process_mpds():
                     shp_path = os.path.join(tmp_dir, shp_files[0])
                     gdf = gpd.read_file(shp_path)
                     
-                    # CRITICAL FIX: Force columns to uppercase so the expiration check never fails
-                    gdf.columns = gdf.columns.str.upper()
+                    # Safely map columns to uppercase to find expiration without ruining the original metadata for the frontend
+                    col_map = {c.strip().upper(): c for c in gdf.columns}
+                    expire_col = next((col_map[c] for c in ["EXPIRE", "EXPIRATION", "END_TIME"] if c in col_map), None)
                     
-                    if "EXPIRE" in gdf.columns:
+                    if expire_col:
                         def parse_wpc_time(t):
                             t_str = str(t).strip().split('.')[0]
                             try:
                                 if len(t_str) == 10: return datetime.strptime(t_str, "%y%m%d%H%M").replace(tzinfo=timezone.utc)
                                 if len(t_str) == 12: return datetime.strptime(t_str, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+                                parsed = pd.to_datetime(t_str)
+                                return parsed.tz_localize('UTC') if parsed.tzinfo is None else parsed.tz_convert('UTC')
                             except: pass
                             return pd.NaT
 
-                        gdf["expire_dt"] = gdf["EXPIRE"].apply(parse_wpc_time)
-                        gdf = gdf[gdf["expire_dt"] > now]
+                        gdf["expire_dt"] = gdf[expire_col].apply(parse_wpc_time)
+                        # Keep polygon if it is mathematically active OR if time parsing fails (safe fallback to prevent false drops)
+                        gdf = gdf[(gdf["expire_dt"] > now) | (gdf["expire_dt"].isna())]
                         
                         if gdf.empty:
                             print(f"  -> MPD {zip_filename} Expired. Dropping.")
