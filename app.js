@@ -11,15 +11,16 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     attribution: '© OpenStreetMap contributors'
 });
 
-const darkMatterLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+// New Esri Dark Gray Basemap (Better state borders!)
+const esriDarkLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 16,
-    attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors'
+    attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
 
 // Add default basemap to the map
-darkMatterLayer.addTo(map);
+esriDarkLayer.addTo(map);
 
-// --- NEW: 6-Hour Loop Logic ---
+// --- 6-Hour Loop Logic ---
 
 // Calculate timestamps for the past 6 hours
 const endTime = new Date();
@@ -43,12 +44,12 @@ L.control.timeDimension({
     }
 }).addTo(map);
 
-// Define IEM WMS Base Reflectivity Radar Layer
+// Define IEM WMS Base Reflectivity Radar Layer (Time-Enabled)
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
-    layers: 'layers: 'nexrad-n0q-wmst',
+    layers: 'nexrad-n0q-wmst',
     format: 'image/png',
     transparent: true,
-    opacity: 0.6, // Slight transparency so basemap features are visible
+    opacity: 0.6,
     attribution: "Weather data © IEM Nexrad"
 });
 
@@ -60,11 +61,9 @@ const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, {
 // Add radar to map by default
 radarTimeLayer.addTo(map);
 
-// --- END NEW ---
-
 // Create layer controls so users can toggle basemaps and overlays
 const baseMaps = {
-    "Dark Mode": darkMatterLayer,
+    "Esri Dark Gray": esriDarkLayer,
     "OpenStreetMap": osmLayer
 };
 
@@ -74,4 +73,4 @@ const overlays = {
 
 L.control.layers(baseMaps, overlays).addTo(map);
 
-console.log("Leaflet map initialized with 6-Hour IEM Radar Loop.");
+console.log("Leaflet map initialized successfully with 6-hour loop and Esri basemap.");
