@@ -47,16 +47,20 @@ def fetch_and_process_ero():
         return None
 
 def fetch_and_process_mpds():
-    print("Fetching active MPDs from WPC FTP using KML Sync...")
+    print("Fetching active MPDs from WPC FTP...")
     try:
-        # 1. Scrape the reliable KML directory to find exactly what numbers are active
+        # 1. Scrape the KML directory to find exactly what numbers WPC considers active
         kml_url = f"https://www.wpc.ncep.noaa.gov/kml/mpd/?t={int(time.time())}"
+        active_kml_nums = []
         try:
             kml_resp = requests.get(kml_url, headers=NO_CACHE_HEADERS)
-            active_kml_nums = re.findall(r'mpd(\d{3,4})\.kml', kml_resp.text, re.IGNORECASE)
-            active_kml_nums = [int(n) for n in set(active_kml_nums)]
+            # Find any number associated with an MPD kml file
+            for match in re.finditer(r'mpd.*?(\d{3,4}).*?\.kml', kml_resp.text, re.IGNORECASE):
+                active_kml_nums.append(int(match.group(1)))
+            active_kml_nums = list(set(active_kml_nums))
+            print(f"Active MPDs according to WPC KML Directory: {active_kml_nums}")
         except:
-            active_kml_nums = []
+            print("Warning: Could not fetch KML directory for sync.")
 
         # 2. Get zip filenames from the FTP HTML directory
         cache_bust_url = f"{MPD_FTP_URL}?t={int(time.time())}"
@@ -71,25 +75,6 @@ def fetch_and_process_mpds():
             match = re.search(r'\d{3,4}', filename)
             return int(match.group()) if match else 0
             
-        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
-        
-        # 3. KML SYNC: If the KML directory shows a new MPD that the FTP cache missed, add it!
-        if zip_files and active_kml_nums:
-            ftp_max_num = extract_mpd_num(zip_files[-1])
-            kml_max_num = max(active_kml_nums)
-            
-            if kml_max_num > ftp_max_num:
-                latest_format = zip_files[-1]
-                match = re.search(r'\d{3,4}', latest_format)
-                if match:
-                    num_length = len(match.group())
-                    for missing_num in range(ftp_max_num + 1, kml_max_num + 1):
-                        if missing_num in active_kml_nums:
-                            probe_filename = re.sub(r'\d{3,4}', str(missing_num).zfill(num_length), latest_format)
-                            zip_files.append(probe_filename)
-                            print(f"KML Sync: Bypassed FTP Cache to add missing MPD -> {probe_filename}")
-
-        # Limit to the last 15 files to prevent downloading the whole archive
         zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
         recent_zips = zip_files[-15:]
         
@@ -113,9 +98,20 @@ def fetch_and_process_mpds():
                     shp_path = os.path.join(tmp_dir, shp_files[0])
                     gdf = gpd.read_file(shp_path)
                     
-                    # Safely map columns to uppercase to find expiration
+                    # PRINT THE COLUMNS TO THE LOG SO WE CAN SEE WPC's EXACT NAMING SCHEMA
+                    print(f"  -> Shapefile Columns found: {list(gdf.columns)}")
+                    
                     col_map = {c.strip().upper(): c for c in gdf.columns}
-                    expire_col = next((col_map[c] for c in ["EXPIRE", "EXPIRATION", "END_TIME"] if c in col_map), None)
+                    
+                    # Broadened search for the expiration column
+                    expire_col = next((col_map[c] for c in ["EXPIRE", "EXPIRATION", "END_TIME", "END", "EXP", "VALID_TO"] if c in col_map), None)
+                    if not expire_col:
+                        for c in col_map:
+                            if "EXP" in c or "END" in c:
+                                expire_col = col_map[c]
+                                break
+                    
+                    mpd_num = extract_mpd_num(zip_filename)
                     
                     if expire_col:
                         def parse_wpc_time(t):
@@ -123,23 +119,22 @@ def fetch_and_process_mpds():
                             try:
                                 if len(t_str) == 10: return datetime.strptime(t_str, "%y%m%d%H%M").replace(tzinfo=timezone.utc)
                                 if len(t_str) == 12: return datetime.strptime(t_str, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
-                                parsed = pd.to_datetime(t_str)
-                                return parsed.tz_localize('UTC') if parsed.tzinfo is None else parsed.tz_convert('UTC')
                             except: pass
                             return pd.NaT
 
                         gdf["expire_dt"] = gdf[expire_col].apply(parse_wpc_time)
-                        
-                        # STRICT FILTER: MUST be explicitly active. Drops everything else mathematically.
-                        # gdf = gdf[gdf["expire_dt"] > now]
+                        gdf = gdf[gdf["expire_dt"] > now]
                         
                         if gdf.empty:
-                            print(f"  -> MPD {zip_filename} Expired or invalid. Dropping.")
+                            print(f"  -> MPD {zip_filename} mathematically expired. Dropping.")
                             continue
-                            
                     else:
-                        print(f"  -> Warning: No expiration column found for {zip_filename}. Dropping to be safe.")
-                        continue
+                        # KML TRUST FALLBACK: If we can't find the column, check the active KML list!
+                        if mpd_num not in active_kml_nums:
+                            print(f"  -> No expiration column found AND not on active KML list. Dropping.")
+                            continue
+                        else:
+                            print(f"  -> No expiration column found, BUT it is on the active KML list! Trusting WPC and keeping.")
                         
                     print(f"  -> MPD {zip_filename} Active! Adding to dashboard.")
                     gdf = gdf.to_crs("EPSG:4326")
