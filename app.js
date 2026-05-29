@@ -11,9 +11,9 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     attribution: '© OpenStreetMap contributors'
 });
 
-const darkMatterLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors, © CARTO'
+const darkMatterLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 16,
+    attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors'
 });
 
 // Add default basemap to the map
@@ -45,7 +45,7 @@ L.control.timeDimension({
 
 // Define IEM WMS Base Reflectivity Radar Layer
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
-    layers: 'nexrad-n0q-900913',
+    layers: 'layers: 'nexrad-n0q-wmst',
     format: 'image/png',
     transparent: true,
     opacity: 0.6, // Slight transparency so basemap features are visible
