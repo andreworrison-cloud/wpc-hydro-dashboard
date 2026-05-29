@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write # Grants the action permission to push the file to the repo
 
+# Fixes the Node.js 20 deprecation warning
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   update-data:
     runs-on: ubuntu-latest
@@ -33,7 +37,11 @@ jobs:
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-        git add wpc_data.geojson
         
-        # This ensures the bot only tries to commit if the python script actually created/updated the file
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update WPC real-time data" && git push)
+        # Only attempt to add and commit if the Python script successfully created the file
+        if [ -f wpc_data.geojson ]; then
+          git add wpc_data.geojson
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update WPC real-time data" && git push)
+        else
+          echo "No wpc_data.geojson file found. Skipping commit to prevent workflow crash."
+        fi
