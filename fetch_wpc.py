@@ -13,7 +13,6 @@ ERO_REST_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazard
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 OUTPUT_FILENAME = "wpc_data.geojson"
 
-# Aggressive headers to prevent any intermediate caching
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
@@ -29,9 +28,7 @@ def fetch_and_process_ero():
         response.raise_for_status()
         
         gdf = gpd.read_file(response.text, driver="GeoJSON")
-        
-        if gdf.empty or gdf.geometry.is_empty.all():
-            return None
+        if gdf.empty or gdf.geometry.is_empty.all(): return None
             
         gdf = gdf[~gdf.geometry.is_empty]
         gdf["dataType"] = "ERO"
@@ -57,19 +54,41 @@ def fetch_and_process_mpds():
         response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
-        # 2. FIXED REGEX: Safely catches files like 'MPD_0271_final.zip'
-        zip_files = re.findall(r'href="(mpd[^"]*\.zip)"', response.text, re.IGNORECASE)
-        if not zip_files: 
+        # BULLETPROOF REGEX: Handles absolute paths, relative paths, and case-insensitivity
+        raw_links = re.findall(r'href="([^"]*mpd[^"]*\.zip)"', response.text, re.IGNORECASE)
+        if not raw_links:
+            print("No MPD zip files found in the directory HTML.")
             return None
             
-        # 3. Safely extract the MPD number for numerical sorting
+        # Strip paths to get just the filename (fixes the absolute path bug)
+        zip_files = [link.split('/')[-1] for link in raw_links]
+        
         def extract_mpd_num(filename):
             match = re.search(r'\d+', filename)
             return int(match.group()) if match else 0
             
         zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
         
-        # 4. Expand our check to the 15 most recent
+        # --- LOOK-AHEAD PROBING ---
+        # If the HTML is cached, manually guess the next 5 MPD filenames and bypass the HTML entirely!
+        if zip_files:
+            max_num = extract_mpd_num(zip_files[-1])
+            latest_format = zip_files[-1]
+            match = re.search(r'\d+', latest_format)
+            
+            if match:
+                num_length = len(match.group())
+                for offset in range(1, 6):
+                    probe_num = max_num + offset
+                    probe_filename = re.sub(r'\d+', str(probe_num).zfill(num_length), latest_format)
+                    probe_url = f"{MPD_FTP_URL}{probe_filename}?t={int(time.time())}"
+                    
+                    # If the server returns 200 OK, the file exists even if it's not on the HTML page yet!
+                    if requests.head(probe_url, headers=NO_CACHE_HEADERS).status_code == 200:
+                        print(f"Proactive Cache Bypass: Found hidden active MPD -> {probe_filename}")
+                        zip_files.append(probe_filename)
+        
+        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
         recent_zips = zip_files[-15:]
         
         now = datetime.now(timezone.utc)
@@ -92,8 +111,9 @@ def fetch_and_process_mpds():
                     shp_path = os.path.join(tmp_dir, shp_files[0])
                     gdf = gpd.read_file(shp_path)
                     
-                    gdf.columns = gdf.columns.str.upper()
-                    expire_col = next((col for col in ["EXPIRE", "EXPIRATION", "END_TIME"] if col in gdf.columns), None)
+                    # Create an uppercase map to safely find EXPIRE without permanently renaming all columns
+                    col_map = {c.strip().upper(): c for c in gdf.columns}
+                    expire_col = next((col_map[c] for c in ["EXPIRE", "EXPIRATION", "END_TIME"] if c in col_map), None)
                     
                     if expire_col:
                         def parse_wpc_time(t):
