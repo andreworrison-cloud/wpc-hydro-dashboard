@@ -131,7 +131,7 @@ def fetch_and_process_mpds():
                         gdf["expire_dt"] = gdf[expire_col].apply(parse_wpc_time)
                         
                         # STRICT FILTER: MUST be explicitly active. Drops everything else mathematically.
-                        gdf = gdf[gdf["expire_dt"] > now]
+                        # gdf = gdf[gdf["expire_dt"] > now]
                         
                         if gdf.empty:
                             print(f"  -> MPD {zip_filename} Expired or invalid. Dropping.")
