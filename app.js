@@ -1,7 +1,7 @@
 // Initialize the map, centered roughly over the CONUS
 const map = L.map('map', {
     zoomControl: true,
-    center: [39.8283, -98.5795], // Geographic center of contiguous US
+    center: [39.8283, -98.5795], 
     zoom: 5
 });
 
@@ -20,7 +20,6 @@ const esriDarkLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/s
 esriDarkLayer.addTo(map);
 
 // --- 6-Hour Loop Logic ---
-
 const endTime = new Date();
 endTime.setMinutes(Math.floor(endTime.getMinutes() / 15) * 15);
 endTime.setSeconds(0);
@@ -38,10 +37,7 @@ map.timeDimension = L.timeDimension({
 L.control.timeDimension({
     position: 'bottomleft',
     autoPlay: true,
-    playerOptions: {
-        transitionTime: 500,
-        loop: true
-    }
+    playerOptions: { transitionTime: 500, loop: true }
 }).addTo(map);
 
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
@@ -52,14 +48,10 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
     attribution: "Weather data © IEM Nexrad"
 });
 
-const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, {
-    updateTimeDimension: false
-});
-
+const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
 // --- NWS Active Warnings Logic ---
-
 function getAlertColor(event) {
     if (event === "Flash Flood Warning") return "red";
     if (event === "Flood Warning") return "green";
@@ -69,12 +61,7 @@ function getAlertColor(event) {
 
 const alertsLayer = L.geoJSON(null, {
     style: function (feature) {
-        return {
-            color: getAlertColor(feature.properties.event),
-            weight: 2,
-            opacity: 1,
-            fillOpacity: 0.2
-        };
+        return { color: getAlertColor(feature.properties.event), weight: 2, opacity: 1, fillOpacity: 0.2 };
     },
     onEachFeature: function (feature, layer) {
         layer.bindPopup(`
@@ -110,21 +97,15 @@ async function fetchNWSAlerts() {
 fetchNWSAlerts();
 
 // --- WPC ERO & MPD Logic ---
-
-// ERO styling fixed to dynamically check for both abbreviations and full names
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
     let riskColor = "#00ff00"; // Default MRGL Green
     
-    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFA500"; // Orange
-    if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; // Red
-    if (cat.includes("HIGH")) riskColor = "#FF00FF"; // Magenta
+    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFA500"; 
+    if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; 
+    if (cat.includes("HIGH")) riskColor = "#FF00FF"; 
     
-    return {
-        color: riskColor,
-        weight: 2,
-        fillOpacity: 0.15
-    };
+    return { color: riskColor, weight: 2, fillOpacity: 0.15 };
 }
 
 const eroLayer = L.geoJSON(null, {
@@ -136,14 +117,38 @@ const eroLayer = L.geoJSON(null, {
 });
 
 const mpdLayer = L.geoJSON(null, {
-    style: {
-        color: "#ff00ff", // Fuchsia/Magenta for MPDs
-        weight: 3,
-        dashArray: "5, 5",
-        fillOpacity: 0.1
-    },
+    style: { color: "#ff00ff", weight: 3, dashArray: "5, 5", fillOpacity: 0.1 },
     onEachFeature: function (feature, layer) {
-        layer.bindPopup(`<strong>Active WPC MPD</strong>`);
+        const props = feature.properties;
+        
+        // Dynamically find tag and times regardless of exact column capitalization
+        const issueRaw = props.ISSUE || props.issue || props.Issue || "Unknown";
+        const expireRaw = props.EXPIRE || props.expire || props.Expire || "Unknown";
+        const tag = props.TAG || props.tag || props.PROB || props.SUBJECT || "See WPC for details";
+        
+        // Cleanly format WPC string times for display (YYMMDDHHMM -> MM/DD HHMMZ)
+        function formatWPCTime(t) {
+            let str = String(t).trim().split('.')[0];
+            if (str.length === 10 || str.length === 12) {
+                let offset = str.length === 10 ? 0 : 2;
+                return `${str.substring(2+offset, 4+offset)}/${str.substring(4+offset, 6+offset)} ${str.substring(6+offset, 10+offset)}Z`;
+            }
+            return str;
+        }
+        
+        const validStr = (issueRaw !== "Unknown" || expireRaw !== "Unknown") 
+                       ? `${formatWPCTime(issueRaw)} - ${formatWPCTime(expireRaw)}` 
+                       : "Unknown Timeframe";
+                       
+        const popupContent = `<strong>Active WPC MPD</strong><br>
+                              <strong>Tag:</strong> ${tag}<br>
+                              <strong>Valid:</strong> ${validStr}`;
+                              
+        layer.bindPopup(popupContent);
+        
+        // Add hover functionality!
+        layer.on('mouseover', function () { this.openPopup(); });
+        layer.on('mouseout', function () { this.closePopup(); });
     }
 });
 
@@ -178,7 +183,6 @@ async function fetchWPCData() {
                 return div;
             };
             
-            // Only show the label if the user has the ERO layer toggled ON
             map.on('overlayadd', function(e) { if (e.name === "WPC Day 1 ERO") noEroLabel.addTo(map); });
             map.on('overlayremove', function(e) { if (e.name === "WPC Day 1 ERO") noEroLabel.remove(); });
             if (map.hasLayer(eroLayer)) noEroLabel.addTo(map);
@@ -194,12 +198,7 @@ async function fetchWPCData() {
 fetchWPCData();
 
 // --- Layer Controls ---
-
-const baseMaps = {
-    "Esri Dark Gray": esriDarkLayer,
-    "OpenStreetMap": osmLayer
-};
-
+const baseMaps = { "Esri Dark Gray": esriDarkLayer, "OpenStreetMap": osmLayer };
 const overlays = {
     "NEXRAD Radar": radarTimeLayer,
     "Active Hydro Warnings": alertsLayer,
