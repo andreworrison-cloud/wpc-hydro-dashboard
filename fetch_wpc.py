@@ -53,20 +53,23 @@ def fetch_and_process_ero():
 def fetch_and_process_mpds():
     print("Fetching active MPDs from WPC FTP...")
     try:
-        # 1. Add cache-buster to the FTP directory page itself
         cache_bust_url = f"{MPD_FTP_URL}?t={int(time.time())}"
         response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
-        # 2. Strict regex: ONLY grab files formatted like mpd1234.zip (ignores random files)
-        zip_files = re.findall(r'href="(mpd\d+\.zip)"', response.text, re.IGNORECASE)
+        # 2. FIXED REGEX: Safely catches files like 'MPD_0271_final.zip'
+        zip_files = re.findall(r'href="(mpd[^"]*\.zip)"', response.text, re.IGNORECASE)
         if not zip_files: 
             return None
             
-        # 3. Sort numerically by the MPD number inside the string, not alphabetically
-        zip_files = sorted(list(set(zip_files)), key=lambda x: int(re.search(r'\d+', x).group()))
+        # 3. Safely extract the MPD number for numerical sorting
+        def extract_mpd_num(filename):
+            match = re.search(r'\d+', filename)
+            return int(match.group()) if match else 0
+            
+        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
         
-        # 4. Expand our check to the 15 most recent just to be safe
+        # 4. Expand our check to the 15 most recent
         recent_zips = zip_files[-15:]
         
         now = datetime.now(timezone.utc)
@@ -98,7 +101,6 @@ def fetch_and_process_mpds():
                             try:
                                 if len(t_str) == 10: return datetime.strptime(t_str, "%y%m%d%H%M").replace(tzinfo=timezone.utc)
                                 if len(t_str) == 12: return datetime.strptime(t_str, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
-                                # Fallback parser just in case WPC changes to a standard YYYY-MM-DD format
                                 parsed = pd.to_datetime(t_str)
                                 return parsed.tz_localize('UTC') if parsed.tzinfo is None else parsed.tz_convert('UTC')
                             except: pass
