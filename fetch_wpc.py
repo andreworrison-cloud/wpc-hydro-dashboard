@@ -5,27 +5,55 @@ import zipfile
 import io
 import os
 import re
+import time
 from datetime import datetime, timezone
 
-ERO_DAY1_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?where=1=1&outFields=OUTLOOK&f=geojson"
+# Switched back to the WPC direct zip file to bypass NOAA GIS server lag
+ERO_DAY1_ZIP_URL = "https://www.wpc.ncep.noaa.gov/qpf/ero_day1.zip"
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 OUTPUT_FILENAME = "wpc_data.geojson"
 
 def fetch_and_process_ero():
-    print("Fetching WPC Day 1 ERO...")
+    print("Fetching absolute latest WPC Day 1 ERO directly from WPC ZIP...")
     try:
-        response = requests.get(ERO_DAY1_URL)
+        # Cache-busting URL to ensure we never get a stale file
+        cache_bust_url = f"{ERO_DAY1_ZIP_URL}?t={int(time.time())}"
+        response = requests.get(cache_bust_url)
         response.raise_for_status()
-        gdf = gpd.read_file(response.text, driver="GeoJSON")
+        
+        tmp_dir = "/tmp/ero_shapefile"
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            z.extractall(tmp_dir)
+            
+        shp_files = [f for f in os.listdir(tmp_dir) if f.endswith(".shp")]
+        if not shp_files:
+            return None
+            
+        shp_path = os.path.join(tmp_dir, shp_files[0])
+        gdf = gpd.read_file(shp_path)
         
         if gdf.empty or gdf.geometry.is_empty.all():
             return None
             
+        gdf = gdf.to_crs("EPSG:4326")
         gdf = gdf[~gdf.geometry.is_empty]
         gdf["dataType"] = "ERO"
+        
+        # Safely find the OUTLOOK column regardless of shapefile capitalization
+        outlook_col = next((col for col in gdf.columns if col.upper() == "OUTLOOK"), None)
+        if outlook_col:
+            gdf["OUTLOOK"] = gdf[outlook_col]
+            columns_to_keep = ["dataType", "OUTLOOK", "geometry"]
+        else:
+            columns_to_keep = ["dataType", "geometry"]
+            
+        gdf = gdf[[col for col in columns_to_keep if col in gdf.columns]]
         return gdf
+        
     except Exception as e:
-        print(f"Failed to fetch ERO: {e}")
+        print(f"Failed to fetch ERO from ZIP: {e}")
         return None
 
 def fetch_and_process_mpds():
@@ -50,6 +78,8 @@ def fetch_and_process_mpds():
             z_resp = requests.get(zip_url)
             if z_resp.status_code == 200:
                 tmp_dir = f"/tmp/mpd_{zip_filename}"
+                os.makedirs(tmp_dir, exist_ok=True)
+                
                 with zipfile.ZipFile(io.BytesIO(z_resp.content)) as z:
                     z.extractall(tmp_dir)
                     
@@ -58,14 +88,10 @@ def fetch_and_process_mpds():
                     shp_path = os.path.join(tmp_dir, shp_files[0])
                     gdf = gpd.read_file(shp_path)
                     
-                    # Capitalize columns to easily find EXPIRE
                     gdf.columns = gdf.columns.str.upper()
-                    
-                    # Dynamically find the expiration column
                     expire_col = next((col for col in ["EXPIRE", "EXPIRATION", "END_TIME"] if col in gdf.columns), None)
                     
                     if expire_col:
-                        # WPC time parser for YYMMDDHHMM or YYYYMMDDHHMM formats
                         def parse_wpc_time(t):
                             t_str = str(t).strip().split('.')[0]
                             try:
@@ -75,8 +101,6 @@ def fetch_and_process_mpds():
                             return pd.NaT
 
                         gdf["expire_dt"] = gdf[expire_col].apply(parse_wpc_time)
-                        
-                        # Filter out polygons mathematically
                         gdf = gdf[gdf["expire_dt"] > now]
                         
                         if gdf.empty:
@@ -87,7 +111,6 @@ def fetch_and_process_mpds():
                     gdf = gdf.to_crs("EPSG:4326")
                     gdf["dataType"] = "MPD"
                     
-                    # We keep all metadata columns for the frontend popup, but drop the datetime object to avoid JSON crashes
                     gdf = gdf.drop(columns=["expire_dt"], errors="ignore")
                     mpd_gdfs.append(gdf)
                                 
