@@ -19,12 +19,59 @@ const darkMatterLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/
 // Add default basemap to the map
 darkMatterLayer.addTo(map);
 
-// Create a layer control so the user can toggle basemaps
+// --- NEW: 6-Hour Loop Logic ---
+
+// Calculate timestamps for the past 6 hours
+const endTime = new Date();
+const startTime = new Date(endTime.getTime() - 6 * 60 * 60 * 1000);
+const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
+
+// Initialize TimeDimension for the loop
+map.timeDimension = L.timeDimension({
+    timeInterval: timeRange,
+    period: "PT15M", // 15-minute intervals
+    currentTime: endTime.getTime()
+});
+
+// Add TimeDimension Control UI to the map
+L.control.timeDimension({
+    position: 'bottomleft',
+    autoPlay: true,
+    playerOptions: {
+        transitionTime: 500, // Speed of animation (ms)
+        loop: true
+    }
+}).addTo(map);
+
+// Define IEM WMS Base Reflectivity Radar Layer
+const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi", {
+    layers: 'nexrad-n0q-900913',
+    format: 'image/png',
+    transparent: true,
+    opacity: 0.6, // Slight transparency so basemap features are visible
+    attribution: "Weather data © IEM Nexrad"
+});
+
+// Bind the WMS layer to the TimeDimension controller
+const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, {
+    updateTimeDimension: false
+});
+
+// Add radar to map by default
+radarTimeLayer.addTo(map);
+
+// --- END NEW ---
+
+// Create layer controls so users can toggle basemaps and overlays
 const baseMaps = {
     "Dark Mode": darkMatterLayer,
     "OpenStreetMap": osmLayer
 };
 
-L.control.layers(baseMaps).addTo(map);
+const overlays = {
+    "NEXRAD Radar": radarTimeLayer
+};
 
-console.log("Leaflet map initialized successfully.");
+L.control.layers(baseMaps, overlays).addTo(map);
+
+console.log("Leaflet map initialized with 6-Hour IEM Radar Loop.");
