@@ -111,15 +111,14 @@ fetchNWSAlerts();
 
 // --- WPC ERO & MPD Logic ---
 
-// ERO styling based on standard WPC risk colors
+// ERO styling fixed to dynamically check for both abbreviations and full names
 function getEroStyle(feature) {
-    // This allows the code to read the category regardless of how the NOAA server capitalizes it
-    const cat = feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook;
+    const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
     let riskColor = "#00ff00"; // Default MRGL Green
     
-    if (cat === "SLGT") riskColor = "#FFA500"; // Orange
-    if (cat === "MDT")  riskColor = "#FF0000"; // Red
-    if (cat === "HIGH") riskColor = "#FF00FF"; // Magenta
+    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFA500"; // Orange
+    if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; // Red
+    if (cat.includes("HIGH")) riskColor = "#FF00FF"; // Magenta
     
     return {
         color: riskColor,
