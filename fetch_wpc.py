@@ -5,6 +5,8 @@ import zipfile
 import io
 import os
 import re
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 
 ERO_DAY1_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?where=1=1&outFields=OUTLOOK&f=geojson"
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
@@ -30,43 +32,55 @@ def fetch_and_process_ero():
 def fetch_and_process_mpds():
     print("Fetching active MPDs from WPC FTP...")
     try:
-        # Scrape the FTP directory via HTTP
         response = requests.get(MPD_FTP_URL)
         response.raise_for_status()
         
-        # Find all .zip files in the directory
+        # Find all zip files in the directory
         zip_files = re.findall(r'href="([^"]+\.zip)"', response.text)
         
         if not zip_files:
-            print("No active MPD zip files found.")
             return None
             
+        # Sort sequentially to ensure we are looking at the newest MPDs
+        zip_files = sorted(list(set(zip_files)))
+        recent_zips = zip_files[-15:] # Limit our checks to the last 15 issued
+        
+        now = datetime.now(timezone.utc)
         mpd_gdfs = []
-        for zip_filename in zip_files:
+        
+        for zip_filename in recent_zips:
             zip_url = f"{MPD_FTP_URL}{zip_filename}"
-            print(f"Downloading MPD: {zip_filename}")
             
-            z_resp = requests.get(zip_url)
-            if z_resp.status_code == 200:
-                tmp_dir = f"/tmp/mpd_{zip_filename}"
-                with zipfile.ZipFile(io.BytesIO(z_resp.content)) as z:
-                    z.extractall(tmp_dir)
+            # Use HTTP HEAD to check the exact time it was published
+            head_resp = requests.head(zip_url)
+            if head_resp.status_code == 200:
+                last_mod = head_resp.headers.get('Last-Modified')
+                if last_mod:
+                    file_time = parsedate_to_datetime(last_mod)
                     
-                shp_files = [f for f in os.listdir(tmp_dir) if f.endswith(".shp")]
-                if shp_files:
-                    shp_path = os.path.join(tmp_dir, shp_files[0])
-                    gdf = gpd.read_file(shp_path)
-                    gdf = gdf.to_crs("EPSG:4326")
-                    gdf["dataType"] = "MPD"
-                    
-                    # Keep only essential columns so Pandas concat doesn't clutter
-                    columns_to_keep = ["dataType", "geometry"]
-                    gdf = gdf[[col for col in columns_to_keep if col in gdf.columns]]
-                    mpd_gdfs.append(gdf)
-                    
+                    # Time Check: Only process MPDs issued within the last 6 hours
+                    if now - file_time <= timedelta(hours=6):
+                        print(f"Processing active MPD: {zip_filename} (Issued: {file_time})")
+                        z_resp = requests.get(zip_url)
+                        if z_resp.status_code == 200:
+                            tmp_dir = f"/tmp/mpd_{zip_filename}"
+                            with zipfile.ZipFile(io.BytesIO(z_resp.content)) as z:
+                                z.extractall(tmp_dir)
+                                
+                            shp_files = [f for f in os.listdir(tmp_dir) if f.endswith(".shp")]
+                            if shp_files:
+                                shp_path = os.path.join(tmp_dir, shp_files[0])
+                                gdf = gpd.read_file(shp_path)
+                                gdf = gdf.to_crs("EPSG:4326")
+                                gdf["dataType"] = "MPD"
+                                
+                                # Strip heavy metadata to keep the GeoJSON lightweight
+                                columns_to_keep = ["dataType", "geometry"]
+                                gdf = gdf[[col for col in columns_to_keep if col in gdf.columns]]
+                                mpd_gdfs.append(gdf)
+                                
         if mpd_gdfs:
-            combined_mpd = pd.concat(mpd_gdfs, ignore_index=True)
-            return combined_mpd
+            return pd.concat(mpd_gdfs, ignore_index=True)
             
     except Exception as e:
         print(f"Failed to fetch MPDs: {e}")
