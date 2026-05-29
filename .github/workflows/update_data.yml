@@ -1,0 +1,39 @@
+name: Update WPC Data
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Runs automatically every 5 minutes
+  workflow_dispatch: # Adds a button to let you run it manually for testing
+
+permissions:
+  contents: write # Grants the action permission to push the file to the repo
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install geopandas requests pandas
+
+    - name: Run WPC Fetch Script
+      run: python fetch_wpc.py
+
+    - name: Commit and Push Changes
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add wpc_data.geojson
+        
+        # This ensures the bot only tries to commit if the python script actually created/updated the file
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update WPC real-time data" && git push)
