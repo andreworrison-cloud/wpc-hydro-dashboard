@@ -44,7 +44,7 @@ L.control.timeDimension({
 }).addTo(map);
 
 // Define IEM WMS Base Reflectivity Radar Layer
-const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi", {
+const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
     layers: 'nexrad-n0q-900913',
     format: 'image/png',
     transparent: true,
