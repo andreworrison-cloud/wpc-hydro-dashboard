@@ -72,7 +72,6 @@ def fetch_active_mpd_numbers():
         r = requests.get(f"{MPD_ACTIVE_URL}?t={int(time.time())}", headers=NO_CACHE_HEADERS, timeout=15)
         r.raise_for_status()
         
-        # Find exactly which MPDs are linked on the live WPC interactive map
         matches = re.findall(r'md=(\d{3,4})', r.text)
         active_nums = set(int(m) for m in matches)
         
@@ -86,13 +85,11 @@ def fetch_mpd_times_from_text(mpd_num):
     print(f" -> Scraping official text bulletin for MPD {mpd_num:04d} exact valid times...")
     now = utc_now()
     
-    # Check current and previous year in case of rollover
     for yr in [now.year, now.year - 1]:
         try:
             r = requests.get(f"{MPD_TEXT_URL}?md={mpd_num:04d}&yr={yr}", headers=NO_CACHE_HEADERS, timeout=15)
             if r.status_code != 200: continue
             
-            # Extracts strings exactly like: VALID 291815Z - 300015Z
             match = re.search(r'VALID\s+(\d{6})Z?\s*[-–]\s*(\d{6})Z?', r.text, re.IGNORECASE)
             if match:
                 start_dt = resolve_ddhhmm(match.group(1), now)
@@ -114,14 +111,12 @@ def fetch_and_process_mpds():
         zip_url = f"{MPD_FTP_URL}{zip_filename}"
         print(f"\nProcessing MPD {mpd_num:04d}...")
         
-        # 1. Get exact times from the text product (Bulletproof, no DBF guessing)
         issue_dt, expire_dt = fetch_mpd_times_from_text(mpd_num)
         
         if not issue_dt or not expire_dt:
             print(f" -> Could not parse official times for {mpd_num:04d} from text. Skipping.")
             continue
             
-        # 2. Get ONLY the required shapefile from FTP
         z_resp = requests.get(zip_url, headers=NO_CACHE_HEADERS, timeout=30)
         if z_resp.status_code != 200:
             print(f" -> Shapefile {zip_filename} not found on FTP. Skipping.")
@@ -139,30 +134,45 @@ def fetch_and_process_mpds():
                 if gdf.crs is None: gdf = gdf.set_crs("EPSG:4326", allow_override=True)
                 else: gdf = gdf.to_crs("EPSG:4326")
                 
-                # Tag extraction for JS styling (POSSIBLE/LIKELY) - preserved from native metadata
-                col_map = {c.strip().upper(): c for c in gdf.columns}
-                tag_col = next((col_map[c] for c in ["TAG", "SUBJECT", "PROB"] if c in col_map), None)
+                # --- BULLETPROOF TAG EXTRACTION ---
+                # Search the entire row of data for the exact phrases
+                row_str = str(gdf.iloc[0].to_dict()).upper()
+                extracted_tag = ""
                 
-                mpd_tag = f"MPD {mpd_num:04d}"
-                if tag_col and not pd.isna(gdf[tag_col].iloc[0]):
-                    raw_tag = str(gdf[tag_col].iloc[0])
-                    if "..." in raw_tag: mpd_tag = raw_tag.split("...")[-1].strip().title()
-                    else: mpd_tag = raw_tag.title()
+                if "FLASH FLOODING LIKELY" in row_str:
+                    extracted_tag = "Flash Flooding Likely"
+                elif "FLASH FLOODING POSSIBLE" in row_str:
+                    extracted_tag = "Flash Flooding Possible"
+                else:
+                    # Fallback if standard tags aren't found
+                    col_map = {c.strip().upper(): c for c in gdf.columns}
+                    tag_col = next((col_map[c] for c in ["TAG", "SUBJECT", "PROB"] if c in col_map), None)
+                    if tag_col and not pd.isna(gdf[tag_col].iloc[0]):
+                        raw_tag = str(gdf[tag_col].iloc[0])
+                        if "..." in raw_tag: extracted_tag = raw_tag.split("...")[-1].strip().title()
+                        else: extracted_tag = raw_tag.title()
+                
+                mpd_display_title = f"MPD {mpd_num:04d}"
+                if extracted_tag:
+                    mpd_display_title += f" - {extracted_tag}"
                         
-                issue_str = issue_dt.strftime("%HZ %b %d %Y")
-                expire_str = expire_dt.strftime("%HZ %b %d %Y")
+                # --- TIME FORMATTING (Now with minutes!) ---
+                issue_str = issue_dt.strftime("%H%MZ %b %d %Y")
+                expire_str = expire_dt.strftime("%H%MZ %b %d %Y")
                 valid_str = f"{issue_str} - {expire_str}"
 
-                print(f" -> Successfully mapped! {mpd_tag} Valid: {valid_str}")
+                print(f" -> Successfully mapped! {mpd_display_title} Valid: {valid_str}")
 
                 active_gdf = gdf.copy()
                 active_gdf["dataType"] = "MPD"
                 active_gdf["mpd_number"] = f"{mpd_num:04d}"
-                active_gdf["mpd_tag"] = mpd_tag
+                active_gdf["mpd_tag"] = extracted_tag
                 active_gdf["valid_start_utc"] = issue_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 active_gdf["valid_end_utc"] = expire_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 active_gdf["valid_time"] = valid_str
-                active_gdf["hoverText"] = f"{mpd_tag}\nValid: {valid_str}"
+                
+                # This perfectly formats the Hover Text you requested
+                active_gdf["hoverText"] = f"{mpd_display_title}\nValid: {valid_str}"
                 
                 mpd_gdfs.append(active_gdf)
 
@@ -189,7 +199,6 @@ def main():
     combined_gdf = gpd.GeoDataFrame(pd.concat(final_gdfs, ignore_index=True), geometry="geometry", crs="EPSG:4326")
     combined_gdf = combined_gdf[combined_gdf.geometry.notna() & ~combined_gdf.geometry.is_empty].copy()
     
-    # Ensure all extra shapefile columns are stringified so the GeoJSON writer doesn't crash
     for col in combined_gdf.columns:
         if col == "geometry": continue
         if pd.api.types.is_datetime64_any_dtype(combined_gdf[col]): combined_gdf[col] = combined_gdf[col].astype(str)
