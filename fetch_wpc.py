@@ -24,7 +24,6 @@ NO_CACHE_HEADERS = {
 def fetch_and_process_ero():
     print("Fetching WPC Day 1 ERO from live NOAA REST API...")
     try:
-        # The dynamic time_buster query strictly forces a live database lookup
         cache_bust_url = f"{ERO_REST_URL}?where=1=1&outFields=OUTLOOK&f=geojson&time_buster={int(time.time())}"
         response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
@@ -54,14 +53,21 @@ def fetch_and_process_ero():
 def fetch_and_process_mpds():
     print("Fetching active MPDs from WPC FTP...")
     try:
-        response = requests.get(MPD_FTP_URL, headers=NO_CACHE_HEADERS)
+        # 1. Add cache-buster to the FTP directory page itself
+        cache_bust_url = f"{MPD_FTP_URL}?t={int(time.time())}"
+        response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
-        zip_files = re.findall(r'href="([^"]+\.zip)"', response.text)
-        if not zip_files: return None
+        # 2. Strict regex: ONLY grab files formatted like mpd1234.zip (ignores random files)
+        zip_files = re.findall(r'href="(mpd\d+\.zip)"', response.text, re.IGNORECASE)
+        if not zip_files: 
+            return None
             
-        zip_files = sorted(list(set(zip_files)))
-        recent_zips = zip_files[-10:]
+        # 3. Sort numerically by the MPD number inside the string, not alphabetically
+        zip_files = sorted(list(set(zip_files)), key=lambda x: int(re.search(r'\d+', x).group()))
+        
+        # 4. Expand our check to the 15 most recent just to be safe
+        recent_zips = zip_files[-15:]
         
         now = datetime.now(timezone.utc)
         mpd_gdfs = []
@@ -92,6 +98,9 @@ def fetch_and_process_mpds():
                             try:
                                 if len(t_str) == 10: return datetime.strptime(t_str, "%y%m%d%H%M").replace(tzinfo=timezone.utc)
                                 if len(t_str) == 12: return datetime.strptime(t_str, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+                                # Fallback parser just in case WPC changes to a standard YYYY-MM-DD format
+                                parsed = pd.to_datetime(t_str)
+                                return parsed.tz_localize('UTC') if parsed.tzinfo is None else parsed.tz_convert('UTC')
                             except: pass
                             return pd.NaT
 
@@ -99,10 +108,10 @@ def fetch_and_process_mpds():
                         gdf = gdf[gdf["expire_dt"] > now]
                         
                         if gdf.empty:
-                            print("  -> MPD Expired. Dropping from dashboard.")
+                            print(f"  -> MPD {zip_filename} Expired. Dropping.")
                             continue
                             
-                    print("  -> MPD Active! Adding to dashboard.")
+                    print(f"  -> MPD {zip_filename} Active! Adding to dashboard.")
                     gdf = gdf.to_crs("EPSG:4326")
                     gdf["dataType"] = "MPD"
                     
