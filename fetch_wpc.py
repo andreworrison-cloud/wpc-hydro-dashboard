@@ -134,29 +134,30 @@ def fetch_and_process_mpds():
                 if gdf.crs is None: gdf = gdf.set_crs("EPSG:4326", allow_override=True)
                 else: gdf = gdf.to_crs("EPSG:4326")
                 
-                # --- BULLETPROOF TAG EXTRACTION ---
-                # Search the entire row of data for the exact phrases
-                row_str = str(gdf.iloc[0].to_dict()).upper()
-                extracted_tag = ""
+                # --- NEW TAG EXTRACTION & FORMATTING ---
+                col_map = {c.strip().upper(): c for c in gdf.columns}
+                tag_col = next((col_map[c] for c in ["TAG", "SUBJECT", "PROB"] if c in col_map), None)
                 
-                if "FLASH FLOODING LIKELY" in row_str:
-                    extracted_tag = "Flash Flooding Likely"
-                elif "FLASH FLOODING POSSIBLE" in row_str:
-                    extracted_tag = "Flash Flooding Possible"
+                extracted_tag = ""
+                if tag_col and not pd.isna(gdf[tag_col].iloc[0]):
+                    raw_tag = str(gdf[tag_col].iloc[0])
+                    # Split by "..." to capitalize the first letter of each sentence chunk cleanly
+                    parts = raw_tag.split("...")
+                    formatted_parts = [p.strip().capitalize() for p in parts]
+                    extracted_tag = "...".join(formatted_parts)
                 else:
-                    # Fallback if standard tags aren't found
-                    col_map = {c.strip().upper(): c for c in gdf.columns}
-                    tag_col = next((col_map[c] for c in ["TAG", "SUBJECT", "PROB"] if c in col_map), None)
-                    if tag_col and not pd.isna(gdf[tag_col].iloc[0]):
-                        raw_tag = str(gdf[tag_col].iloc[0])
-                        if "..." in raw_tag: extracted_tag = raw_tag.split("...")[-1].strip().title()
-                        else: extracted_tag = raw_tag.title()
+                    # Fallback if standard columns are missing
+                    row_str = str(gdf.iloc[0].to_dict()).upper()
+                    if "FLASH FLOODING LIKELY" in row_str:
+                        extracted_tag = "Flash flooding likely"
+                    elif "FLASH FLOODING POSSIBLE" in row_str:
+                        extracted_tag = "Flash flooding possible"
+                    else:
+                        extracted_tag = "See WPC for details"
                 
                 mpd_display_title = f"MPD {mpd_num:04d}"
-                if extracted_tag:
-                    mpd_display_title += f" - {extracted_tag}"
                         
-                # --- TIME FORMATTING (Now with minutes!) ---
+                # --- TIME FORMATTING ---
                 issue_str = issue_dt.strftime("%H%MZ %b %d %Y")
                 expire_str = expire_dt.strftime("%H%MZ %b %d %Y")
                 valid_str = f"{issue_str} - {expire_str}"
@@ -171,8 +172,9 @@ def fetch_and_process_mpds():
                 active_gdf["valid_end_utc"] = expire_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 active_gdf["valid_time"] = valid_str
                 
-                # This perfectly formats the Hover Text you requested
-                active_gdf["hoverText"] = f"{mpd_display_title}\nValid: {valid_str}"
+                # --- 3-LINE HOVER FORMATTING ---
+                # Using <br> ensures Leaflet tooltips respect the line breaks perfectly
+                active_gdf["hoverText"] = f"{mpd_display_title}<br>{extracted_tag}<br>Valid: {valid_str}"
                 
                 mpd_gdfs.append(active_gdf)
 
