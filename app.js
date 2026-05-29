@@ -58,17 +58,15 @@ const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, {
 
 radarTimeLayer.addTo(map);
 
-// --- NEW: NWS Active Warnings Logic ---
+// --- NWS Active Warnings Logic ---
 
-// Determine color based on hazard type
 function getAlertColor(event) {
     if (event === "Flash Flood Warning") return "red";
     if (event === "Flood Warning") return "green";
     if (event === "Flood Advisory") return "lightgreen";
-    return "gray"; // Fallback color
+    return "gray"; 
 }
 
-// Create an empty GeoJSON layer with custom styling and popups
 const alertsLayer = L.geoJSON(null, {
     style: function (feature) {
         return {
@@ -90,35 +88,92 @@ const alertsLayer = L.geoJSON(null, {
     }
 });
 
-// Add the alerts layer to the map by default
 alertsLayer.addTo(map);
 
-// Fetch the data from the NWS API
 async function fetchNWSAlerts() {
     try {
-        // We filter directly in the URL to save bandwidth (only asking for the 3 we want)
         const url = 'https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory';
-        
         const response = await fetch(url, {
             headers: {
                 'Accept': 'application/geo+json',
                 'User-Agent': 'WPC-Hydro-Dashboard/1.0 (Contact: wpc.meteorologist@noaa.gov)' 
             }
         });
-        
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        
         const data = await response.json();
         alertsLayer.addData(data);
-        console.log(`Successfully loaded ${data.features.length} hydrologic alerts.`);
-        
     } catch (error) {
         console.error("Error fetching NWS alerts:", error);
     }
 }
 
-// Execute the fetch function
 fetchNWSAlerts();
+
+// --- NEW: WPC ERO & MPD Logic ---
+
+// ERO styling based on standard WPC risk colors
+function getEroStyle(feature) {
+    let riskColor = "green"; // Default
+    const cat = feature.properties.OUTLOOK;
+    if (cat === "MRGL") riskColor = "#00ff00"; // Green
+    if (cat === "SLGT") riskColor = "#ffff00"; // Yellow
+    if (cat === "MDT")  riskColor = "#ff0000"; // Red
+    if (cat === "HIGH") riskColor = "#ff00ff"; // Magenta
+    
+    return {
+        color: riskColor,
+        weight: 2,
+        fillOpacity: 0.15
+    };
+}
+
+const eroLayer = L.geoJSON(null, {
+    style: getEroStyle,
+    onEachFeature: function (feature, layer) {
+        layer.bindPopup(`<strong>WPC Day 1 ERO</strong><br>Category: ${feature.properties.OUTLOOK}`);
+    }
+});
+
+const mpdLayer = L.geoJSON(null, {
+    style: {
+        color: "fuchsia",
+        weight: 3,
+        dashArray: "5, 5",
+        fillOpacity: 0.1
+    },
+    onEachFeature: function (feature, layer) {
+        layer.bindPopup(`<strong>Active WPC MPD</strong>`);
+    }
+});
+
+eroLayer.addTo(map);
+mpdLayer.addTo(map);
+
+async function fetchWPCData() {
+    try {
+        // Cache busting to ensure we always fetch the newest iteration of the file
+        const url = 'wpc_data.geojson?t=' + new Date().getTime();
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            console.log("wpc_data.geojson not found yet. The backend action may still be running.");
+            return;
+        }
+        
+        const data = await response.json();
+        
+        const eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
+        const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
+        
+        if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
+        if (mpdFeatures.length > 0) mpdLayer.addData(mpdFeatures);
+        
+    } catch (error) {
+        console.error("Error fetching WPC GeoJSON:", error);
+    }
+}
+
+fetchWPCData();
 
 // --- Layer Controls ---
 
@@ -129,9 +184,9 @@ const baseMaps = {
 
 const overlays = {
     "NEXRAD Radar": radarTimeLayer,
-    "Active Hydro Warnings": alertsLayer
+    "Active Hydro Warnings": alertsLayer,
+    "WPC Day 1 ERO": eroLayer,
+    "WPC Active MPDs": mpdLayer
 };
 
 L.control.layers(baseMaps, overlays).addTo(map);
-
-console.log("Phase 1 Frontend completed!");
