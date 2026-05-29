@@ -8,17 +8,23 @@ import re
 import time
 from datetime import datetime, timezone
 
-# Switched back to the WPC direct zip file to bypass NOAA GIS server lag
 ERO_DAY1_ZIP_URL = "https://www.wpc.ncep.noaa.gov/qpf/ero_day1.zip"
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 OUTPUT_FILENAME = "wpc_data.geojson"
 
+# Aggressive headers to force NOAA's Akamai CDN to bypass cache
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "User-Agent": "WPC-Hydro-Dashboard-Bot/1.0"
+}
+
 def fetch_and_process_ero():
     print("Fetching absolute latest WPC Day 1 ERO directly from WPC ZIP...")
     try:
-        # Cache-busting URL to ensure we never get a stale file
         cache_bust_url = f"{ERO_DAY1_ZIP_URL}?t={int(time.time())}"
-        response = requests.get(cache_bust_url)
+        response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
         tmp_dir = "/tmp/ero_shapefile"
@@ -41,7 +47,6 @@ def fetch_and_process_ero():
         gdf = gdf[~gdf.geometry.is_empty]
         gdf["dataType"] = "ERO"
         
-        # Safely find the OUTLOOK column regardless of shapefile capitalization
         outlook_col = next((col for col in gdf.columns if col.upper() == "OUTLOOK"), None)
         if outlook_col:
             gdf["OUTLOOK"] = gdf[outlook_col]
@@ -59,14 +64,14 @@ def fetch_and_process_ero():
 def fetch_and_process_mpds():
     print("Fetching active MPDs from WPC FTP...")
     try:
-        response = requests.get(MPD_FTP_URL)
+        response = requests.get(MPD_FTP_URL, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
         zip_files = re.findall(r'href="([^"]+\.zip)"', response.text)
         if not zip_files: return None
             
         zip_files = sorted(list(set(zip_files)))
-        recent_zips = zip_files[-10:] # Only check the 10 most recent to save bandwidth
+        recent_zips = zip_files[-10:]
         
         now = datetime.now(timezone.utc)
         mpd_gdfs = []
@@ -75,7 +80,7 @@ def fetch_and_process_mpds():
             zip_url = f"{MPD_FTP_URL}{zip_filename}"
             print(f"Checking MPD: {zip_filename}")
             
-            z_resp = requests.get(zip_url)
+            z_resp = requests.get(zip_url, headers=NO_CACHE_HEADERS)
             if z_resp.status_code == 200:
                 tmp_dir = f"/tmp/mpd_{zip_filename}"
                 os.makedirs(tmp_dir, exist_ok=True)
