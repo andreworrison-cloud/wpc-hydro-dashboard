@@ -42,7 +42,6 @@ def fetch_and_process_ero():
             
         gdf = gdf[[col for col in columns_to_keep if col in gdf.columns]]
         return gdf
-        
     except Exception as e:
         print(f"Failed to fetch ERO from REST API: {e}")
         return None
@@ -54,40 +53,17 @@ def fetch_and_process_mpds():
         response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
-        # BULLETPROOF REGEX: Handles absolute paths, relative paths, and case-insensitivity
+        # Clean regex: gets any zip file with 'mpd' in the name
         raw_links = re.findall(r'href="([^"]*mpd[^"]*\.zip)"', response.text, re.IGNORECASE)
-        if not raw_links:
-            print("No MPD zip files found in the directory HTML.")
-            return None
+        if not raw_links: return None
             
-        # Strip paths to get just the filename (fixes the absolute path bug)
         zip_files = [link.split('/')[-1] for link in raw_links]
         
         def extract_mpd_num(filename):
             match = re.search(r'\d+', filename)
             return int(match.group()) if match else 0
             
-        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
-        
-        # --- LOOK-AHEAD PROBING ---
-        # If the HTML is cached, manually guess the next 5 MPD filenames and bypass the HTML entirely!
-        if zip_files:
-            max_num = extract_mpd_num(zip_files[-1])
-            latest_format = zip_files[-1]
-            match = re.search(r'\d+', latest_format)
-            
-            if match:
-                num_length = len(match.group())
-                for offset in range(1, 6):
-                    probe_num = max_num + offset
-                    probe_filename = re.sub(r'\d+', str(probe_num).zfill(num_length), latest_format)
-                    probe_url = f"{MPD_FTP_URL}{probe_filename}?t={int(time.time())}"
-                    
-                    # If the server returns 200 OK, the file exists even if it's not on the HTML page yet!
-                    if requests.head(probe_url, headers=NO_CACHE_HEADERS).status_code == 200:
-                        print(f"Proactive Cache Bypass: Found hidden active MPD -> {probe_filename}")
-                        zip_files.append(probe_filename)
-        
+        # Sort strictly by MPD number and grab the most recent 15
         zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
         recent_zips = zip_files[-15:]
         
@@ -111,22 +87,19 @@ def fetch_and_process_mpds():
                     shp_path = os.path.join(tmp_dir, shp_files[0])
                     gdf = gpd.read_file(shp_path)
                     
-                    # Create an uppercase map to safely find EXPIRE without permanently renaming all columns
-                    col_map = {c.strip().upper(): c for c in gdf.columns}
-                    expire_col = next((col_map[c] for c in ["EXPIRE", "EXPIRATION", "END_TIME"] if c in col_map), None)
+                    # CRITICAL FIX: Force columns to uppercase so the expiration check never fails
+                    gdf.columns = gdf.columns.str.upper()
                     
-                    if expire_col:
+                    if "EXPIRE" in gdf.columns:
                         def parse_wpc_time(t):
                             t_str = str(t).strip().split('.')[0]
                             try:
                                 if len(t_str) == 10: return datetime.strptime(t_str, "%y%m%d%H%M").replace(tzinfo=timezone.utc)
                                 if len(t_str) == 12: return datetime.strptime(t_str, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
-                                parsed = pd.to_datetime(t_str)
-                                return parsed.tz_localize('UTC') if parsed.tzinfo is None else parsed.tz_convert('UTC')
                             except: pass
                             return pd.NaT
 
-                        gdf["expire_dt"] = gdf[expire_col].apply(parse_wpc_time)
+                        gdf["expire_dt"] = gdf["EXPIRE"].apply(parse_wpc_time)
                         gdf = gdf[gdf["expire_dt"] > now]
                         
                         if gdf.empty:
