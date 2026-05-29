@@ -99,13 +99,26 @@ fetchNWSAlerts();
 // --- WPC ERO & MPD Logic ---
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
-    let riskColor = "#00ff00"; // Default MRGL Green
+    let riskColor = "#00ff00"; 
     
     if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFA500"; 
     if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; 
     if (cat.includes("HIGH")) riskColor = "#FF00FF"; 
     
     return { color: riskColor, weight: 2, fillOpacity: 0.15 };
+}
+
+// Dynamic MPD Styling Function
+function getMpdStyle(feature) {
+    const props = feature.properties;
+    const tagStr = (props.TAG || props.tag || props.PROB || props.SUBJECT || "").toUpperCase();
+    let lineColor = "#ff00ff"; // Fallback Fuchsia
+    
+    // Using .includes() securely catches the words regardless of the long WPC header
+    if (tagStr.includes("POSSIBLE")) lineColor = "#0000FF"; // Blue
+    if (tagStr.includes("LIKELY")) lineColor = "#800080";   // Purple
+    
+    return { color: lineColor, weight: 3, dashArray: "5, 5", fillOpacity: 0.1 };
 }
 
 const eroLayer = L.geoJSON(null, {
@@ -117,16 +130,23 @@ const eroLayer = L.geoJSON(null, {
 });
 
 const mpdLayer = L.geoJSON(null, {
-    style: { color: "#ff00ff", weight: 3, dashArray: "5, 5", fillOpacity: 0.1 },
+    style: getMpdStyle,
     onEachFeature: function (feature, layer) {
         const props = feature.properties;
         
-        // Dynamically find tag and times regardless of exact column capitalization
         const issueRaw = props.ISSUE || props.issue || props.Issue || "Unknown";
         const expireRaw = props.EXPIRE || props.expire || props.Expire || "Unknown";
-        const tag = props.TAG || props.tag || props.PROB || props.SUBJECT || "See WPC for details";
+        let rawTag = props.TAG || props.tag || props.PROB || props.SUBJECT || "See WPC for details";
         
-        // Cleanly format WPC string times for display (YYMMDDHHMM -> MM/DD HHMMZ)
+        // --- NEW: Clean up the long WPC header for the popup UI ---
+        let displayTag = rawTag;
+        if (displayTag.includes("...")) {
+            let parts = displayTag.split("...");
+            // Grab the last part (e.g., "Flash flooding possible") and capitalize the first letter nicely
+            let isolatedTag = parts[parts.length - 1].trim();
+            displayTag = isolatedTag.charAt(0).toUpperCase() + isolatedTag.slice(1).toLowerCase();
+        }
+        
         function formatWPCTime(t) {
             let str = String(t).trim().split('.')[0];
             if (str.length === 10 || str.length === 12) {
@@ -141,12 +161,11 @@ const mpdLayer = L.geoJSON(null, {
                        : "Unknown Timeframe";
                        
         const popupContent = `<strong>Active WPC MPD</strong><br>
-                              <strong>Tag:</strong> ${tag}<br>
+                              <strong>Tag:</strong> ${displayTag}<br>
                               <strong>Valid:</strong> ${validStr}`;
                               
         layer.bindPopup(popupContent);
         
-        // Add hover functionality!
         layer.on('mouseover', function () { this.openPopup(); });
         layer.on('mouseout', function () { this.closePopup(); });
     }
@@ -166,7 +185,6 @@ async function fetchWPCData() {
         const eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
         const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
         
-        // ERO Logic & 5% Fallback Text
         if (eroFeatures.length > 0) {
             eroLayer.addData(eroFeatures);
         } else {
