@@ -109,16 +109,17 @@ async function fetchNWSAlerts() {
 
 fetchNWSAlerts();
 
-// --- NEW: WPC ERO & MPD Logic ---
+// --- WPC ERO & MPD Logic ---
 
 // ERO styling based on standard WPC risk colors
 function getEroStyle(feature) {
-    let riskColor = "green"; // Default
-    const cat = feature.properties.OUTLOOK;
-    if (cat === "MRGL") riskColor = "#00ff00"; // Green
-    if (cat === "SLGT") riskColor = "#ffff00"; // Yellow
-    if (cat === "MDT")  riskColor = "#ff0000"; // Red
-    if (cat === "HIGH") riskColor = "#ff00ff"; // Magenta
+    // This allows the code to read the category regardless of how the NOAA server capitalizes it
+    const cat = feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook;
+    let riskColor = "#00ff00"; // Default MRGL Green
+    
+    if (cat === "SLGT") riskColor = "#FFA500"; // Orange
+    if (cat === "MDT")  riskColor = "#FF0000"; // Red
+    if (cat === "HIGH") riskColor = "#FF00FF"; // Magenta
     
     return {
         color: riskColor,
@@ -130,13 +131,14 @@ function getEroStyle(feature) {
 const eroLayer = L.geoJSON(null, {
     style: getEroStyle,
     onEachFeature: function (feature, layer) {
-        layer.bindPopup(`<strong>WPC Day 1 ERO</strong><br>Category: ${feature.properties.OUTLOOK}`);
+        const cat = feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "Unknown";
+        layer.bindPopup(`<strong>WPC Day 1 ERO</strong><br>Category: ${cat}`);
     }
 });
 
 const mpdLayer = L.geoJSON(null, {
     style: {
-        color: "fuchsia",
+        color: "#ff00ff", // Fuchsia/Magenta for MPDs
         weight: 3,
         dashArray: "5, 5",
         fillOpacity: 0.1
@@ -151,21 +153,38 @@ mpdLayer.addTo(map);
 
 async function fetchWPCData() {
     try {
-        // Cache busting to ensure we always fetch the newest iteration of the file
         const url = 'wpc_data.geojson?t=' + new Date().getTime();
         const response = await fetch(url);
         
-        if (!response.ok) {
-            console.log("wpc_data.geojson not found yet. The backend action may still be running.");
-            return;
-        }
+        if (!response.ok) return;
         
         const data = await response.json();
-        
         const eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
         const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
         
-        if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
+        // ERO Logic & 5% Fallback Text
+        if (eroFeatures.length > 0) {
+            eroLayer.addData(eroFeatures);
+        } else {
+            const noEroLabel = L.control({position: 'topright'});
+            noEroLabel.onAdd = function () {
+                const div = L.DomUtil.create('div', 'info legend');
+                div.style.backgroundColor = "rgba(0,0,0,0.7)";
+                div.style.color = "white";
+                div.style.padding = "10px";
+                div.style.borderRadius = "5px";
+                div.style.fontSize = "0.9em";
+                div.style.maxWidth = "250px";
+                div.innerHTML = "<strong>WPC Day 1 ERO</strong><br>The probability of rainfall exceeding flash flood guidance is less than 5 percent.";
+                return div;
+            };
+            
+            // Only show the label if the user has the ERO layer toggled ON
+            map.on('overlayadd', function(e) { if (e.name === "WPC Day 1 ERO") noEroLabel.addTo(map); });
+            map.on('overlayremove', function(e) { if (e.name === "WPC Day 1 ERO") noEroLabel.remove(); });
+            if (map.hasLayer(eroLayer)) noEroLabel.addTo(map);
+        }
+        
         if (mpdFeatures.length > 0) mpdLayer.addData(mpdFeatures);
         
     } catch (error) {
