@@ -108,7 +108,7 @@ function getEroStyle(feature) {
     return { color: riskColor, weight: 2, fillOpacity: 0.15 };
 }
 
-// Dynamic MPD Styling Function - Bulletproof search
+// Dynamic MPD Styling Function - Bulletproof metadata search
 function getMpdStyle(feature) {
     const propStr = JSON.stringify(feature.properties).toUpperCase();
     let lineColor = "#ff00ff"; // Fallback Fuchsia
@@ -127,52 +127,26 @@ const eroLayer = L.geoJSON(null, {
     }
 });
 
+// Updated MPD Layer using the clean hoverText logic
 const mpdLayer = L.geoJSON(null, {
     style: getMpdStyle,
     onEachFeature: function (feature, layer) {
-        const props = feature.properties;
-        const issueRaw = props.ISSUE || props.issue || "Unknown";
-        const expireRaw = props.EXPIRE || props.expire || "Unknown";
-        
-        // Bulletproof Tag Extraction
-        const propStr = JSON.stringify(props).toUpperCase();
-        let displayTag = "See WPC for details";
-        
-        if (propStr.includes("FLASH FLOODING POSSIBLE")) {
-            displayTag = "Flash Flooding Possible";
-        } else if (propStr.includes("FLASH FLOODING LIKELY")) {
-            displayTag = "Flash Flooding Likely";
-        } else if (props.TAG || props.SUBJECT || props.tag) {
-            let rawTag = props.TAG || props.SUBJECT || props.tag;
-            if (rawTag.includes("...")) {
-                let parts = rawTag.split("...");
-                let isolatedTag = parts[parts.length - 1].trim();
-                displayTag = isolatedTag.charAt(0).toUpperCase() + isolatedTag.slice(1).toLowerCase();
-            } else {
-                displayTag = rawTag;
-            }
+        if (feature.properties && feature.properties.hoverText) {
+            
+            // Tooltips create a clean floating hover effect
+            layer.bindTooltip(feature.properties.hoverText, {
+                sticky: true,
+                direction: "top",
+                className: "mpd-tooltip"
+            });
+            
+            // Retain the popup in case the user clicks the polygon directly
+            layer.bindPopup(`
+                <div style="white-space: pre-wrap; font-family: sans-serif; font-size: 14px;">
+                    <strong>${feature.properties.hoverText}</strong>
+                </div>
+            `);
         }
-        
-        function formatWPCTime(t) {
-            let str = String(t).trim().split('.')[0];
-            if (str.length === 10 || str.length === 12) {
-                let offset = str.length === 10 ? 0 : 2;
-                return `${str.substring(2+offset, 4+offset)}/${str.substring(4+offset, 6+offset)} ${str.substring(6+offset, 10+offset)}Z`;
-            }
-            return str;
-        }
-        
-        const validStr = (issueRaw !== "Unknown" || expireRaw !== "Unknown") 
-                       ? `${formatWPCTime(issueRaw)} - ${formatWPCTime(expireRaw)}` 
-                       : "Unknown Timeframe";
-                       
-        const popupContent = `<strong>Active WPC MPD</strong><br>
-                              <strong>Tag:</strong> ${displayTag}<br>
-                              <strong>Valid:</strong> ${validStr}`;
-                              
-        layer.bindPopup(popupContent);
-        layer.on('mouseover', function () { this.openPopup(); });
-        layer.on('mouseout', function () { this.closePopup(); });
     }
 });
 
@@ -219,15 +193,18 @@ async function fetchWPCData() {
 
 fetchWPCData();
 
-// --- NEW: WMS LAYERS FOR EXTENDED ERO & QPF ---
+// --- WMS LAYERS FOR EXTENDED ERO & QPF ---
+
 const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6, attribution: 'NOAA/NWS/WPC' };
 
+// Extended ERO WMS
 const eroWmsUrl = "https://mapservices.weather.noaa.gov/vector/services/hazards/wpc_precip_hazards/MapServer/WMSServer";
 const eroDay2 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '1' });
 const eroDay3 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '2' });
 const eroDay4 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '3' });
 const eroDay5 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '4' });
 
+// QPF WMS
 const qpfWmsUrl = "https://mapservices.weather.noaa.gov/vector/services/precip/wpc_qpf/MapServer/WMSServer";
 const qpfDay1 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '1' });
 const qpfDay2 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '2' });
@@ -241,6 +218,7 @@ const qpfDay1_5 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '9' })
 const qpfDay1_7 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '10' });
 
 // --- GROUPED LAYER CONTROLS ---
+
 const baseMaps = {
     "Esri Dark Gray": esriDarkLayer,
     "OpenStreetMap": osmLayer
@@ -274,6 +252,7 @@ const groupedOverlays = {
     }
 };
 
+// Use the groupedLayers plugin instead of the standard control
 L.control.groupedLayers(baseMaps, groupedOverlays, {
     collapsed: true
 }).addTo(map);
