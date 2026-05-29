@@ -83,7 +83,7 @@ async function fetchNWSAlerts() {
         const response = await fetch(url, {
             headers: {
                 'Accept': 'application/geo+json',
-                'User-Agent': 'WPC-Hydro-Dashboard/1.0 (Contact: wpc.meteorologist@noaa.gov)' 
+                'User-Agent': 'WPC-Hydro-Dashboard/1.0' 
             }
         });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -96,7 +96,7 @@ async function fetchNWSAlerts() {
 
 fetchNWSAlerts();
 
-// --- WPC ERO & MPD Logic ---
+// --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
     let riskColor = "#00ff00"; 
@@ -108,13 +108,11 @@ function getEroStyle(feature) {
     return { color: riskColor, weight: 2, fillOpacity: 0.15 };
 }
 
-// Dynamic MPD Styling Function
 function getMpdStyle(feature) {
     const props = feature.properties;
     const tagStr = (props.TAG || props.tag || props.PROB || props.SUBJECT || "").toUpperCase();
     let lineColor = "#ff00ff"; // Fallback Fuchsia
     
-    // Using .includes() securely catches the words regardless of the long WPC header
     if (tagStr.includes("POSSIBLE")) lineColor = "#0000FF"; // Blue
     if (tagStr.includes("LIKELY")) lineColor = "#800080";   // Purple
     
@@ -133,16 +131,13 @@ const mpdLayer = L.geoJSON(null, {
     style: getMpdStyle,
     onEachFeature: function (feature, layer) {
         const props = feature.properties;
-        
-        const issueRaw = props.ISSUE || props.issue || props.Issue || "Unknown";
-        const expireRaw = props.EXPIRE || props.expire || props.Expire || "Unknown";
+        const issueRaw = props.ISSUE || props.issue || "Unknown";
+        const expireRaw = props.EXPIRE || props.expire || "Unknown";
         let rawTag = props.TAG || props.tag || props.PROB || props.SUBJECT || "See WPC for details";
         
-        // --- NEW: Clean up the long WPC header for the popup UI ---
         let displayTag = rawTag;
         if (displayTag.includes("...")) {
             let parts = displayTag.split("...");
-            // Grab the last part (e.g., "Flash flooding possible") and capitalize the first letter nicely
             let isolatedTag = parts[parts.length - 1].trim();
             displayTag = isolatedTag.charAt(0).toUpperCase() + isolatedTag.slice(1).toLowerCase();
         }
@@ -165,7 +160,6 @@ const mpdLayer = L.geoJSON(null, {
                               <strong>Valid:</strong> ${validStr}`;
                               
         layer.bindPopup(popupContent);
-        
         layer.on('mouseover', function () { this.openPopup(); });
         layer.on('mouseout', function () { this.closePopup(); });
     }
@@ -200,9 +194,8 @@ async function fetchWPCData() {
                 div.innerHTML = "<strong>WPC Day 1 ERO</strong><br>The probability of rainfall exceeding flash flood guidance is less than 5 percent.";
                 return div;
             };
-            
-            map.on('overlayadd', function(e) { if (e.name === "WPC Day 1 ERO") noEroLabel.addTo(map); });
-            map.on('overlayremove', function(e) { if (e.name === "WPC Day 1 ERO") noEroLabel.remove(); });
+            map.on('overlayadd', function(e) { if (e.name === "Day 1 ERO (Real-Time)") noEroLabel.addTo(map); });
+            map.on('overlayremove', function(e) { if (e.name === "Day 1 ERO (Real-Time)") noEroLabel.remove(); });
             if (map.hasLayer(eroLayer)) noEroLabel.addTo(map);
         }
         
@@ -215,13 +208,67 @@ async function fetchWPCData() {
 
 fetchWPCData();
 
-// --- Layer Controls ---
-const baseMaps = { "Esri Dark Gray": esriDarkLayer, "OpenStreetMap": osmLayer };
-const overlays = {
-    "NEXRAD Radar": radarTimeLayer,
-    "Active Hydro Warnings": alertsLayer,
-    "WPC Day 1 ERO": eroLayer,
-    "WPC Active MPDs": mpdLayer
+// --- NEW: WMS LAYERS FOR EXTENDED ERO & QPF ---
+
+const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6, attribution: 'NOAA/NWS/WPC' };
+
+// Extended ERO WMS
+const eroWmsUrl = "https://mapservices.weather.noaa.gov/vector/services/hazards/wpc_precip_hazards/MapServer/WMSServer";
+const eroDay2 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '1' });
+const eroDay3 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '2' });
+const eroDay4 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '3' });
+const eroDay5 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '4' });
+
+// QPF WMS
+const qpfWmsUrl = "https://mapservices.weather.noaa.gov/vector/services/precip/wpc_qpf/MapServer/WMSServer";
+const qpfDay1 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '1' });
+const qpfDay2 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '2' });
+const qpfDay3 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '3' });
+const qpfDay4_5 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '4' });
+const qpfDay6_7 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '5' });
+
+const qpfDay1_2 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '7' });
+const qpfDay1_3 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '8' });
+const qpfDay1_5 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '9' });
+const qpfDay1_7 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '10' });
+
+
+// --- GROUPED LAYER CONTROLS ---
+
+const baseMaps = {
+    "Esri Dark Gray": esriDarkLayer,
+    "OpenStreetMap": osmLayer
 };
 
-L.control.layers(baseMaps, overlays).addTo(map);
+const groupedOverlays = {
+    "Active Hazards & Warnings": {
+        "NEXRAD Radar (6-Hour)": radarTimeLayer,
+        "Active Hydro Warnings": alertsLayer,
+        "WPC Active MPDs": mpdLayer
+    },
+    "WPC Excessive Rainfall Outlooks": {
+        "Day 1 ERO (Real-Time)": eroLayer,
+        "Day 2 ERO": eroDay2,
+        "Day 3 ERO": eroDay3,
+        "Day 4 ERO": eroDay4,
+        "Day 5 ERO": eroDay5
+    },
+    "WPC QPF (Individual Periods)": {
+        "Day 1 QPF": qpfDay1,
+        "Day 2 QPF": qpfDay2,
+        "Day 3 QPF": qpfDay3,
+        "Days 4-5 QPF": qpfDay4_5,
+        "Days 6-7 QPF": qpfDay6_7
+    },
+    "WPC QPF (Cumulative Totals)": {
+        "Day 1-2 Total": qpfDay1_2,
+        "Day 1-3 Total": qpfDay1_3,
+        "Day 1-5 Total": qpfDay1_5,
+        "Day 1-7 Total": qpfDay1_7
+    }
+};
+
+// Use the groupedLayers plugin instead of the standard control
+L.control.groupedLayers(baseMaps, groupedOverlays, {
+    collapsed: true
+}).addTo(map);
