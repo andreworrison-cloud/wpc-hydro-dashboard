@@ -4,11 +4,13 @@ import requests
 import zipfile
 import io
 import os
+import re
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 # ERO points to the live NOAA Enterprise GIS database
 ERO_REST_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query"
+MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 OUTPUT_FILENAME = "wpc_data.geojson"
 
 NO_CACHE_HEADERS = {
@@ -45,81 +47,112 @@ def fetch_and_process_ero():
         return None
 
 def fetch_and_process_mpds():
-    print("Fetching active MPDs directly from Iowa Environmental Mesonet (IEM)...")
+    print("Fetching active MPDs from WPC FTP using KML Sync...")
     try:
+        # 1. Scrape the reliable KML directory to find exactly what numbers are active
+        kml_url = f"https://www.wpc.ncep.noaa.gov/kml/mpd/?t={int(time.time())}"
+        try:
+            kml_resp = requests.get(kml_url, headers=NO_CACHE_HEADERS)
+            active_kml_nums = re.findall(r'mpd(\d{3,4})\.kml', kml_resp.text, re.IGNORECASE)
+            active_kml_nums = [int(n) for n in set(active_kml_nums)]
+        except:
+            active_kml_nums = []
+
+        # 2. Get zip filenames from the FTP HTML directory
+        cache_bust_url = f"{MPD_FTP_URL}?t={int(time.time())}"
+        response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
+        
+        raw_links = re.findall(r'href="([^"]*mpd[^"]*\.zip)"', response.text, re.IGNORECASE)
+        if not raw_links: return None
+            
+        zip_files = [link.split('/')[-1] for link in raw_links]
+        
+        def extract_mpd_num(filename):
+            match = re.search(r'\d{3,4}', filename)
+            return int(match.group()) if match else 0
+            
+        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
+        
+        # 3. KML SYNC: If the KML directory shows a new MPD that the FTP cache missed, add it!
+        if zip_files and active_kml_nums:
+            ftp_max_num = extract_mpd_num(zip_files[-1])
+            kml_max_num = max(active_kml_nums)
+            
+            if kml_max_num > ftp_max_num:
+                latest_format = zip_files[-1]
+                match = re.search(r'\d{3,4}', latest_format)
+                if match:
+                    num_length = len(match.group())
+                    for missing_num in range(ftp_max_num + 1, kml_max_num + 1):
+                        if missing_num in active_kml_nums:
+                            probe_filename = re.sub(r'\d{3,4}', str(missing_num).zfill(num_length), latest_format)
+                            zip_files.append(probe_filename)
+                            print(f"KML Sync: Bypassed FTP Cache to add missing MPD -> {probe_filename}")
+
+        # Limit to the last 15 files to prevent downloading the whole archive
+        zip_files = sorted(list(set(zip_files)), key=extract_mpd_num)
+        recent_zips = zip_files[-15:]
+        
         now = datetime.now(timezone.utc)
-        # Safely pull the last 24 hours of MPD issuances from IEM
-        start = now - timedelta(hours=24)
+        mpd_gdfs = []
         
-        sts = start.strftime('%Y-%m-%dT%H:%M:%SZ')
-        ets = now.strftime('%Y-%m-%dT%H:%M:%SZ')
-        
-        # Ask IEM's dynamic GIS generator for the MPD shapefiles
-        iem_url = f"https://mesonet.agron.iastate.edu/cgi-bin/request/gis/wpc_mpd.py?sts={sts}&ets={ets}"
-        print(f"Calling IEM API: {iem_url}")
-        
-        response = requests.get(iem_url, headers=NO_CACHE_HEADERS)
-        response.raise_for_status()
-        
-        # If no MPDs were issued, IEM returns an HTML message instead of a zip file
-        if 'application/zip' not in response.headers.get('content-type', ''):
-            print("IEM API did not return a zip file. No MPDs currently active.")
-            return None
+        for zip_filename in recent_zips:
+            zip_url = f"{MPD_FTP_URL}{zip_filename}"
+            print(f"Checking MPD: {zip_filename}")
             
-        tmp_dir = "/tmp/iem_mpds"
-        os.makedirs(tmp_dir, exist_ok=True)
-        
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            z.extractall(tmp_dir)
-            
-        shp_files = [f for f in os.listdir(tmp_dir) if f.endswith(".shp")]
-        if not shp_files: return None
-            
-        shp_path = os.path.join(tmp_dir, shp_files[0])
-        gdf = gpd.read_file(shp_path)
-        
-        if gdf.empty: return None
-            
-        gdf.columns = gdf.columns.str.upper()
-        
-        if "EXPIRE" in gdf.columns:
-            # IEM parses times brilliantly into a standard format
-            gdf["expire_dt"] = pd.to_datetime(gdf["EXPIRE"], errors="coerce", utc=True)
-            
-            # STRICT MATHEMATICAL FILTER: Only keep MPDs expiring in the future!
-            gdf = gdf[gdf["expire_dt"] > now]
-            
-            if gdf.empty:
-                print("All recent MPDs from IEM have expired. Dropping from dashboard.")
-                return None
+            z_resp = requests.get(zip_url, headers=NO_CACHE_HEADERS)
+            if z_resp.status_code == 200:
+                tmp_dir = f"/tmp/mpd_{zip_filename}"
+                os.makedirs(tmp_dir, exist_ok=True)
                 
-            print(f"Found {len(gdf)} ACTIVE MPD(s)! Formatting for dashboard.")
-            gdf = gdf.to_crs("EPSG:4326")
-            gdf["dataType"] = "MPD"
-            
-            # Format times back to the WPC string format (YYMMDDHHMM) that your app.js already expects
-            def format_wpc_string(dt_val):
-                if pd.isna(dt_val): return "Unknown"
-                try:
-                    dt = pd.to_datetime(dt_val)
-                    return dt.strftime("%y%m%d%H%M")
-                except:
-                    return str(dt_val)
+                with zipfile.ZipFile(io.BytesIO(z_resp.content)) as z:
+                    z.extractall(tmp_dir)
                     
-            if "ISSUE" in gdf.columns:
-                gdf["ISSUE"] = gdf["ISSUE"].apply(format_wpc_string)
-            if "EXPIRE" in gdf.columns:
-                gdf["EXPIRE"] = gdf["EXPIRE"].apply(format_wpc_string)
-            
-            # Strip the datetime object before converting to JSON to prevent crashes
-            gdf = gdf.drop(columns=["expire_dt"], errors="ignore")
-            return gdf
-        else:
-            print("Warning: EXPIRE column not found in IEM dataset.")
-            return None
+                shp_files = [f for f in os.listdir(tmp_dir) if f.endswith(".shp")]
+                if shp_files:
+                    shp_path = os.path.join(tmp_dir, shp_files[0])
+                    gdf = gpd.read_file(shp_path)
+                    
+                    # Safely map columns to uppercase to find expiration
+                    col_map = {c.strip().upper(): c for c in gdf.columns}
+                    expire_col = next((col_map[c] for c in ["EXPIRE", "EXPIRATION", "END_TIME"] if c in col_map), None)
+                    
+                    if expire_col:
+                        def parse_wpc_time(t):
+                            t_str = str(t).strip().split('.')[0]
+                            try:
+                                if len(t_str) == 10: return datetime.strptime(t_str, "%y%m%d%H%M").replace(tzinfo=timezone.utc)
+                                if len(t_str) == 12: return datetime.strptime(t_str, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+                                parsed = pd.to_datetime(t_str)
+                                return parsed.tz_localize('UTC') if parsed.tzinfo is None else parsed.tz_convert('UTC')
+                            except: pass
+                            return pd.NaT
+
+                        gdf["expire_dt"] = gdf[expire_col].apply(parse_wpc_time)
+                        
+                        # STRICT FILTER: MUST be explicitly active. Drops everything else mathematically.
+                        gdf = gdf[gdf["expire_dt"] > now]
+                        
+                        if gdf.empty:
+                            print(f"  -> MPD {zip_filename} Expired or invalid. Dropping.")
+                            continue
+                            
+                    else:
+                        print(f"  -> Warning: No expiration column found for {zip_filename}. Dropping to be safe.")
+                        continue
+                        
+                    print(f"  -> MPD {zip_filename} Active! Adding to dashboard.")
+                    gdf = gdf.to_crs("EPSG:4326")
+                    gdf["dataType"] = "MPD"
+                    
+                    gdf = gdf.drop(columns=["expire_dt"], errors="ignore")
+                    mpd_gdfs.append(gdf)
+                                
+        if mpd_gdfs:
+            return pd.concat(mpd_gdfs, ignore_index=True)
             
     except Exception as e:
-        print(f"Failed to fetch MPDs from IEM: {e}")
+        print(f"Failed to fetch MPDs: {e}")
         
     return None
 
