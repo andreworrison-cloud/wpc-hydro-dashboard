@@ -8,11 +8,12 @@ import re
 import time
 from datetime import datetime, timezone
 
-ERO_DAY1_ZIP_URL = "https://www.wpc.ncep.noaa.gov/qpf/ero_day1.zip"
+# ERO points to the live NOAA Enterprise GIS database
+ERO_REST_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query"
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 OUTPUT_FILENAME = "wpc_data.geojson"
 
-# Aggressive headers to force NOAA's Akamai CDN to bypass cache
+# Aggressive headers to prevent any intermediate caching
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
@@ -21,29 +22,18 @@ NO_CACHE_HEADERS = {
 }
 
 def fetch_and_process_ero():
-    print("Fetching absolute latest WPC Day 1 ERO directly from WPC ZIP...")
+    print("Fetching WPC Day 1 ERO from live NOAA REST API...")
     try:
-        cache_bust_url = f"{ERO_DAY1_ZIP_URL}?t={int(time.time())}"
+        # The dynamic time_buster query strictly forces a live database lookup
+        cache_bust_url = f"{ERO_REST_URL}?where=1=1&outFields=OUTLOOK&f=geojson&time_buster={int(time.time())}"
         response = requests.get(cache_bust_url, headers=NO_CACHE_HEADERS)
         response.raise_for_status()
         
-        tmp_dir = "/tmp/ero_shapefile"
-        os.makedirs(tmp_dir, exist_ok=True)
-        
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            z.extractall(tmp_dir)
-            
-        shp_files = [f for f in os.listdir(tmp_dir) if f.endswith(".shp")]
-        if not shp_files:
-            return None
-            
-        shp_path = os.path.join(tmp_dir, shp_files[0])
-        gdf = gpd.read_file(shp_path)
+        gdf = gpd.read_file(response.text, driver="GeoJSON")
         
         if gdf.empty or gdf.geometry.is_empty.all():
             return None
             
-        gdf = gdf.to_crs("EPSG:4326")
         gdf = gdf[~gdf.geometry.is_empty]
         gdf["dataType"] = "ERO"
         
@@ -58,7 +48,7 @@ def fetch_and_process_ero():
         return gdf
         
     except Exception as e:
-        print(f"Failed to fetch ERO from ZIP: {e}")
+        print(f"Failed to fetch ERO from REST API: {e}")
         return None
 
 def fetch_and_process_mpds():
