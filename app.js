@@ -67,10 +67,10 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
-// IEM CONUS Satellite Mosaics (Highly reliable for TimeDimension loops)
-const goesVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_vis.cgi", { ...noaaWmsOptions, layers: 'vis' });
-const goesWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_wv.cgi", { ...noaaWmsOptions, layers: 'wv' });
-const goesIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_ir.cgi", { ...noaaWmsOptions, layers: 'ir' });
+// IEM CONUS Satellite Mosaics (Exact script paths and layer names)
+const goesVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_ch02.cgi", { ...noaaWmsOptions, layers: 'conus_ch02' });
+const goesWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_ch09.cgi", { ...noaaWmsOptions, layers: 'conus_ch09' });
+const goesIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_ch13.cgi", { ...noaaWmsOptions, layers: 'conus_ch13' });
 
 const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: false });
 const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
@@ -78,12 +78,12 @@ const goesIR = L.timeDimension.layer.wms(goesIRWMS, { updateTimeDimension: false
 
 // --- STATIC REAL-TIME WMS LAYERS (Surface & METARs) ---
 
-// WPC Surface Analysis (Official NOAA MapServer: pulling fronts, isobars, Highs/Lows)
+// WPC Surface Analysis (Master layer is '0')
 const wpcSurfaceAnalysis = L.tileLayer.wms("https://mapservices.weather.noaa.gov/vector/services/outlooks/wpc_sfc_fronts/MapServer/WMSServer", {
-    format: 'image/png', transparent: true, opacity: 1.0, layers: '0,1,2,3,4,5'
+    format: 'image/png', transparent: true, opacity: 1.0, layers: '0'
 });
 
-// METAR Surface Observations (NOAA MapServer - MUST ZOOM IN TO SEE DATA)
+// METAR Surface Observations (NOAA MapServer - Master layer is '0')
 const metarLayer = L.tileLayer.wms("https://mapservices.weather.noaa.gov/vector/services/obs/metar/MapServer/WMSServer", {
     format: 'image/png', transparent: true, opacity: 1.0, layers: '0'
 });
@@ -93,8 +93,7 @@ function getAlertColor(event) {
     if (event === "Flash Flood Warning") return "red";
     if (event === "Flood Warning") return "green";
     if (event === "Flood Advisory") return "lightgreen";
-    // NWS officially uses SeaGreen for watches
-    if (event === "Flood Watch" || event === "Flash Flood Watch") return "seagreen"; 
+    if (event === "Flood Watch") return "seagreen"; 
     return "gray"; 
 }
 
@@ -118,8 +117,8 @@ alertsLayer.addTo(map);
 
 async function fetchNWSAlerts() {
     try {
-        // Appended Flood Watch and Flash Flood Watch to the API payload
-        const url = 'https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory,Flood%20Watch,Flash%20Flood%20Watch';
+        // Removed the retired "Flash Flood Watch" terminology so NWS accepts the request
+        const url = 'https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory,Flood%20Watch';
         const response = await fetch(url, { headers: { 'Accept': 'application/geo+json', 'User-Agent': 'WPC-Hydro-Dashboard/1.0' } });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
@@ -201,18 +200,18 @@ const baseMaps = {
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "NEXRAD Radar (6-Hour)": radarTimeLayer,
-        "Active Hydro Warnings": alertsLayer,
+        "Active Hydro Warnings & Watches": alertsLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
     "Surface & Observations": {
         "WPC Surface Analysis": wpcSurfaceAnalysis,
-        "Hourly METARs (Zoom In)": metarLayer
+        "Hourly METARs (Zoom in to State-Level)": metarLayer
     },
     "CONUS Satellite (Looping)": {
-        "Visible Satellite": goesVis,
-        "Mid-Level Water Vapor": goesWV,
-        "Clean IR Satellite": goesIR
+        "Visible Satellite (Ch. 2)": goesVis,
+        "Mid-Level WV (Ch. 9)": goesWV,
+        "Clean IR Satellite (Ch. 13)": goesIR
     }
 };
 
