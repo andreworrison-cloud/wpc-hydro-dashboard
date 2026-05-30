@@ -67,26 +67,14 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
-// IEM GOES-East Satellite Mosaics 
-const goesVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'goes_east_ch02' });
-const goesWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'goes_east_ch09' });
-const goesIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'goes_east_ch13' });
+// Official NOAA MapServices Satellite (Highly Reliable)
+const goesVisWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch02_vis/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
+const goesWVWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch09_wv/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
+const goesIRWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch13_ir/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
 
 const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: false });
 const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
 const goesIR = L.timeDimension.layer.wms(goesIRWMS, { updateTimeDimension: false });
-
-// --- STATIC REAL-TIME WMS LAYERS (Surface & METARs) ---
-
-// WPC Surface Analysis (National Forecast Chart)
-const wpcSurfaceAnalysis = L.tileLayer.wms("https://mapservices.weather.noaa.gov/vector/services/outlooks/natl_fcst_wx_chart/MapServer/WMSServer", {
-    format: 'image/png', transparent: true, opacity: 1.0, layers: '1,2'
-});
-
-// METAR Surface Observations (NOAA surface_obs MapServer)
-const metarLayer = L.tileLayer.wms("https://mapservices.weather.noaa.gov/vector/services/obs/surface_obs/MapServer/WMSServer", {
-    format: 'image/png', transparent: true, opacity: 1.0, layers: '0,1,2'
-});
 
 // --- NWS Active Warnings Logic ---
 function getAlertColor(event) {
@@ -117,7 +105,6 @@ alertsLayer.addTo(map);
 
 async function fetchNWSAlerts() {
     try {
-        // Appended cache-busting timestamp to ensure the browser always grabs new watches
         const url = `https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory,Flood%20Watch&t=${new Date().getTime()}`;
         const response = await fetch(url, { headers: { 'Accept': 'application/geo+json', 'User-Agent': 'WPC-Hydro-Dashboard/1.0' } });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -203,10 +190,6 @@ const groupedOverlays = {
         "Active Hydro Warnings & Watches": alertsLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
-    },
-    "Surface & Observations": {
-        "WPC Surface Analysis": wpcSurfaceAnalysis,
-        "Hourly METARs (Zoom in to State-Level)": metarLayer
     },
     "CONUS Satellite (Looping)": {
         "Visible Satellite (Ch. 2)": goesVis,
