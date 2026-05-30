@@ -5,6 +5,24 @@ const map = L.map('map', {
     zoom: 5
 });
 
+// --- 1. TOP-CENTER DASHBOARD TITLE ---
+const mapTitle = L.DomUtil.create('div', 'map-title');
+mapTitle.innerHTML = '<strong>WPC Real-Time Hydrologic Dashboard</strong>';
+mapTitle.style.position = 'absolute';
+mapTitle.style.top = '10px';
+mapTitle.style.left = '50%';
+mapTitle.style.transform = 'translateX(-50%)';
+mapTitle.style.zIndex = '1000';
+mapTitle.style.background = 'rgba(0, 0, 0, 0.7)';
+mapTitle.style.color = 'white';
+mapTitle.style.padding = '10px 20px';
+mapTitle.style.borderRadius = '6px';
+mapTitle.style.fontFamily = 'sans-serif';
+mapTitle.style.fontSize = '18px';
+mapTitle.style.letterSpacing = '1px';
+mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
+document.getElementById('map').appendChild(mapTitle);
+
 // Define Basemaps
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -16,10 +34,9 @@ const esriDarkLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/s
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
 
-// Add default basemap to the map
 esriDarkLayer.addTo(map);
 
-// --- 6-Hour Loop Logic ---
+// --- TIME LOOP LOGIC (15-Min Intervals for Radar & Sat) ---
 const endTime = new Date();
 endTime.setMinutes(Math.floor(endTime.getMinutes() / 15) * 15);
 endTime.setSeconds(0);
@@ -40,16 +57,36 @@ L.control.timeDimension({
     playerOptions: { transitionTime: 500, loop: true }
 }).addTo(map);
 
-const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
-    layers: 'nexrad-n0q-wmst',
-    format: 'image/png',
-    transparent: true,
-    opacity: 0.6,
-    attribution: "Weather data © IEM Nexrad"
-});
+// --- REAL-TIME WMS LOOPING LAYERS (Radar & Satellite) ---
+const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 
+// Radar
+const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
+    ...noaaWmsOptions, layers: 'nexrad-n0q-wmst', attribution: "Weather data © IEM Nexrad"
+});
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
+
+// GOES-East Satellite (Vis, WV, IR)
+const goesEastVis = L.timeDimension.layer.wms(L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'goes_east_ch02' }), { updateTimeDimension: false });
+const goesEastWV = L.timeDimension.layer.wms(L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'goes_east_ch09' }), { updateTimeDimension: false });
+const goesEastIR = L.timeDimension.layer.wms(L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'goes_east_ch13' }), { updateTimeDimension: false });
+
+// GOES-West Satellite (Vis, WV, IR)
+const goesWestVis = L.timeDimension.layer.wms(L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...noaaWmsOptions, layers: 'goes_west_ch02' }), { updateTimeDimension: false });
+const goesWestWV = L.timeDimension.layer.wms(L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...noaaWmsOptions, layers: 'goes_west_ch09' }), { updateTimeDimension: false });
+const goesWestIR = L.timeDimension.layer.wms(L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...noaaWmsOptions, layers: 'goes_west_ch13' }), { updateTimeDimension: false });
+
+// --- STATIC REAL-TIME WMS LAYERS (Surface & METARs) ---
+// WPC Surface Analysis
+const wpcSurfaceAnalysis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/wpc/sfc.cgi", {
+    format: 'image/png', transparent: true, opacity: 0.8, layers: 'wpc_sfc'
+});
+
+// METAR Surface Observations
+const metarLayer = L.tileLayer.wms("https://mapservices.weather.noaa.gov/vector/services/obs/metar/MapServer/WMSServer", {
+    format: 'image/png', transparent: true, opacity: 1.0, layers: '0'
+});
 
 // --- NWS Active Warnings Logic ---
 function getAlertColor(event) {
@@ -80,42 +117,29 @@ alertsLayer.addTo(map);
 async function fetchNWSAlerts() {
     try {
         const url = 'https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory';
-        const response = await fetch(url, {
-            headers: {
-                'Accept': 'application/geo+json',
-                'User-Agent': 'WPC-Hydro-Dashboard/1.0' 
-            }
-        });
+        const response = await fetch(url, { headers: { 'Accept': 'application/geo+json', 'User-Agent': 'WPC-Hydro-Dashboard/1.0' } });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         alertsLayer.addData(data);
-    } catch (error) {
-        console.error("Error fetching NWS alerts:", error);
-    }
+    } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
-
 fetchNWSAlerts();
 
 // --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
     let riskColor = "#00ff00"; 
-    
     if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFA500"; 
     if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; 
     if (cat.includes("HIGH")) riskColor = "#FF00FF"; 
-    
     return { color: riskColor, weight: 2, fillOpacity: 0.15 };
 }
 
-// Dynamic MPD Styling Function - Bulletproof metadata search
 function getMpdStyle(feature) {
     const propStr = JSON.stringify(feature.properties).toUpperCase();
-    let lineColor = "#ff00ff"; // Fallback Fuchsia
-    
-    if (propStr.includes("POSSIBLE")) lineColor = "#0000FF"; // Blue
-    if (propStr.includes("LIKELY")) lineColor = "#800080";   // Purple
-    
+    let lineColor = "#ff00ff"; 
+    if (propStr.includes("POSSIBLE")) lineColor = "#0000FF"; 
+    if (propStr.includes("LIKELY")) lineColor = "#800080";   
     return { color: lineColor, weight: 3, dashArray: "5, 5", fillOpacity: 0.1 };
 }
 
@@ -127,44 +151,19 @@ const eroLayer = L.geoJSON(null, {
     }
 });
 
-// Updated MPD Layer using explicit HTML formatting
 const mpdLayer = L.geoJSON(null, {
     style: getMpdStyle,
     onEachFeature: function (feature, layer) {
         const props = feature.properties;
-        
-        // Ensure we are only applying this to MPDs
         if (props && props.dataType === "MPD") {
-            
-            // Pull the clean metadata generated by our Python script
             const mpdNum = props.mpd_number || "Unknown";
             const mpdTag = props.mpd_tag || "See WPC for details";
             const validTime = props.valid_time || "Unknown";
-
-            // 1. The Hover Tooltip (3 clean, centered lines)
-            const tooltipHTML = `
-                <div style="text-align: center; font-family: sans-serif; line-height: 1.4;">
-                    <strong>MPD ${mpdNum}</strong><br>
-                    ${mpdTag}<br>
-                    Valid: ${validTime}
-                </div>
-            `;
             
-            layer.bindTooltip(tooltipHTML, {
-                sticky: true,
-                direction: "top"
-            });
+            const tooltipHTML = `<div style="text-align: center; font-family: sans-serif; line-height: 1.4;"><strong>MPD ${mpdNum}</strong><br>${mpdTag}<br>Valid: ${validTime}</div>`;
+            layer.bindTooltip(tooltipHTML, { sticky: true, direction: "top" });
             
-            // 2. The Clickable Popup (Given a min-width so it never squishes vertically)
-            const popupHTML = `
-                <div style="font-family: sans-serif; font-size: 14px; min-width: 240px; text-align: center;">
-                    <strong>MPD ${mpdNum}</strong><br>
-                    <span style="color: #d84b2a;"><strong>${mpdTag}</strong></span><br>
-                    <hr style="margin: 5px 0;">
-                    <span style="font-size: 0.9em;">Valid: ${validTime}</span>
-                </div>
-            `;
-            
+            const popupHTML = `<div style="font-family: sans-serif; font-size: 14px; min-width: 240px; text-align: center;"><strong>MPD ${mpdNum}</strong><br><span style="color: #d84b2a;"><strong>${mpdTag}</strong></span><br><hr style="margin: 5px 0;"><span style="font-size: 0.9em;">Valid: ${validTime}</span></div>`;
             layer.bindPopup(popupHTML);
         }
     }
@@ -177,68 +176,20 @@ async function fetchWPCData() {
     try {
         const url = 'wpc_data.geojson?t=' + new Date().getTime();
         const response = await fetch(url);
-        
         if (!response.ok) return;
-        
         const data = await response.json();
+        
         const eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
         const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
         
-        if (eroFeatures.length > 0) {
-            eroLayer.addData(eroFeatures);
-        } else {
-            const noEroLabel = L.control({position: 'topright'});
-            noEroLabel.onAdd = function () {
-                const div = L.DomUtil.create('div', 'info legend');
-                div.style.backgroundColor = "rgba(0,0,0,0.7)";
-                div.style.color = "white";
-                div.style.padding = "10px";
-                div.style.borderRadius = "5px";
-                div.style.fontSize = "0.9em";
-                div.style.maxWidth = "250px";
-                div.innerHTML = "<strong>WPC Day 1 ERO</strong><br>The probability of rainfall exceeding flash flood guidance is less than 5 percent.";
-                return div;
-            };
-            map.on('overlayadd', function(e) { if (e.name === "Day 1 ERO (Real-Time)") noEroLabel.addTo(map); });
-            map.on('overlayremove', function(e) { if (e.name === "Day 1 ERO (Real-Time)") noEroLabel.remove(); });
-            if (map.hasLayer(eroLayer)) noEroLabel.addTo(map);
-        }
-        
+        if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
         if (mpdFeatures.length > 0) mpdLayer.addData(mpdFeatures);
         
-    } catch (error) {
-        console.error("Error fetching WPC GeoJSON:", error);
-    }
+    } catch (error) { console.error("Error fetching WPC GeoJSON:", error); }
 }
-
 fetchWPCData();
 
-// --- WMS LAYERS FOR EXTENDED ERO & QPF ---
-
-const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6, attribution: 'NOAA/NWS/WPC' };
-
-// Extended ERO WMS
-const eroWmsUrl = "https://mapservices.weather.noaa.gov/vector/services/hazards/wpc_precip_hazards/MapServer/WMSServer";
-const eroDay2 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '1' });
-const eroDay3 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '2' });
-const eroDay4 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '3' });
-const eroDay5 = L.tileLayer.wms(eroWmsUrl, { ...noaaWmsOptions, layers: '4' });
-
-// QPF WMS
-const qpfWmsUrl = "https://mapservices.weather.noaa.gov/vector/services/precip/wpc_qpf/MapServer/WMSServer";
-const qpfDay1 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '1' });
-const qpfDay2 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '2' });
-const qpfDay3 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '3' });
-const qpfDay4_5 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '4' });
-const qpfDay6_7 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '5' });
-
-const qpfDay1_2 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '7' });
-const qpfDay1_3 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '8' });
-const qpfDay1_5 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '9' });
-const qpfDay1_7 = L.tileLayer.wms(qpfWmsUrl, { ...noaaWmsOptions, layers: '10' });
-
 // --- GROUPED LAYER CONTROLS ---
-
 const baseMaps = {
     "Esri Dark Gray": esriDarkLayer,
     "OpenStreetMap": osmLayer
@@ -248,31 +199,23 @@ const groupedOverlays = {
     "Active Hazards & Warnings": {
         "NEXRAD Radar (6-Hour)": radarTimeLayer,
         "Active Hydro Warnings": alertsLayer,
-        "WPC Active MPDs": mpdLayer
+        "WPC Active MPDs": mpdLayer,
+        "Day 1 ERO (Real-Time)": eroLayer
     },
-    "WPC Excessive Rainfall Outlooks": {
-        "Day 1 ERO (Real-Time)": eroLayer,
-        "Day 2 ERO": eroDay2,
-        "Day 3 ERO": eroDay3,
-        "Day 4 ERO": eroDay4,
-        "Day 5 ERO": eroDay5
+    "Surface & Observations": {
+        "WPC Surface Analysis": wpcSurfaceAnalysis,
+        "Hourly METARs": metarLayer
     },
-    "WPC QPF (Individual Periods)": {
-        "Day 1 QPF": qpfDay1,
-        "Day 2 QPF": qpfDay2,
-        "Day 3 QPF": qpfDay3,
-        "Days 4-5 QPF": qpfDay4_5,
-        "Days 6-7 QPF": qpfDay6_7
+    "GOES-East Satellite (Looping)": {
+        "Visible (Ch. 2)": goesEastVis,
+        "Mid-Level WV (Ch. 9)": goesEastWV,
+        "Clean IR (Ch. 13)": goesEastIR
     },
-    "WPC QPF (Cumulative Totals)": {
-        "Day 1-2 Total": qpfDay1_2,
-        "Day 1-3 Total": qpfDay1_3,
-        "Day 1-5 Total": qpfDay1_5,
-        "Day 1-7 Total": qpfDay1_7
+    "GOES-West Satellite (Looping)": {
+        "Visible (Ch. 2)": goesWestVis,
+        "Mid-Level WV (Ch. 9)": goesWestWV,
+        "Clean IR (Ch. 13)": goesWestIR
     }
 };
 
-// Use the groupedLayers plugin instead of the standard control
-L.control.groupedLayers(baseMaps, groupedOverlays, {
-    collapsed: true
-}).addTo(map);
+L.control.groupedLayers(baseMaps, groupedOverlays, { collapsed: true }).addTo(map);
