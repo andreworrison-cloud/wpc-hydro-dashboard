@@ -23,20 +23,29 @@ mapTitle.style.letterSpacing = '1px';
 mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
 
-// Define Basemaps
-const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-});
+// --- THE AWIPS BORDERS TRICK ---
+// Create a custom pane that floats ABOVE the weather data (z-index 650)
+map.createPane('labels');
+map.getPane('labels').style.zIndex = 650;
+// Ensure clicks pass through the borders so your warning pop-ups still work
+map.getPane('labels').style.pointerEvents = 'none'; 
 
-const esriDarkLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+// 1. Bottom Layer: The dark canvas (No borders)
+const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 16,
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
+esriDarkBase.addTo(map);
 
-esriDarkLayer.addTo(map);
+// 2. Top Layer: The borders and labels (Mapped to the floating 'labels' pane)
+const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+    pane: 'labels',
+    maxZoom: 16
+});
+esriDarkLabels.addTo(map);
 
-// --- TIME LOOP LOGIC (15-Min Intervals for Radar & Sat) ---
+
+// --- TIME LOOP LOGIC (15-Min Intervals for Radar) ---
 const endTime = new Date();
 endTime.setMinutes(Math.floor(endTime.getMinutes() / 15) * 15);
 endTime.setSeconds(0);
@@ -57,26 +66,29 @@ L.control.timeDimension({
     playerOptions: { transitionTime: 500, loop: true }
 }).addTo(map);
 
-// --- REAL-TIME WMS LOOPING LAYERS (Radar & Satellite) ---
-const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6, attribution: 'Data © Iowa Environmental Mesonet' };
-
-// Radar
+// --- LOOPING RADAR LAYER ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
-    ...noaaWmsOptions, layers: 'nexrad-n0q-wmst'
+    format: 'image/png', transparent: true, opacity: 0.6, layers: 'nexrad-n0q-wmst', attribution: "Data © IEM"
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
-// IEM GOES-East Satellite Mosaics (Intelligent Time-Snapping WMS)
-const goesVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'conus_ch02' });
-const goesWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'conus_ch09' });
-const goesIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'conus_ch13' });
 
-const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: false });
-const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
-const goesIR = L.timeDimension.layer.wms(goesIRWMS, { updateTimeDimension: false });
+// --- STATIC SATELLITE LAYERS (GOES-East & GOES-West) ---
+const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 
-// --- NWS ACTIVE HYDRO WARNINGS & WATCHES (Split GeoJSON) ---
+// GOES-East
+const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
+const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
+const goesEastIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch13' });
+
+// GOES-West
+const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
+const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
+const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
+
+
+// --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -133,6 +145,7 @@ async function fetchNWSAlerts() {
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
+
 
 // --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
 function getEroStyle(feature) {
@@ -198,24 +211,29 @@ async function fetchWPCData() {
 }
 fetchWPCData();
 
+
 // --- GROUPED LAYER CONTROLS ---
 const baseMaps = {
-    "Esri Dark Gray": esriDarkLayer,
-    "OpenStreetMap": osmLayer
+    "Esri Dark Gray": esriDarkBase
 };
 
 const groupedOverlays = {
     "Active Hazards & Warnings": {
-        "NEXRAD Radar (6-Hour)": radarTimeLayer,
+        "NEXRAD Radar (6-Hour Loop)": radarTimeLayer,
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
-    "CONUS Satellite (Looping)": {
-        "Visible Satellite (Ch. 2)": goesVis,
-        "Mid-Level WV (Ch. 9)": goesWV,
-        "Clean IR Satellite (Ch. 13)": goesIR
+    "GOES-East (Latest)": {
+        "Visible (Ch. 2)": goesEastVis,
+        "Mid-Level WV (Ch. 9)": goesEastWV,
+        "Clean IR (Ch. 13)": goesEastIR
+    },
+    "GOES-West (Latest)": {
+        "Visible (Ch. 2)": goesWestVis,
+        "Mid-Level WV (Ch. 9)": goesWestWV,
+        "Clean IR (Ch. 13)": goesWestIR
     }
 };
 
