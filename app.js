@@ -24,20 +24,16 @@ mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
 
 // --- THE AWIPS BORDERS TRICK ---
-// Create a custom pane that floats ABOVE the weather data (z-index 650)
 map.createPane('labels');
 map.getPane('labels').style.zIndex = 650;
-// Ensure clicks pass through the borders so your warning pop-ups still work
 map.getPane('labels').style.pointerEvents = 'none'; 
 
-// 1. Bottom Layer: The dark canvas (No borders)
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 16,
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
 esriDarkBase.addTo(map);
 
-// 2. Top Layer: The borders and labels (Mapped to the floating 'labels' pane)
 const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels',
     maxZoom: 16
@@ -45,9 +41,10 @@ const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/
 esriDarkLabels.addTo(map);
 
 
-// --- TIME LOOP LOGIC (15-Min Intervals for Radar) ---
+// --- TIME LOOP LOGIC (10-Min Intervals for Radar & Sat) ---
 const endTime = new Date();
-endTime.setMinutes(Math.floor(endTime.getMinutes() / 15) * 15);
+// Snap to the nearest 10-minute block (e.g., :00, :10, :20)
+endTime.setMinutes(Math.floor(endTime.getMinutes() / 10) * 10);
 endTime.setSeconds(0);
 endTime.setMilliseconds(0);
 
@@ -56,7 +53,7 @@ const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
 
 map.timeDimension = L.timeDimension({
     timeInterval: timeRange,
-    period: "PT15M",
+    period: "PT10M", // 10-minute steps
     currentTime: endTime.getTime()
 });
 
@@ -66,6 +63,7 @@ L.control.timeDimension({
     playerOptions: { transitionTime: 500, loop: true }
 }).addTo(map);
 
+
 // --- LOOPING RADAR LAYER ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
     format: 'image/png', transparent: true, opacity: 0.6, layers: 'nexrad-n0q-wmst', attribution: "Data © IEM"
@@ -74,18 +72,28 @@ const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension
 radarTimeLayer.addTo(map);
 
 
-// --- STATIC SATELLITE LAYERS (GOES-East & GOES-West) ---
+// --- LOOPING SATELLITE LAYERS (GOES-East & GOES-West) ---
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 
 // GOES-East
-const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
-const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
-const goesEastIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch13' });
+const goesEastVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
+const goesEastVis = L.timeDimension.layer.wms(goesEastVisWMS, { updateTimeDimension: false });
+
+const goesEastWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
+const goesEastWV = L.timeDimension.layer.wms(goesEastWVWMS, { updateTimeDimension: false });
+
+const goesEastIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch13' });
+const goesEastIR = L.timeDimension.layer.wms(goesEastIRWMS, { updateTimeDimension: false });
 
 // GOES-West
-const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
-const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
-const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
+const goesWestVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
+const goesWestVis = L.timeDimension.layer.wms(goesWestVisWMS, { updateTimeDimension: false });
+
+const goesWestWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
+const goesWestWV = L.timeDimension.layer.wms(goesWestWVWMS, { updateTimeDimension: false });
+
+const goesWestIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
+const goesWestIR = L.timeDimension.layer.wms(goesWestIRWMS, { updateTimeDimension: false });
 
 
 // --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
@@ -225,12 +233,12 @@ const groupedOverlays = {
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
-    "GOES-East (Latest)": {
+    "GOES-East (Looping)": {
         "Visible (Ch. 2)": goesEastVis,
         "Mid-Level WV (Ch. 9)": goesEastWV,
         "Clean IR (Ch. 13)": goesEastIR
     },
-    "GOES-West (Latest)": {
+    "GOES-West (Looping)": {
         "Visible (Ch. 2)": goesWestVis,
         "Mid-Level WV (Ch. 9)": goesWestWV,
         "Clean IR (Ch. 13)": goesWestIR
