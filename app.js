@@ -76,35 +76,39 @@ const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: fal
 const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
 const goesIR = L.timeDimension.layer.wms(goesIRWMS, { updateTimeDimension: false });
 
-// --- NWS WATCHES WMS (Hybrid Approach) ---
-// Layer 1 pulls exclusively Watches from the NWS WWA MapServer
-const nwsWatchesLayer = L.tileLayer.wms("https://mapservices.weather.noaa.gov/eventdriven/services/WWA/watch_warn_adv/MapServer/WMSServer", {
-    format: 'image/png', 
-    transparent: true, 
-    opacity: 0.5, 
-    layers: '1'
-});
-nwsWatchesLayer.addTo(map);
-
-// --- NWS ACTIVE WARNINGS API (Clickable GeoJSON) ---
+// --- NWS ACTIVE HYDRO WARNINGS & WATCHES (Unified GeoJSON Query) ---
 function getAlertColor(event) {
+    if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
     if (event === "Flood Warning") return "green";
     if (event === "Flood Advisory") return "lightgreen";
+    if (event === "Flood Watch" || event === "Flash Flood Watch") return "seagreen"; 
     return "gray"; 
 }
 
 const alertsLayer = L.geoJSON(null, {
     style: function (feature) {
-        return { color: getAlertColor(feature.properties.event), weight: 2, opacity: 1, fillOpacity: 0.2 };
+        return { 
+            color: getAlertColor(feature.properties.prod_type), 
+            weight: 2, 
+            opacity: 1, 
+            fillOpacity: 0.2 
+        };
     },
     onEachFeature: function (feature, layer) {
+        const props = feature.properties;
+        const eventName = props.prod_type || "Unknown Hydro Alert";
+        const wfo = props.wfo ? `WFO ${props.wfo}` : "NWS";
+        const expires = props.expiration || "Unknown";
+        const link = props.url ? `<br><br><a href="${props.url}" target="_blank">View Alert Text</a>` : "";
+
         layer.bindPopup(`
-            <div style="font-family: sans-serif;">
-                <strong style="color: ${getAlertColor(feature.properties.event)};">${feature.properties.event}</strong><br>
-                <em>${feature.properties.senderName}</em><br>
+            <div style="font-family: sans-serif; text-align: center; min-width: 200px;">
+                <strong style="color: ${getAlertColor(eventName)}; font-size: 1.1em;">${eventName}</strong><br>
+                <em>Issued by ${wfo}</em><br>
                 <hr style="margin: 5px 0;">
-                <span style="font-size: 0.9em;">${feature.properties.headline}</span>
+                <span style="font-size: 0.9em;">Expires: ${expires}</span>
+                ${link}
             </div>
         `);
     }
@@ -114,13 +118,17 @@ alertsLayer.addTo(map);
 
 async function fetchNWSAlerts() {
     try {
-        // We removed Flood Watch from the API pull since the WMS handles it now
-        const url = `https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory&t=${new Date().getTime()}`;
-        const response = await fetch(url, { headers: { 'Accept': 'application/geo+json', 'User-Agent': 'WPC-Hydro-Dashboard/1.0' } });
+        // Run a precise SQL query on NOAA's backend to fetch ONLY Hydro events and return them as pure GeoJSON polygons
+        const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
+        const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson`;
+        
+        const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         alertsLayer.addData(data);
-    } catch (error) { console.error("Error fetching NWS alerts:", error); }
+    } catch (error) { 
+        console.error("Error fetching NWS alerts:", error); 
+    }
 }
 fetchNWSAlerts();
 
@@ -197,8 +205,7 @@ const baseMaps = {
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "NEXRAD Radar (6-Hour)": radarTimeLayer,
-        "Active Hydro Warnings (Clickable)": alertsLayer,
-        "Active NWS Watches (WMS)": nwsWatchesLayer,
+        "Active Hydro Watches & Warnings": alertsLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
