@@ -76,7 +76,7 @@ const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: fal
 const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
 const goesIR = L.timeDimension.layer.wms(goesIRWMS, { updateTimeDimension: false });
 
-// --- NWS ACTIVE HYDRO WARNINGS & WATCHES (Unified GeoJSON Query) ---
+// --- NWS ACTIVE HYDRO WARNINGS & WATCHES (Split GeoJSON) ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -86,7 +86,8 @@ function getAlertColor(event) {
     return "gray"; 
 }
 
-const alertsLayer = L.geoJSON(null, {
+// Create a common styling and popup configuration for both layers
+const commonAlertOptions = {
     style: function (feature) {
         return { 
             color: getAlertColor(feature.properties.prod_type), 
@@ -112,20 +113,32 @@ const alertsLayer = L.geoJSON(null, {
             </div>
         `);
     }
-});
+};
 
-alertsLayer.addTo(map);
+// Create the two distinct layers
+const warningsLayer = L.geoJSON(null, commonAlertOptions);
+const watchesLayer = L.geoJSON(null, commonAlertOptions);
+
+warningsLayer.addTo(map);
+watchesLayer.addTo(map);
 
 async function fetchNWSAlerts() {
     try {
-        // Run a precise SQL query on NOAA's backend to fetch ONLY Hydro events and return them as pure GeoJSON polygons
         const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
         const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson`;
         
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
-        alertsLayer.addData(data);
+        
+        // Filter the incoming data into separate buckets
+        const warningFeatures = data.features.filter(f => !f.properties.prod_type.includes("Watch"));
+        const watchFeatures = data.features.filter(f => f.properties.prod_type.includes("Watch"));
+        
+        // Add data to the respective layers
+        if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
+        if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
+        
     } catch (error) { 
         console.error("Error fetching NWS alerts:", error); 
     }
@@ -205,7 +218,8 @@ const baseMaps = {
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "NEXRAD Radar (6-Hour)": radarTimeLayer,
-        "Active Hydro Watches & Warnings": alertsLayer,
+        "Active Hydro Warnings & Advisories": warningsLayer,
+        "Active Hydro Watches": watchesLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
