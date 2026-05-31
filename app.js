@@ -58,19 +58,19 @@ L.control.timeDimension({
 }).addTo(map);
 
 // --- REAL-TIME WMS LOOPING LAYERS (Radar & Satellite) ---
-const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
+const noaaWmsOptions = { format: 'image/png', transparent: true, opacity: 0.6, attribution: 'Data © Iowa Environmental Mesonet' };
 
 // Radar
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
-    ...noaaWmsOptions, layers: 'nexrad-n0q-wmst', attribution: "Weather data © IEM Nexrad"
+    ...noaaWmsOptions, layers: 'nexrad-n0q-wmst'
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
-// Official NOAA MapServices Satellite
-const goesVisWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch02_vis/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
-const goesWVWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch09_wv/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
-const goesIRWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch13_ir/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
+// IEM GOES-East Satellite Mosaics (Intelligent Time-Snapping WMS)
+const goesVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'conus_ch02' });
+const goesWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'conus_ch09' });
+const goesIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...noaaWmsOptions, layers: 'conus_ch13' });
 
 const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: false });
 const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
@@ -86,15 +86,9 @@ function getAlertColor(event) {
     return "gray"; 
 }
 
-// Create a common styling and popup configuration for both layers
 const commonAlertOptions = {
     style: function (feature) {
-        return { 
-            color: getAlertColor(feature.properties.prod_type), 
-            weight: 2, 
-            opacity: 1, 
-            fillOpacity: 0.2 
-        };
+        return { color: getAlertColor(feature.properties.prod_type), weight: 2, opacity: 1, fillOpacity: 0.2 };
     },
     onEachFeature: function (feature, layer) {
         const props = feature.properties;
@@ -115,7 +109,6 @@ const commonAlertOptions = {
     }
 };
 
-// Create the two distinct layers
 const warningsLayer = L.geoJSON(null, commonAlertOptions);
 const watchesLayer = L.geoJSON(null, commonAlertOptions);
 
@@ -131,17 +124,13 @@ async function fetchNWSAlerts() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
-        // Filter the incoming data into separate buckets
         const warningFeatures = data.features.filter(f => !f.properties.prod_type.includes("Watch"));
         const watchFeatures = data.features.filter(f => f.properties.prod_type.includes("Watch"));
         
-        // Add data to the respective layers
         if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
         if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
         
-    } catch (error) { 
-        console.error("Error fetching NWS alerts:", error); 
-    }
+    } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
 
