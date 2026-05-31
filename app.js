@@ -67,7 +67,7 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
-// Official NOAA MapServices Satellite (Highly Reliable)
+// Official NOAA MapServices Satellite
 const goesVisWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch02_vis/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
 const goesWVWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch09_wv/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
 const goesIRWMS = L.tileLayer.wms("https://mapservices.weather.noaa.gov/raster/services/obs/goes_conus_ch13_ir/MapServer/WMSServer", { ...noaaWmsOptions, layers: '0' });
@@ -76,12 +76,21 @@ const goesVis = L.timeDimension.layer.wms(goesVisWMS, { updateTimeDimension: fal
 const goesWV = L.timeDimension.layer.wms(goesWVWMS, { updateTimeDimension: false });
 const goesIR = L.timeDimension.layer.wms(goesIRWMS, { updateTimeDimension: false });
 
-// --- NWS Active Warnings Logic ---
+// --- NWS WATCHES WMS (Hybrid Approach) ---
+// Layer 1 pulls exclusively Watches from the NWS WWA MapServer
+const nwsWatchesLayer = L.tileLayer.wms("https://mapservices.weather.noaa.gov/eventdriven/services/WWA/watch_warn_adv/MapServer/WMSServer", {
+    format: 'image/png', 
+    transparent: true, 
+    opacity: 0.5, 
+    layers: '1'
+});
+nwsWatchesLayer.addTo(map);
+
+// --- NWS ACTIVE WARNINGS API (Clickable GeoJSON) ---
 function getAlertColor(event) {
     if (event === "Flash Flood Warning") return "red";
     if (event === "Flood Warning") return "green";
     if (event === "Flood Advisory") return "lightgreen";
-    if (event === "Flood Watch") return "seagreen"; 
     return "gray"; 
 }
 
@@ -105,7 +114,8 @@ alertsLayer.addTo(map);
 
 async function fetchNWSAlerts() {
     try {
-        const url = `https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory,Flood%20Watch&t=${new Date().getTime()}`;
+        // We removed Flood Watch from the API pull since the WMS handles it now
+        const url = `https://api.weather.gov/alerts/active?event=Flash%20Flood%20Warning,Flood%20Warning,Flood%20Advisory&t=${new Date().getTime()}`;
         const response = await fetch(url, { headers: { 'Accept': 'application/geo+json', 'User-Agent': 'WPC-Hydro-Dashboard/1.0' } });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
@@ -187,7 +197,8 @@ const baseMaps = {
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "NEXRAD Radar (6-Hour)": radarTimeLayer,
-        "Active Hydro Warnings & Watches": alertsLayer,
+        "Active Hydro Warnings (Clickable)": alertsLayer,
+        "Active NWS Watches (WMS)": nwsWatchesLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
