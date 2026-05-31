@@ -49,19 +49,20 @@ const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/
 esriDarkLabels.addTo(map);
 
 
-// --- TIME LOOP LOGIC (10-Min Intervals for Radar & Sat) ---
+// --- TIME LOOP LOGIC (10-Min Intervals, 2-Hour Loop for Speed) ---
 const endTime = new Date();
 // Snap to the nearest 10-minute block (e.g., :00, :10, :20)
 endTime.setMinutes(Math.floor(endTime.getMinutes() / 10) * 10);
 endTime.setSeconds(0);
 endTime.setMilliseconds(0);
 
-const startTime = new Date(endTime.getTime() - 6 * 60 * 60 * 1000);
+// Set to 2 hours to prevent browser traffic jams and make looping snappy
+const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000);
 const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
 
 map.timeDimension = L.timeDimension({
     timeInterval: timeRange,
-    period: "PT10M", // 10-minute steps to match GOES constraints
+    period: "PT10M", 
     currentTime: endTime.getTime()
 });
 
@@ -80,28 +81,18 @@ const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension
 radarTimeLayer.addTo(map);
 
 
-// --- LOOPING SATELLITE LAYERS (GOES-East & GOES-West) ---
+// --- STATIC SATELLITE LAYERS (GOES-East & GOES-West) ---
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 
-// GOES-East
-const goesEastVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
-const goesEastVis = L.timeDimension.layer.wms(goesEastVisWMS, { updateTimeDimension: false });
+// GOES-East (Latest Image Only)
+const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
+const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
+const goesEastIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-const goesEastWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
-const goesEastWV = L.timeDimension.layer.wms(goesEastWVWMS, { updateTimeDimension: false });
-
-const goesEastIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch13' });
-const goesEastIR = L.timeDimension.layer.wms(goesEastIRWMS, { updateTimeDimension: false });
-
-// GOES-West
-const goesWestVisWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
-const goesWestVis = L.timeDimension.layer.wms(goesWestVisWMS, { updateTimeDimension: false });
-
-const goesWestWVWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
-const goesWestWV = L.timeDimension.layer.wms(goesWestWVWMS, { updateTimeDimension: false });
-
-const goesWestIRWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
-const goesWestIR = L.timeDimension.layer.wms(goesWestIRWMS, { updateTimeDimension: false });
+// GOES-West (Latest Image Only)
+const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
+const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
+const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
 
 // --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
@@ -236,18 +227,18 @@ const baseMaps = {
 
 const groupedOverlays = {
     "Active Hazards & Warnings": {
-        "NEXRAD Radar (6-Hour Loop)": radarTimeLayer,
+        "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
-    "GOES-East (Looping)": {
+    "GOES-East (Latest)": {
         "Visible (Ch. 2)": goesEastVis,
         "Mid-Level WV (Ch. 9)": goesEastWV,
         "Clean IR (Ch. 13)": goesEastIR
     },
-    "GOES-West (Looping)": {
+    "GOES-West (Latest)": {
         "Visible (Ch. 2)": goesWestVis,
         "Mid-Level WV (Ch. 9)": goesWestWV,
         "Clean IR (Ch. 13)": goesWestIR
