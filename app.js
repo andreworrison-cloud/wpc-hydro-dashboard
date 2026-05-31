@@ -28,12 +28,20 @@ map.createPane('labels');
 map.getPane('labels').style.zIndex = 650;
 map.getPane('labels').style.pointerEvents = 'none'; 
 
+// Dark Base
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 16,
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
-esriDarkBase.addTo(map);
+esriDarkBase.addTo(map); // Default active base layer
 
+// Daytime / White Base (OpenStreetMap)
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors'
+});
+
+// The floating borders and labels (Always sits on top of weather data)
 const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels',
     maxZoom: 16
@@ -53,7 +61,7 @@ const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
 
 map.timeDimension = L.timeDimension({
     timeInterval: timeRange,
-    period: "PT10M", // 10-minute steps
+    period: "PT10M", // 10-minute steps to match GOES constraints
     currentTime: endTime.getTime()
 });
 
@@ -222,7 +230,8 @@ fetchWPCData();
 
 // --- GROUPED LAYER CONTROLS ---
 const baseMaps = {
-    "Esri Dark Gray": esriDarkBase
+    "Esri Dark Gray": esriDarkBase,
+    "OpenStreetMap": osmLayer
 };
 
 const groupedOverlays = {
