@@ -75,7 +75,7 @@ def fetch_active_mpd_numbers():
         matches = re.findall(r'md=(\d{3,4})', r.text)
         active_nums = set(int(m) for m in matches)
         
-        print(f" -> Found active MPD numbers: {list(active_nums)}")
+        print(f" -> Found active MPD numbers candidate list: {list(active_nums)}")
         return list(active_nums)
     except Exception as e:
         print(f"Failed to scrape active MPD numbers: {e}")
@@ -107,8 +107,6 @@ def fetch_and_process_mpds():
     mpd_gdfs = []
     
     for mpd_num in active_nums:
-        zip_filename = f"MPD_{mpd_num:04d}_final.zip"
-        zip_url = f"{MPD_FTP_URL}{zip_filename}"
         print(f"\nProcessing MPD {mpd_num:04d}...")
         
         issue_dt, expire_dt = fetch_mpd_times_from_text(mpd_num)
@@ -116,6 +114,15 @@ def fetch_and_process_mpds():
         if not issue_dt or not expire_dt:
             print(f" -> Could not parse official times for {mpd_num:04d} from text. Skipping.")
             continue
+            
+        # --- THE TIME-GATE FIX ---
+        # If the current time has passed the expiration time, skip it entirely!
+        if utc_now() > expire_dt:
+            print(f" -> MPD {mpd_num:04d} has expired (Expired at {expire_dt.strftime('%H%MZ %b %d %Y')}). Purging from data feed.")
+            continue
+            
+        zip_filename = f"MPD_{mpd_num:04d}_final.zip"
+        zip_url = f"{MPD_FTP_URL}{zip_filename}"
             
         z_resp = requests.get(zip_url, headers=NO_CACHE_HEADERS, timeout=30)
         if z_resp.status_code != 200:
@@ -134,30 +141,23 @@ def fetch_and_process_mpds():
                 if gdf.crs is None: gdf = gdf.set_crs("EPSG:4326", allow_override=True)
                 else: gdf = gdf.to_crs("EPSG:4326")
                 
-                # --- NEW TAG EXTRACTION & FORMATTING ---
                 col_map = {c.strip().upper(): c for c in gdf.columns}
                 tag_col = next((col_map[c] for c in ["TAG", "SUBJECT", "PROB"] if c in col_map), None)
                 
                 extracted_tag = ""
                 if tag_col and not pd.isna(gdf[tag_col].iloc[0]):
                     raw_tag = str(gdf[tag_col].iloc[0])
-                    # Split by "..." to capitalize the first letter of each sentence chunk cleanly
                     parts = raw_tag.split("...")
                     formatted_parts = [p.strip().capitalize() for p in parts]
                     extracted_tag = "...".join(formatted_parts)
                 else:
-                    # Fallback if standard columns are missing
                     row_str = str(gdf.iloc[0].to_dict()).upper()
-                    if "FLASH FLOODING LIKELY" in row_str:
-                        extracted_tag = "Flash flooding likely"
-                    elif "FLASH FLOODING POSSIBLE" in row_str:
-                        extracted_tag = "Flash flooding possible"
-                    else:
-                        extracted_tag = "See WPC for details"
+                    if "FLASH FLOODING LIKELY" in row_str: extracted_tag = "Flash flooding likely"
+                    elif "FLASH FLOODING POSSIBLE" in row_str: extracted_tag = "Flash flooding possible"
+                    else: extracted_tag = "See WPC for details"
                 
                 mpd_display_title = f"MPD {mpd_num:04d}"
                         
-                # --- TIME FORMATTING ---
                 issue_str = issue_dt.strftime("%H%MZ %b %d %Y")
                 expire_str = expire_dt.strftime("%H%MZ %b %d %Y")
                 valid_str = f"{issue_str} - {expire_str}"
@@ -171,9 +171,6 @@ def fetch_and_process_mpds():
                 active_gdf["valid_start_utc"] = issue_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 active_gdf["valid_end_utc"] = expire_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 active_gdf["valid_time"] = valid_str
-                
-                # --- 3-LINE HOVER FORMATTING ---
-                # Using <br> ensures Leaflet tooltips respect the line breaks perfectly
                 active_gdf["hoverText"] = f"{mpd_display_title}<br>{extracted_tag}<br>Valid: {valid_str}"
                 
                 mpd_gdfs.append(active_gdf)
