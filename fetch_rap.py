@@ -58,10 +58,6 @@ def download_rap_subset():
 valid_time_obj = download_rap_subset()
 valid_time_str = f"RAP F00 Analysis &mdash; {valid_time_obj.strftime('%b %d, %Y %H:00')}Z"
 
-# Save Metadata for JavaScript
-with open("static/rap_metadata.json", "w") as f:
-    json.dump({"valid_time": valid_time_str}, f)
-
 print("Extracting grids and calculating variables...")
 
 datasets = cfgrib.open_datasets("rap_subset.grib2", indexpath='')
@@ -487,4 +483,16 @@ save_legend_png('Purples', 25, 80, "Effective Bulk Wind Shear (knots)", 'leg_eff
 save_legend_png('PuBu', 10, 60, "Corfidi Upwind Vector Magnitude (knots)", 'leg_corfidi_up.png', contour_levels=np.arange(10, 70, 10))
 save_legend_png('OrRd', 20, 80, "Corfidi Downwind Vector Magnitude (knots)", 'leg_corfidi_down.png', contour_levels=np.arange(20, 90, 10))
 
-print("All files saved successfully to /static/.")
+print("Exporting exact bounding box and metadata to JSON...")
+bounds = [
+    [float(np.nanmin(lats)), float(np.nanmin(lons))],
+    [float(np.nanmax(lats)), float(np.nanmax(lons))]
+]
+
+with open("static/rap_metadata.json", "w") as f:
+    json.dump({
+        "valid_time": valid_time_str,
+        "bounds": bounds
+    }, f)
+
+print("Process Complete!")
