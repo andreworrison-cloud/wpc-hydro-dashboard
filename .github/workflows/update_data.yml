@@ -1,10 +1,9 @@
-name: Update WPC and RAP Mesoanalysis Data
+name: Update WPC Data
 
 on:
-  # This allows the workflow to be triggered remotely by cron-job.org
+  # This allows the workflow to be triggered remotely by cron-job.org every 5 mins
   workflow_dispatch:
 
-# THIS IS THE NEW MAGIC KEY
 permissions:
   contents: write
 
@@ -21,30 +20,19 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (ecCodes for GRIB2 processing)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libeccodes0
-
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install geopandas pandas requests xarray cfgrib matplotlib numpy scipy metpy eccodes
+          pip install geopandas pandas requests
 
       - name: Run WPC Fetch Script
         run: python fetch_wpc.py
 
-      - name: Run RAP Mesoanalysis Script
-        run: python fetch_rap.py
-
       - name: Commit and Push Changes
         run: |
-          # Configure the Git bot identity
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # Stage the GeoJSON file AND the new RAP static image folder
-          git add wpc_data.geojson static/
+          git add wpc_data.geojson
           
-          # Check if there are actual changes to commit. If there are, commit and push them.
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update WPC real-time data and RAP maps" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update WPC real-time data" && git push)
