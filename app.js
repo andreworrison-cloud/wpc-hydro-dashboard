@@ -48,6 +48,20 @@ const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/
 });
 esriDarkLabels.addTo(map);
 
+// --- BOLDER GEOJSON STATE BORDERS ---
+fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json')
+    .then(response => response.json())
+    .then(data => {
+        L.geoJSON(data, {
+            style: {
+                color: 'rgba(255, 255, 255, 0.8)', // Bright, crisp white
+                weight: 1.5,                       // Thicker, bolder lines
+                fillOpacity: 0                     // Completely transparent inside
+            },
+            pane: 'labels',                        // Forces it into the top pane
+            interactive: false                     // Prevents blocking mouse clicks
+        }).addTo(map);
+    });
 
 // --- TIME LOOP LOGIC (10-Min Intervals, 2-Hour Loop for Speed) ---
 const endTime = new Date();
@@ -70,14 +84,12 @@ L.control.timeDimension({
     playerOptions: { transitionTime: 500, loop: true }
 }).addTo(map);
 
-
 // --- LOOPING RADAR LAYER ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
     format: 'image/png', transparent: true, opacity: 0.6, layers: 'nexrad-n0q-wmst', attribution: "Data © IEM"
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
-
 
 // --- STATIC SATELLITE LAYERS (GOES-East & GOES-West) ---
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
@@ -89,7 +101,6 @@ const goesEastIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wm
 const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
-
 
 // --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
@@ -148,7 +159,6 @@ async function fetchNWSAlerts() {
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
-
 
 // --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
 function getEroStyle(feature) {
@@ -214,10 +224,9 @@ async function fetchWPCData() {
 }
 fetchWPCData();
 
-
 // --- RAP MESOANALYSIS LAYERS & UI ---
 const rapOffLayer = L.layerGroup().addTo(map); // Default state is OFF
-const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; // Standard RAP130 projection bounds
+const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
 const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
 const sbcapeLayer = L.imageOverlay('static/rap_sbcape.png', rapBounds, {zIndex: 10});
@@ -305,7 +314,6 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
 });
-
 
 // --- GROUPED LAYER CONTROLS ---
 const baseMaps = {
