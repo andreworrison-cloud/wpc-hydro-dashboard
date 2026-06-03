@@ -225,6 +225,7 @@ async function fetchWPCData() {
 fetchWPCData();
 
 // --- RAP MESOANALYSIS LAYERS & UI ---
+// Default bounds for Leaflet initialization (will be instantly overwritten by JSON)
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
 const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
@@ -277,13 +278,37 @@ legendControl.onAdd = function (map) {
 };
 legendControl.addTo(map);
 
-// Fetch the valid time from the Python script's JSON output
+// Fetch the valid time AND exact projection bounds from the Python JSON output
 fetch('static/rap_metadata.json?t=' + new Date().getTime())
     .then(r => r.json())
     .then(data => {
         const timeBox = document.getElementById('rap-time-box');
         timeBox.innerHTML = `<strong>${data.valid_time}</strong>`;
         timeBox.style.display = 'block';
+
+        // Dynamically apply the mathematically perfect bounds from Python
+        if (data.bounds) {
+            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+            pwatLayer.setBounds(exactBounds);
+            sbcapeLayer.setBounds(exactBounds);
+            mlcapeLayer.setBounds(exactBounds);
+            mucapeLayer.setBounds(exactBounds);
+            lrsfc3Layer.setBounds(exactBounds);
+            lr75Layer.setBounds(exactBounds);
+            scpLayer.setBounds(exactBounds);
+            mfcLayer.setBounds(exactBounds);
+            f925Layer.setBounds(exactBounds);
+            f850Layer.setBounds(exactBounds);
+            effShearLayer.setBounds(exactBounds);
+            corfidiUpLayer.setBounds(exactBounds);
+            corfidiDownLayer.setBounds(exactBounds);
+            trans850Layer.setBounds(exactBounds);
+            trans700Layer.setBounds(exactBounds);
+            meanWindLayer.setBounds(exactBounds);
+            vort500Layer.setBounds(exactBounds);
+            diffAdvLayer.setBounds(exactBounds);
+            div250Layer.setBounds(exactBounds);
+        }
     })
     .catch(err => console.log("RAP metadata not found yet."));
 
