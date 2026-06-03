@@ -225,7 +225,6 @@ async function fetchWPCData() {
 fetchWPCData();
 
 // --- RAP MESOANALYSIS LAYERS & UI ---
-const rapOffLayer = L.layerGroup().addTo(map); // Default state is OFF
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
 const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
@@ -288,13 +287,12 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
     })
     .catch(err => console.log("RAP metadata not found yet."));
 
+// Dynamically route the legend images on layer add
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
     
-    if (eventLayer.name === 'None (Turn Off RAP)') {
-        legendContainer.style.display = 'none';
-    } else if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
+    if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'block';
         
         if (eventLayer.name.includes('PWAT')) legendImg.src = 'static/leg_pwat.png';
@@ -315,6 +313,14 @@ map.on('overlayadd', function(eventLayer) {
     }
 });
 
+// Hide the legend when a RAP layer is toggled off via checkbox
+map.on('overlayremove', function(eventLayer) {
+    const legendContainer = document.getElementById('legend-container');
+    if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
+        legendContainer.style.display = 'none';
+    }
+});
+
 // --- GROUPED LAYER CONTROLS ---
 const baseMaps = {
     "Esri Dark Gray": esriDarkBase,
@@ -330,7 +336,6 @@ const groupedOverlays = {
         "Day 1 ERO (Real-Time)": eroLayer
     },
     "RAP Mesoanalysis (Real-Time)": {
-        "None (Turn Off RAP)": rapOffLayer,
         "RAP Precipitable Water (PWAT)": pwatLayer,
         "RAP Surface Based CAPE": sbcapeLayer,
         "RAP Mixed Layer CAPE (90mb)": mlcapeLayer,
@@ -363,7 +368,7 @@ const groupedOverlays = {
     }
 };
 
+// Menu without the exclusiveGroups constraint to allow checkboxes
 L.control.groupedLayers(baseMaps, groupedOverlays, { 
-    collapsed: true, 
-    exclusiveGroups: ["RAP Mesoanalysis (Real-Time)"] 
+    collapsed: true 
 }).addTo(map);
