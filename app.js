@@ -7,7 +7,7 @@ const map = L.map('map', {
 
 // --- TOP-CENTER DASHBOARD TITLE ---
 const mapTitle = L.DomUtil.create('div', 'map-title');
-mapTitle.innerHTML = '<strong>WPC Real-Time Hydrologic Dashboard</strong>';
+mapTitle.innerHTML = '<strong>WPC Real-Time Hydrometeorological Dashboard</strong>';
 mapTitle.style.position = 'absolute';
 mapTitle.style.top = '10px';
 mapTitle.style.left = '50%';
@@ -15,10 +15,10 @@ mapTitle.style.transform = 'translateX(-50%)';
 mapTitle.style.zIndex = '1000';
 mapTitle.style.background = 'rgba(0, 0, 0, 0.7)';
 mapTitle.style.color = 'white';
-mapTitle.style.padding = '10px 20px';
+mapTitle.style.padding = '12px 24px';
 mapTitle.style.borderRadius = '6px';
 mapTitle.style.fontFamily = 'sans-serif';
-mapTitle.style.fontSize = '18px';
+mapTitle.style.fontSize = '24px';
 mapTitle.style.letterSpacing = '1px';
 mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
