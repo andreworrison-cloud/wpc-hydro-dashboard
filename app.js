@@ -327,7 +327,7 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Supercell Composite')) legendImg.src = 'static/leg_scp.png';
         else if (eventLayer.name.includes('Convergence')) legendImg.src = 'static/leg_mfc.png';
         else if (eventLayer.name.includes('Frontogenesis')) legendImg.src = 'static/leg_fronto.png';
-        else if (eventLayer.name.includes('Wind Shear')) legendImg.src = 'static/leg_eff_shear.png';
+        else if (eventLayer.name.includes('Bulk Shear')) legendImg.src = 'static/leg_eff_shear.png';
         else if (eventLayer.name.includes('Corfidi Upwind')) legendImg.src = 'static/leg_corfidi_up.png';
         else if (eventLayer.name.includes('Corfidi Downwind')) legendImg.src = 'static/leg_corfidi_down.png';
         else if (eventLayer.name.includes('Transport')) legendImg.src = 'static/leg_trans.png';
@@ -371,7 +371,7 @@ const groupedOverlays = {
         "RAP Mean BL Moisture Convergence": mfcLayer,
         "RAP 925/850mb Frontogenesis": f925Layer,
         "RAP 850/700mb Frontogenesis": f850Layer,
-        "RAP 0-6km Bulk Wind Shear": effShearLayer,
+        "RAP Effective Bulk Shear": effShearLayer,
         "RAP Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
         "RAP Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
         "RAP 850mb Moisture Transport": trans850Layer,
