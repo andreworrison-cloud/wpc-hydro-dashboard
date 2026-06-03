@@ -1,0 +1,47 @@
+name: Update RAP Mesoanalysis
+
+on:
+  # GitHub's native scheduler: Runs at 15 minutes past every hour (gives NOAA time to post the data)
+  schedule:
+    - cron: '15 * * * *'
+  # Still allows manual triggers just in case
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-rap:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Dependencies (ecCodes)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests xarray cfgrib matplotlib numpy scipy metpy eccodes
+
+      - name: Run RAP Mesoanalysis Script
+        run: python fetch_rap.py
+
+      - name: Commit and Push RAP Maps
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Stage ONLY the RAP outputs
+          git add static/
+          
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update hourly RAP maps" && git push)
