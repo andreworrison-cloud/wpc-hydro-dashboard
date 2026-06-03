@@ -163,8 +163,8 @@ fetchNWSAlerts();
 // --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
-    let riskColor = "#00ff00"; 
-    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFA500"; 
+    let riskColor = "#00ff00"; // Default to MRGL Green
+    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFFF00"; // Operational WPC Yellow
     if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; 
     if (cat.includes("HIGH")) riskColor = "#FF00FF"; 
     return { color: riskColor, weight: 2, fillOpacity: 0.15 };
@@ -214,8 +214,20 @@ async function fetchWPCData() {
         if (!response.ok) return;
         const data = await response.json();
         
-        const eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
+        let eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
         const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
+        
+        // --- THE TOPOLOGY FIX: Sort EROs so higher risks draw on top ---
+        eroFeatures.sort((a, b) => {
+            const getRank = (feature) => {
+                const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
+                if (cat.includes("HIGH")) return 4;
+                if (cat.includes("MDT") || cat.includes("MODERATE")) return 3;
+                if (cat.includes("SLGT") || cat.includes("SLIGHT")) return 2;
+                return 1; // MRGL or unknown defaults to bottom
+            };
+            return getRank(a) - getRank(b); // Sorts Ascending: 1, 2, 3, 4
+        });
         
         if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
         if (mpdFeatures.length > 0) mpdLayer.addData(mpdFeatures);
