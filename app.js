@@ -33,7 +33,7 @@ const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/se
     maxZoom: 16,
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
-esriDarkBase.addTo(map); // Default active base layer
+esriDarkBase.addTo(map); 
 
 // Daytime / White Base (OpenStreetMap)
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -51,12 +51,10 @@ esriDarkLabels.addTo(map);
 
 // --- TIME LOOP LOGIC (10-Min Intervals, 2-Hour Loop for Speed) ---
 const endTime = new Date();
-// Snap to the nearest 10-minute block (e.g., :00, :10, :20)
 endTime.setMinutes(Math.floor(endTime.getMinutes() / 10) * 10);
 endTime.setSeconds(0);
 endTime.setMilliseconds(0);
 
-// Set to 2 hours to prevent browser traffic jams and make looping snappy
 const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000);
 const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
 
@@ -84,12 +82,10 @@ radarTimeLayer.addTo(map);
 // --- STATIC SATELLITE LAYERS (GOES-East & GOES-West) ---
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 
-// GOES-East (Latest Image Only)
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesEastIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// GOES-West (Latest Image Only)
 const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
@@ -219,6 +215,98 @@ async function fetchWPCData() {
 fetchWPCData();
 
 
+// --- RAP MESOANALYSIS LAYERS & UI ---
+const rapOffLayer = L.layerGroup().addTo(map); // Default state is OFF
+const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; // Standard RAP130 projection bounds
+
+const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
+const sbcapeLayer = L.imageOverlay('static/rap_sbcape.png', rapBounds, {zIndex: 10});
+const mlcapeLayer = L.imageOverlay('static/rap_mlcape.png', rapBounds, {zIndex: 10});
+const mucapeLayer = L.imageOverlay('static/rap_mucape.png', rapBounds, {zIndex: 10});
+const lrsfc3Layer = L.imageOverlay('static/rap_lr_sfc3.png', rapBounds, {zIndex: 10});
+const lr75Layer = L.imageOverlay('static/rap_lr_75.png', rapBounds, {zIndex: 10});
+const scpLayer = L.imageOverlay('static/rap_scp.png', rapBounds, {zIndex: 10});
+const mfcLayer = L.imageOverlay('static/rap_mfc.png', rapBounds, {zIndex: 10});
+const f925Layer = L.imageOverlay('static/rap_f925_850.png', rapBounds, {zIndex: 10});
+const f850Layer = L.imageOverlay('static/rap_f850_700.png', rapBounds, {zIndex: 10});
+const effShearLayer = L.imageOverlay('static/rap_eff_shear.png', rapBounds, {zIndex: 10});
+const corfidiUpLayer = L.imageOverlay('static/rap_corfidi_up.png', rapBounds, {zIndex: 10});
+const corfidiDownLayer = L.imageOverlay('static/rap_corfidi_down.png', rapBounds, {zIndex: 10});
+const trans850Layer = L.imageOverlay('static/rap_trans850.png', rapBounds, {zIndex: 10});
+const trans700Layer = L.imageOverlay('static/rap_trans700.png', rapBounds, {zIndex: 10});
+const meanWindLayer = L.imageOverlay('static/rap_mean_wind.png', rapBounds, {zIndex: 10});
+const vort500Layer = L.imageOverlay('static/rap_vort500.png', rapBounds, {zIndex: 10});
+const diffAdvLayer = L.imageOverlay('static/rap_diff_adv.png', rapBounds, {zIndex: 10});
+const div250Layer = L.imageOverlay('static/rap_div250.png', rapBounds, {zIndex: 10});
+
+// Valid Time UI Box
+const timeControl = L.control({position: 'bottomright'});
+timeControl.onAdd = function(map) {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'rap-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; // Hidden until RAP data is fetched
+    return div;
+};
+timeControl.addTo(map);
+
+// Legend UI Box
+const legendControl = L.control({position: 'bottomright'});
+legendControl.onAdd = function (map) {
+    const div = L.DomUtil.create('div', 'legend-box');
+    div.id = 'legend-container';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.padding = '10px';
+    div.style.borderRadius = '6px';
+    div.style.display = 'none'; 
+    div.innerHTML = '<img id="legend-img" src="" style="max-width: 300px;">';
+    return div;
+};
+legendControl.addTo(map);
+
+// Fetch the valid time from the Python script's JSON output
+fetch('static/rap_metadata.json?t=' + new Date().getTime())
+    .then(r => r.json())
+    .then(data => {
+        const timeBox = document.getElementById('rap-time-box');
+        timeBox.innerHTML = `<strong>${data.valid_time}</strong>`;
+        timeBox.style.display = 'block';
+    })
+    .catch(err => console.log("RAP metadata not found yet."));
+
+map.on('overlayadd', function(eventLayer) {
+    const legendContainer = document.getElementById('legend-container');
+    const legendImg = document.getElementById('legend-img');
+    
+    if (eventLayer.name === 'None (Turn Off RAP)') {
+        legendContainer.style.display = 'none';
+    } else if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
+        legendContainer.style.display = 'block';
+        
+        if (eventLayer.name.includes('PWAT')) legendImg.src = 'static/leg_pwat.png';
+        else if (eventLayer.name.includes('CAPE')) legendImg.src = 'static/leg_cape.png';
+        else if (eventLayer.name.includes('700-500mb Mid-Level')) legendImg.src = 'static/leg_lr75.png';
+        else if (eventLayer.name.includes('Sfc-3km')) legendImg.src = 'static/leg_lrsfc3.png';
+        else if (eventLayer.name.includes('Supercell Composite')) legendImg.src = 'static/leg_scp.png';
+        else if (eventLayer.name.includes('Convergence')) legendImg.src = 'static/leg_mfc.png';
+        else if (eventLayer.name.includes('Frontogenesis')) legendImg.src = 'static/leg_fronto.png';
+        else if (eventLayer.name.includes('Wind Shear')) legendImg.src = 'static/leg_eff_shear.png';
+        else if (eventLayer.name.includes('Corfidi Upwind')) legendImg.src = 'static/leg_corfidi_up.png';
+        else if (eventLayer.name.includes('Corfidi Downwind')) legendImg.src = 'static/leg_corfidi_down.png';
+        else if (eventLayer.name.includes('Transport')) legendImg.src = 'static/leg_trans.png';
+        else if (eventLayer.name.includes('Mean Layer Wind')) legendImg.src = 'static/leg_mean_wind.png';
+        else if (eventLayer.name.includes('Absolute Vorticity')) legendImg.src = 'static/leg_vort.png';
+        else if (eventLayer.name.includes('Diff Vorticity')) legendImg.src = 'static/leg_diff_adv.png';
+        else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
+    }
+});
+
+
 // --- GROUPED LAYER CONTROLS ---
 const baseMaps = {
     "Esri Dark Gray": esriDarkBase,
@@ -233,6 +321,28 @@ const groupedOverlays = {
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
+    "RAP Mesoanalysis (Real-Time)": {
+        "None (Turn Off RAP)": rapOffLayer,
+        "RAP Precipitable Water (PWAT)": pwatLayer,
+        "RAP Surface Based CAPE": sbcapeLayer,
+        "RAP Mixed Layer CAPE (90mb)": mlcapeLayer,
+        "RAP Most Unstable CAPE (255mb)": mucapeLayer,
+        "RAP Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
+        "RAP 700-500mb Mid-Level Lapse Rate": lr75Layer,
+        "RAP Supercell Composite Parameter": scpLayer,
+        "RAP Mean BL Moisture Convergence": mfcLayer,
+        "RAP 925/850mb Frontogenesis": f925Layer,
+        "RAP 850/700mb Frontogenesis": f850Layer,
+        "RAP 0-6km Bulk Wind Shear": effShearLayer,
+        "RAP Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
+        "RAP Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
+        "RAP 850mb Moisture Transport": trans850Layer,
+        "RAP 700mb Moisture Transport": trans700Layer,
+        "RAP 850-300mb Mean Layer Wind": meanWindLayer,
+        "RAP 500mb Absolute Vorticity": vort500Layer,
+        "RAP 700-400mb Diff Vorticity Advection": diffAdvLayer,
+        "RAP 250mb Divergence": div250Layer
+    },
     "GOES-East (Latest)": {
         "Visible (Ch. 2)": goesEastVis,
         "Mid-Level WV (Ch. 9)": goesEastWV,
@@ -245,4 +355,7 @@ const groupedOverlays = {
     }
 };
 
-L.control.groupedLayers(baseMaps, groupedOverlays, { collapsed: true }).addTo(map);
+L.control.groupedLayers(baseMaps, groupedOverlays, { 
+    collapsed: true, 
+    exclusiveGroups: ["RAP Mesoanalysis (Real-Time)"] 
+}).addTo(map);
