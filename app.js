@@ -58,14 +58,14 @@ const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/
 });
 esriDarkLabels.addTo(map);
 
-// --- TOGGLEABLE GEOJSON STATE BORDERS ---
+// --- AUTO-TOGGLING GEOJSON STATE BORDERS ---
 const whiteBorders = L.geoJSON(null, {
     style: { color: 'rgba(255, 255, 255, 0.8)', weight: 1.5, fillOpacity: 0 },
     pane: 'labels', interactive: false
 });
 
 const blackBorders = L.geoJSON(null, {
-    style: { color: 'rgba(0, 0, 0, 0.9)', weight: 1.5, fillOpacity: 0 },
+    style: { color: 'rgba(0, 0, 0, 0.8)', weight: 1.5, fillOpacity: 0 },
     pane: 'labels', interactive: false
 });
 
@@ -76,7 +76,18 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
         blackBorders.addData(data);
     });
 
-whiteBorders.addTo(map); // Turn on white borders by default
+whiteBorders.addTo(map); // Default to white borders for the dark map
+
+// Listen for basemap changes and automatically swap border colors!
+map.on('baselayerchange', function(e) {
+    if (e.name === "OpenStreetMap") {
+        if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
+        blackBorders.addTo(map);
+    } else {
+        if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
+        whiteBorders.addTo(map);
+    }
+});
 
 // --- TIME LOOP LOGIC (10-Min Intervals, 2-Hour Loop for Speed) ---
 const endTime = new Date();
@@ -125,7 +136,7 @@ const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/w
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// --- CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
+// --- RESTORED & CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -141,9 +152,13 @@ const commonAlertOptions = {
     },
     onEachFeature: function (feature, layer) {
         const props = feature.properties;
+        if (!props) return;
         const eventName = props.prod_type || "Unknown Hydro Alert";
         const wfo = props.wfo ? `WFO ${props.wfo}` : "NWS";
         const expires = props.expiration || "Unknown";
+        
+        // Fail-safe text link
+        const linkHTML = props.url ? `<br><br><a href="${props.url}" target="_blank" rel="noopener noreferrer">View Official NWS Bulletin</a>` : "";
 
         layer.bindPopup(`
             <div style="font-family: sans-serif; text-align: center; min-width: 200px;">
@@ -151,6 +166,7 @@ const commonAlertOptions = {
                 <em>Issued by ${wfo}</em><br>
                 <hr style="margin: 5px 0;">
                 <span style="font-size: 0.9em;">Expires: ${expires}</span>
+                ${linkHTML}
             </div>
         `);
     }
@@ -171,12 +187,14 @@ async function fetchNWSAlerts() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
-        const warningFeatures = data.features.filter(f => !f.properties.prod_type.includes("Watch"));
-        const watchFeatures = data.features.filter(f => f.properties.prod_type.includes("Watch"));
-        
-        if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
-        if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
-        
+        // Added fail-safe in case the payload is empty
+        if (data && data.features) {
+            const warningFeatures = data.features.filter(f => !f.properties.prod_type.includes("Watch"));
+            const watchFeatures = data.features.filter(f => f.properties.prod_type.includes("Watch"));
+            
+            if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
+            if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
+        }
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
@@ -309,7 +327,7 @@ timeControl.onAdd = function(map) {
 };
 timeControl.addTo(map);
 
-// MRMS Valid Time UI Box (Dynamic Rolling Window)
+// MRMS Valid Time UI Box
 const mrmsTimeControl = L.control({position: 'bottomright'});
 mrmsTimeControl.onAdd = function(map) {
     const div = L.DomUtil.create('div', 'time-box');
@@ -325,7 +343,7 @@ mrmsTimeControl.onAdd = function(map) {
 };
 mrmsTimeControl.addTo(map);
 
-// Legend UI Box
+// Legend UI Box (Handles both Images and Dynamic HTML)
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function (map) {
     const div = L.DomUtil.create('div', 'legend-box');
@@ -334,10 +352,41 @@ legendControl.onAdd = function (map) {
     div.style.padding = '10px';
     div.style.borderRadius = '6px';
     div.style.display = 'none'; 
-    div.innerHTML = '<img id="legend-img" src="" style="max-width: 300px;">';
+    div.innerHTML = `
+        <img id="legend-img" src="" style="max-width: 300px; display: none;">
+        <div id="legend-html" style="display: none;"></div>
+    `;
     return div;
 };
 legendControl.addTo(map);
+
+// Programmatic HTML Generator for the MRMS Color Bar
+function getMRMSLegendHTML() {
+    const levels = [
+        {v: '8.0+', c: '#FFFFCC'}, {v: '7.0', c: '#9966CC'}, {v: '6.5', c: '#CC00FF'}, {v: '6.0', c: '#FF00FF'},
+        {v: '5.5', c: '#990000'}, {v: '5.0', c: '#CC0000'}, {v: '4.5', c: '#FF0000'}, {v: '4.0', c: '#FF3300'},
+        {v: '3.0', c: '#FF6600'}, {v: '2.0', c: '#FF9900'}, {v: '1.75', c: '#FFCC00'}, {v: '1.25', c: '#FFFF00'},
+        {v: '1.00', c: '#CCFF33'}, {v: '0.80', c: '#66FF33'}, {v: '0.60', c: '#33CC33'}, {v: '0.40', c: '#009900'},
+        {v: '0.20', c: '#0000FF'}, {v: '0.10', c: '#3366FF'}, {v: '0.05', c: '#33CCFF'}, {v: '0.01', c: '#66FFFF'}
+    ];
+    
+    let html = `
+        <div style="background: #f4f4f4; padding: 12px 16px; border-radius: 8px; color: #2c3e50; font-family: sans-serif; font-size: 12px; border: 1px solid #ccc; width: max-content;">
+            <div style="font-weight: bold; text-align: center; margin-bottom: 8px; font-size: 16px; color: #1a252f;">inches</div>
+    `;
+    
+    levels.forEach(lvl => {
+        html += `
+            <div style="display: flex; align-items: center; margin-bottom: 2px;">
+                <div style="width: 24px; height: 14px; background: ${lvl.c}; border: 1px solid #999; margin-right: 10px;"></div>
+                <div style="font-family: monospace; font-size: 13px;">${lvl.v}</div>
+            </div>
+        `;
+    });
+    
+    html += `</div>`;
+    return html;
+}
 
 // Fetch the RAP bounds and time
 fetch('static/rap_metadata.json?t=' + new Date().getTime())
@@ -386,11 +435,15 @@ function formatUTC(date) {
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
+    const legendHtml = document.getElementById('legend-html');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     
-    // RAP Legends
+    // RAP Legends (Uses static PNG files)
     if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'block';
+        legendContainer.style.background = 'rgba(0, 0, 0, 0.7)';
+        legendHtml.style.display = 'none';
+        legendImg.style.display = 'block';
         
         if (eventLayer.name.includes('PWAT')) legendImg.src = 'static/leg_pwat.png';
         else if (eventLayer.name.includes('CAPE')) legendImg.src = 'static/leg_cape.png';
@@ -409,19 +462,20 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
     
-    // MRMS Legends & Time Logic
+    // MRMS Legends (Uses dynamically generated HTML color bar)
     if (eventLayer.name.includes('MRMS')) {
         legendContainer.style.display = 'block';
+        legendContainer.style.background = 'transparent'; // Let the HTML box background show cleanly
+        legendImg.style.display = 'none';
+        legendHtml.style.display = 'block';
+        
+        legendHtml.innerHTML = getMRMSLegendHTML();
         
         let hours = 1;
         if (eventLayer.name.includes('24-Hour')) { hours = 24; }
         if (eventLayer.name.includes('48-Hour')) { hours = 48; }
         if (eventLayer.name.includes('72-Hour')) { hours = 72; }
 
-        // Route to a static local legend image instead of the broken IEM WMS endpoint
-        legendImg.src = 'static/leg_mrms.png'; 
-        
-        // Calculate the rolling window
         const now = new Date();
         const start = new Date(now.getTime() - (hours * 60 * 60 * 1000));
         
@@ -451,10 +505,6 @@ const baseMaps = {
 };
 
 const groupedOverlays = {
-    "Geopolitical Boundaries": {
-        "White State Borders": whiteBorders,
-        "Black State Borders": blackBorders
-    },
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
