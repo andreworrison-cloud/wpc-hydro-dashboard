@@ -402,8 +402,8 @@ map.on('overlayadd', function(eventLayer) {
         if (eventLayer.name.includes('48-Hour')) { layerId = 'mrms_p48h'; hours = 48; }
         if (eventLayer.name.includes('72-Hour')) { layerId = 'mrms_p72h'; hours = 72; }
 
-        // Fetch exact WMS Legend Graphic from NCEP/IEM
-        legendImg.src = `https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi?VERSION=1.1.1&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${layerId}`;
+        // Fetch exact WMS Legend Graphic from the STANDARD IEM endpoint, not the 'no nulls' endpoint
+        legendImg.src = `https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms.cgi?VERSION=1.1.1&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${layerId}`;
         
         // Calculate the rolling window
         const now = new Date();
