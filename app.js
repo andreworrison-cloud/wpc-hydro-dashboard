@@ -33,10 +33,16 @@ mapTitle.style.letterSpacing = '1px';
 mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
 
-// --- THE AWIPS BORDERS TRICK ---
+// --- CUSTOM MAP PANES FOR Z-INDEX PRIORITY ---
 map.createPane('labels');
 map.getPane('labels').style.zIndex = 650;
 map.getPane('labels').style.pointerEvents = 'none'; 
+
+// Ensures Warnings (410) always draw on top of Watches (400)
+map.createPane('watches');
+map.getPane('watches').style.zIndex = 400;
+map.createPane('warnings');
+map.getPane('warnings').style.zIndex = 410;
 
 // Dark Base
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
@@ -78,12 +84,14 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
 
 whiteBorders.addTo(map); // Default to white borders for the dark map
 
-// Listen for basemap changes and automatically swap border colors
+// Listen for basemap changes and automatically swap border colors AND manage clashing labels
 map.on('baselayerchange', function(e) {
     if (e.name === "OpenStreetMap") {
+        if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); // Remove double city names
         if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
         blackBorders.addTo(map);
     } else {
+        if (!map.hasLayer(esriDarkLabels)) esriDarkLabels.addTo(map); // Restore city names
         if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
         whiteBorders.addTo(map);
     }
@@ -136,7 +144,7 @@ const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/w
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// --- RESTORED & CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
+// --- CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -146,7 +154,8 @@ function getAlertColor(event) {
     return "gray"; 
 }
 
-const commonAlertOptions = {
+const commonAlertOptions = (paneName) => ({
+    pane: paneName,
     style: function (feature) {
         return { color: getAlertColor(feature.properties.prod_type), weight: 2, opacity: 1, fillOpacity: 0.2 };
     },
@@ -157,23 +166,19 @@ const commonAlertOptions = {
         const wfo = props.wfo ? `WFO ${props.wfo}` : "NWS";
         const expires = props.expiration || "Unknown";
         
-        // Fail-safe text link
-        const linkHTML = props.url ? `<br><br><a href="${props.url}" target="_blank" rel="noopener noreferrer">View Official NWS Bulletin</a>` : "";
-
         layer.bindPopup(`
             <div style="font-family: sans-serif; text-align: center; min-width: 200px;">
                 <strong style="color: ${getAlertColor(eventName)}; font-size: 1.1em;">${eventName}</strong><br>
                 <em>Issued by ${wfo}</em><br>
                 <hr style="margin: 5px 0;">
                 <span style="font-size: 0.9em;">Expires: ${expires}</span>
-                ${linkHTML}
             </div>
         `);
     }
-};
+});
 
-const warningsLayer = L.geoJSON(null, commonAlertOptions);
-const watchesLayer = L.geoJSON(null, commonAlertOptions);
+const warningsLayer = L.geoJSON(null, commonAlertOptions('warnings'));
+const watchesLayer = L.geoJSON(null, commonAlertOptions('watches'));
 
 warningsLayer.addTo(map);
 watchesLayer.addTo(map);
@@ -342,7 +347,7 @@ mrmsTimeControl.onAdd = function(map) {
 };
 mrmsTimeControl.addTo(map);
 
-// Legend UI Box (Handles both Images and Dynamic HTML)
+// Legend UI Box
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function (map) {
     const div = L.DomUtil.create('div', 'legend-box');
@@ -361,7 +366,6 @@ legendControl.addTo(map);
 
 // --- 4-TIER DYNAMIC HTML LEGEND GENERATOR FOR MRMS QPE ---
 function getMRMSLegendHTML(hours) {
-    // Top-to-Bottom mapping of the official NWS QPE 24-color scale
     const mrmsColors = [
         '#FFFFCC', '#CCFFFF', '#CCCCFF', '#FFFFFF', '#660066', '#990099',
         '#CC00CC', '#FF00FF', '#990000', '#CC0000', '#FF3333', '#FF9999',
@@ -369,7 +373,6 @@ function getMRMSLegendHTML(hours) {
         '#66FF66', '#99FF99', '#0000FF', '#3366FF', '#33CCFF', '#66FFFF'
     ];
     
-    // Arrays representing the text labels for the specific hour selected
     const scaleValues = {
         1:  ['8.0', '7.0', '6.5', '6.0', '5.5', '5.0', '4.5', '4.0', '3.5', '3.0', '2.5', '2.0', '1.75', '1.50', '1.25', '1.00', '0.80', '0.60', '0.40', '0.20', '0.15', '0.10', '0.05', '0.01'],
         24: ['24.0', '20.0', '18.0', '16.0', '14.0', '12.0', '10.0', '9.0', '8.0', '7.0', '6.0', '5.0', '4.0', '3.0', '2.5', '2.0', '1.5', '1.0', '0.75', '0.50', '0.25', '0.10', '0.05', '0.01'],
@@ -384,7 +387,6 @@ function getMRMSLegendHTML(hours) {
             <div style="font-weight: bold; text-align: center; margin-bottom: 8px; font-size: 16px; color: #1a252f;">in</div>
     `;
     
-    // Loop through all 24 colors and dynamically attach the proper hourly value next to it
     for (let i = 0; i < 24; i++) {
         html += `
             <div style="display: flex; align-items: center; margin-bottom: 2px;">
@@ -448,7 +450,7 @@ map.on('overlayadd', function(eventLayer) {
     const legendHtml = document.getElementById('legend-html');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     
-    // RAP Legends (Uses static PNG files)
+    // RAP Legends
     if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'rgba(0, 0, 0, 0.7)';
@@ -472,10 +474,10 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
     
-    // MRMS Legends (Uses 4-Tier dynamically generated HTML color bar)
+    // MRMS Legends
     if (eventLayer.name.includes('MRMS')) {
         legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent'; // Let the HTML box background show cleanly
+        legendContainer.style.background = 'transparent'; 
         legendImg.style.display = 'none';
         legendHtml.style.display = 'block';
         
@@ -484,10 +486,8 @@ map.on('overlayadd', function(eventLayer) {
         if (eventLayer.name.includes('48-Hour')) { hours = 48; }
         if (eventLayer.name.includes('72-Hour')) { hours = 72; }
 
-        // Inject the dynamically generated HTML using the correct hourly threshold array
         legendHtml.innerHTML = getMRMSLegendHTML(hours);
         
-        // Calculate the rolling window
         const now = new Date();
         const start = new Date(now.getTime() - (hours * 60 * 60 * 1000));
         
