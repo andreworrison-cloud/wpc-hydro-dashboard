@@ -82,16 +82,15 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
         blackBorders.addData(data);
     });
 
-whiteBorders.addTo(map); // Default to white borders for the dark map
+whiteBorders.addTo(map); 
 
-// Listen for basemap changes and automatically swap border colors AND manage clashing labels
 map.on('baselayerchange', function(e) {
     if (e.name === "OpenStreetMap") {
-        if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); // Remove double city names
+        if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); 
         if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
         blackBorders.addTo(map);
     } else {
-        if (!map.hasLayer(esriDarkLabels)) esriDarkLabels.addTo(map); // Restore city names
+        if (!map.hasLayer(esriDarkLabels)) esriDarkLabels.addTo(map); 
         if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
         whiteBorders.addTo(map);
     }
@@ -144,7 +143,7 @@ const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/w
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// --- CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
+// --- NWS ACTIVE HYDRO WARNINGS & WATCHES WITH DYNAMIC TEXT LOADERS ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -153,6 +152,29 @@ function getAlertColor(event) {
     if (event === "Flood Watch" || event === "Flash Flood Watch") return "seagreen"; 
     return "gray"; 
 }
+
+// Global function to securely fetch and format the API JSON into readable English
+window.loadNWSAlertText = async function(url, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = "<em>Loading official text...</em>";
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("API not responding");
+        const data = await response.json();
+        
+        const desc = data.properties.description ? data.properties.description.replace(/\n/g, '<br>') : "No text description provided by WFO.";
+        const inst = data.properties.instruction ? "<br><br><strong>Instructions:</strong><br>" + data.properties.instruction.replace(/\n/g, '<br>') : "";
+        
+        container.innerHTML = `
+            <div style="text-align: left; margin-top: 10px; padding: 10px; background: #f9f9f9; border: 1px solid #ccc; border-radius: 4px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #333;">
+                ${desc}${inst}
+            </div>
+        `;
+    } catch (error) {
+        container.innerHTML = "<span style='color: red;'>Failed to load alert text from NWS API.</span>";
+    }
+};
 
 const commonAlertOptions = (paneName) => ({
     pane: paneName,
@@ -166,14 +188,26 @@ const commonAlertOptions = (paneName) => ({
         const wfo = props.wfo ? `WFO ${props.wfo}` : "NWS";
         const expires = props.expiration || "Unknown";
         
+        // Generates a unique ID for the text container
+        const alertId = "alert-" + Math.random().toString(36).substr(2, 9);
+        const linkHTML = props.url ? `
+            <br>
+            <div id="${alertId}" style="margin-top: 10px;">
+                <a href="javascript:void(0);" onclick="loadNWSAlertText('${props.url}', '${alertId}')" style="color: #007bff; text-decoration: none; font-weight: bold;">
+                    Load Official Alert Text
+                </a>
+            </div>
+        ` : "";
+
         layer.bindPopup(`
-            <div style="font-family: sans-serif; text-align: center; min-width: 200px;">
+            <div style="font-family: sans-serif; text-align: center; min-width: 260px;">
                 <strong style="color: ${getAlertColor(eventName)}; font-size: 1.1em;">${eventName}</strong><br>
                 <em>Issued by ${wfo}</em><br>
                 <hr style="margin: 5px 0;">
                 <span style="font-size: 0.9em;">Expires: ${expires}</span>
+                ${linkHTML}
             </div>
-        `);
+        `, { maxWidth: 400 });
     }
 });
 
@@ -193,8 +227,9 @@ async function fetchNWSAlerts() {
         const data = await response.json();
         
         if (data && data.features) {
-            const warningFeatures = data.features.filter(f => !f.properties.prod_type.includes("Watch"));
-            const watchFeatures = data.features.filter(f => f.properties.prod_type.includes("Watch"));
+            // Null safety check added to prevent silent crashes
+            const warningFeatures = data.features.filter(f => f.properties && f.properties.prod_type && !f.properties.prod_type.includes("Watch"));
+            const watchFeatures = data.features.filter(f => f.properties && f.properties.prod_type && f.properties.prod_type.includes("Watch"));
             
             if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
             if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
