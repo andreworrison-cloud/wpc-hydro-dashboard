@@ -364,13 +364,22 @@ const baseMaps = {
     "OpenStreetMap": osmLayer
 };
 
+// Reordered and relabeled to group Radar and Satellite logically
 const groupedOverlays = {
     "Active Hazards & Warnings": {
-        "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
+    },
+    "Radar and Satellite Data (Real-Time)": {
+        "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
+        "GOES-East: Visible (Ch. 2)": goesEastVis,
+        "GOES-East: Mid-Level WV (Ch. 9)": goesEastWV,
+        "GOES-East: Clean IR (Ch. 13)": goesEastIR,
+        "GOES-West: Visible (Ch. 2)": goesWestVis,
+        "GOES-West: Mid-Level WV (Ch. 9)": goesWestWV,
+        "GOES-West: Clean IR (Ch. 13)": goesWestIR
     },
     "RAP Mesoanalysis (Real-Time)": {
         "RAP Precipitable Water (PWAT)": pwatLayer,
@@ -392,20 +401,14 @@ const groupedOverlays = {
         "RAP 500mb Absolute Vorticity": vort500Layer,
         "RAP 700-400mb Diff Vorticity Advection": diffAdvLayer,
         "RAP 250mb Divergence": div250Layer
-    },
-    "GOES-East (Latest)": {
-        "Visible (Ch. 2)": goesEastVis,
-        "Mid-Level WV (Ch. 9)": goesEastWV,
-        "Clean IR (Ch. 13)": goesEastIR
-    },
-    "GOES-West (Latest)": {
-        "Visible (Ch. 2)": goesWestVis,
-        "Mid-Level WV (Ch. 9)": goesWestWV,
-        "Clean IR (Ch. 13)": goesWestIR
     }
 };
 
-// Menu without the exclusiveGroups constraint to allow checkboxes
-L.control.groupedLayers(baseMaps, groupedOverlays, { 
+// Assign control to a variable so we can target its container
+const layerControl = L.control.groupedLayers(baseMaps, groupedOverlays, { 
     collapsed: true 
 }).addTo(map);
+
+// --- STOP MENU DOUBLE CLICKS FROM ZOOMING THE MAP ---
+L.DomEvent.disableClickPropagation(layerControl.getContainer());
+L.DomEvent.disableScrollPropagation(layerControl.getContainer());
