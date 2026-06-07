@@ -64,12 +64,12 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
     .then(data => {
         L.geoJSON(data, {
             style: {
-                color: 'rgba(255, 255, 255, 0.8)', // Bright, crisp white
-                weight: 1.5,                       // Thicker, bolder lines
-                fillOpacity: 0                     // Completely transparent inside
+                color: 'rgba(255, 255, 255, 0.8)', 
+                weight: 1.5,                       
+                fillOpacity: 0                     
             },
-            pane: 'labels',                        // Forces it into the top pane
-            interactive: false                     // Prevents blocking mouse clicks
+            pane: 'labels',                        
+            interactive: false                     
         }).addTo(map);
     });
 
@@ -100,6 +100,14 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
+
+// --- MRMS QPE LAYERS (Via IEM WMS) ---
+const mrmsOptions = { format: 'image/png', transparent: true, opacity: 0.65, attribution: "Data © IEM / NCEP" };
+
+const mrms1hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p1h' });
+const mrms24hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p24h' });
+const mrms48hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p48h' });
+const mrms72hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p72h' });
 
 // --- STATIC SATELLITE LAYERS (GOES-East & GOES-West) ---
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
@@ -380,6 +388,10 @@ const groupedOverlays = {
     },
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
+        "MRMS 1-Hour QPE": mrms1hr,
+        "MRMS 24-Hour QPE": mrms24hr,
+        "MRMS 48-Hour QPE": mrms48hr,
+        "MRMS 72-Hour QPE": mrms72hr,
         "GOES-East: Visible (Ch. 2)": goesEastVis,
         "GOES-East: Mid-Level WV (Ch. 9)": goesEastWV,
         "GOES-East: Clean IR (Ch. 13)": goesEastIR,
