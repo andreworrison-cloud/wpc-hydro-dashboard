@@ -58,20 +58,25 @@ const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/
 });
 esriDarkLabels.addTo(map);
 
-// --- BOLDER GEOJSON STATE BORDERS ---
+// --- TOGGLEABLE GEOJSON STATE BORDERS ---
+const whiteBorders = L.geoJSON(null, {
+    style: { color: 'rgba(255, 255, 255, 0.8)', weight: 1.5, fillOpacity: 0 },
+    pane: 'labels', interactive: false
+});
+
+const blackBorders = L.geoJSON(null, {
+    style: { color: 'rgba(0, 0, 0, 0.9)', weight: 1.5, fillOpacity: 0 },
+    pane: 'labels', interactive: false
+});
+
 fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json')
     .then(response => response.json())
     .then(data => {
-        L.geoJSON(data, {
-            style: {
-                color: 'rgba(255, 255, 255, 0.8)', 
-                weight: 1.5,                       
-                fillOpacity: 0                     
-            },
-            pane: 'labels',                        
-            interactive: false                     
-        }).addTo(map);
+        whiteBorders.addData(data);
+        blackBorders.addData(data);
     });
+
+whiteBorders.addTo(map); // Turn on white borders by default
 
 // --- TIME LOOP LOGIC (10-Min Intervals, 2-Hour Loop for Speed) ---
 const endTime = new Date();
@@ -120,7 +125,7 @@ const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/w
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
+// --- CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -139,7 +144,6 @@ const commonAlertOptions = {
         const eventName = props.prod_type || "Unknown Hydro Alert";
         const wfo = props.wfo ? `WFO ${props.wfo}` : "NWS";
         const expires = props.expiration || "Unknown";
-        const link = props.url ? `<br><br><a href="${props.url}" target="_blank">View Alert Text</a>` : "";
 
         layer.bindPopup(`
             <div style="font-family: sans-serif; text-align: center; min-width: 200px;">
@@ -147,7 +151,6 @@ const commonAlertOptions = {
                 <em>Issued by ${wfo}</em><br>
                 <hr style="margin: 5px 0;">
                 <span style="font-size: 0.9em;">Expires: ${expires}</span>
-                ${link}
             </div>
         `);
     }
@@ -178,7 +181,7 @@ async function fetchNWSAlerts() {
 }
 fetchNWSAlerts();
 
-// --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
+// --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) WITH DISCUSSION LINKS ---
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
     let riskColor = "#00ff00"; 
@@ -200,7 +203,12 @@ const eroLayer = L.geoJSON(null, {
     style: getEroStyle,
     onEachFeature: function (feature, layer) {
         const cat = feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "Unknown";
-        layer.bindPopup(`<strong>WPC Day 1 ERO</strong><br>Category: ${cat}`);
+        layer.bindPopup(`
+            <div style="text-align: center; font-family: sans-serif;">
+                <strong>WPC Day 1 ERO</strong><br>Category: ${cat}<br><br>
+                <a href="https://www.wpc.ncep.noaa.gov/qpf/ero_discussion.shtml" target="_blank">Read ERO Discussion</a>
+            </div>
+        `);
     }
 });
 
@@ -212,11 +220,20 @@ const mpdLayer = L.geoJSON(null, {
             const mpdNum = props.mpd_number || "Unknown";
             const mpdTag = props.mpd_tag || "See WPC for details";
             const validTime = props.valid_time || "Unknown";
+            const currentYear = new Date().getUTCFullYear();
             
             const tooltipHTML = `<div style="text-align: center; font-family: sans-serif; line-height: 1.4;"><strong>MPD ${mpdNum}</strong><br>${mpdTag}<br>Valid: ${validTime}</div>`;
             layer.bindTooltip(tooltipHTML, { sticky: true, direction: "top" });
             
-            const popupHTML = `<div style="font-family: sans-serif; font-size: 14px; min-width: 240px; text-align: center;"><strong>MPD ${mpdNum}</strong><br><span style="color: #d84b2a;"><strong>${mpdTag}</strong></span><br><hr style="margin: 5px 0;"><span style="font-size: 0.9em;">Valid: ${validTime}</span></div>`;
+            const popupHTML = `
+                <div style="font-family: sans-serif; font-size: 14px; min-width: 240px; text-align: center;">
+                    <strong>MPD ${mpdNum}</strong><br>
+                    <span style="color: #d84b2a;"><strong>${mpdTag}</strong></span><br>
+                    <hr style="margin: 5px 0;">
+                    <span style="font-size: 0.9em;">Valid: ${validTime}</span><br><br>
+                    <a href="https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php?md=${mpdNum}&yr=${currentYear}" target="_blank">Read MPD Discussion</a>
+                </div>
+            `;
             layer.bindPopup(popupHTML);
         }
     }
@@ -396,14 +413,13 @@ map.on('overlayadd', function(eventLayer) {
     if (eventLayer.name.includes('MRMS')) {
         legendContainer.style.display = 'block';
         
-        let layerId = 'mrms_p1h';
         let hours = 1;
-        if (eventLayer.name.includes('24-Hour')) { layerId = 'mrms_p24h'; hours = 24; }
-        if (eventLayer.name.includes('48-Hour')) { layerId = 'mrms_p48h'; hours = 48; }
-        if (eventLayer.name.includes('72-Hour')) { layerId = 'mrms_p72h'; hours = 72; }
+        if (eventLayer.name.includes('24-Hour')) { hours = 24; }
+        if (eventLayer.name.includes('48-Hour')) { hours = 48; }
+        if (eventLayer.name.includes('72-Hour')) { hours = 72; }
 
-        // Fetch exact WMS Legend Graphic from the STANDARD IEM endpoint, not the 'no nulls' endpoint
-        legendImg.src = `https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms.cgi?VERSION=1.1.1&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${layerId}`;
+        // Route to a static local legend image instead of the broken IEM WMS endpoint
+        legendImg.src = 'static/leg_mrms.png'; 
         
         // Calculate the rolling window
         const now = new Date();
@@ -435,6 +451,10 @@ const baseMaps = {
 };
 
 const groupedOverlays = {
+    "Geopolitical Boundaries": {
+        "White State Borders": whiteBorders,
+        "Black State Borders": blackBorders
+    },
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
