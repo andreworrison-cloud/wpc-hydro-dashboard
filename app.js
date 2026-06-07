@@ -206,7 +206,7 @@ const eroLayer = L.geoJSON(null, {
         layer.bindPopup(`
             <div style="text-align: center; font-family: sans-serif;">
                 <strong>WPC Day 1 ERO</strong><br>Category: ${cat}<br><br>
-                <a href="https://www.wpc.ncep.noaa.gov/qpf/ero_discussion.shtml" target="_blank">Read ERO Discussion</a>
+                <a href="https://www.wpc.ncep.noaa.gov/discussions/qpferd.html" target="_blank" rel="noopener noreferrer">Read ERO Discussion</a>
             </div>
         `);
     }
@@ -231,7 +231,7 @@ const mpdLayer = L.geoJSON(null, {
                     <span style="color: #d84b2a;"><strong>${mpdTag}</strong></span><br>
                     <hr style="margin: 5px 0;">
                     <span style="font-size: 0.9em;">Valid: ${validTime}</span><br><br>
-                    <a href="https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php?md=${mpdNum}&yr=${currentYear}" target="_blank">Read MPD Discussion</a>
+                    <a href="https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php?md=${mpdNum}&yr=${currentYear}" target="_blank" rel="noopener noreferrer">Read MPD Discussion</a>
                 </div>
             `;
             layer.bindPopup(popupHTML);
