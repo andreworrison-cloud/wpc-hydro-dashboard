@@ -143,7 +143,7 @@ const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/w
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// --- NWS ACTIVE HYDRO WARNINGS & WATCHES WITH DYNAMIC TEXT LOADERS ---
+// --- RESTORED & CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -153,11 +153,18 @@ function getAlertColor(event) {
     return "gray"; 
 }
 
-// Global function to securely fetch and format the API JSON into readable English
-window.loadNWSAlertText = async function(url, containerId) {
+// Global function with STOP PROPAGATION to prevent Leaflet from closing the popup
+window.loadNWSAlertText = async function(event, url, containerId) {
+    // Prevent the map from hearing the click
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = "<em>Loading official text...</em>";
+    
     try {
         const response = await fetch(url);
         if (!response.ok) throw new Error("API not responding");
@@ -188,14 +195,15 @@ const commonAlertOptions = (paneName) => ({
         const wfo = props.wfo ? `WFO ${props.wfo}` : "NWS";
         const expires = props.expiration || "Unknown";
         
-        // Generates a unique ID for the text container
         const alertId = "alert-" + Math.random().toString(36).substr(2, 9);
+        
+        // Converted to a styled button to prevent URL routing and explicitly pass the event
         const linkHTML = props.url ? `
             <br>
             <div id="${alertId}" style="margin-top: 10px;">
-                <a href="javascript:void(0);" onclick="loadNWSAlertText('${props.url}', '${alertId}')" style="color: #007bff; text-decoration: none; font-weight: bold;">
+                <button onclick="loadNWSAlertText(event, '${props.url}', '${alertId}')" style="background: #007bff; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">
                     Load Official Alert Text
-                </a>
+                </button>
             </div>
         ` : "";
 
@@ -227,7 +235,6 @@ async function fetchNWSAlerts() {
         const data = await response.json();
         
         if (data && data.features) {
-            // Null safety check added to prevent silent crashes
             const warningFeatures = data.features.filter(f => f.properties && f.properties.prod_type && !f.properties.prod_type.includes("Watch"));
             const watchFeatures = data.features.filter(f => f.properties && f.properties.prod_type && f.properties.prod_type.includes("Watch"));
             
@@ -382,7 +389,7 @@ mrmsTimeControl.onAdd = function(map) {
 };
 mrmsTimeControl.addTo(map);
 
-// Legend UI Box
+// Legend UI Box (Handles both Images and Dynamic HTML)
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function (map) {
     const div = L.DomUtil.create('div', 'legend-box');
