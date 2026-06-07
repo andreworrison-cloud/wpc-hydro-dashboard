@@ -1,3 +1,13 @@
+// --- UI CSS FIXES (Scrollable Menu) ---
+const customStyle = document.createElement('style');
+customStyle.innerHTML = `
+    .leaflet-control-layers-expanded {
+        max-height: 60vh !important; /* Forces menu to stop expanding at 60% of screen height */
+        overflow-y: auto !important; /* Adds a scrollbar for the rest of the list */
+    }
+`;
+document.head.appendChild(customStyle);
+
 // Initialize the map, centered roughly over the CONUS
 const map = L.map('map', {
     zoomControl: true,
@@ -163,8 +173,8 @@ fetchNWSAlerts();
 // --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) ---
 function getEroStyle(feature) {
     const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
-    let riskColor = "#00ff00"; // Default to MRGL Green
-    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFFF00"; // Operational WPC Yellow
+    let riskColor = "#00ff00"; 
+    if (cat.includes("SLGT") || cat.includes("SLIGHT")) riskColor = "#FFFF00"; 
     if (cat.includes("MDT") || cat.includes("MODERATE"))  riskColor = "#FF0000"; 
     if (cat.includes("HIGH")) riskColor = "#FF00FF"; 
     return { color: riskColor, weight: 2, fillOpacity: 0.15 };
@@ -217,16 +227,15 @@ async function fetchWPCData() {
         let eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
         const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
         
-        // --- THE TOPOLOGY FIX: Sort EROs so higher risks draw on top ---
         eroFeatures.sort((a, b) => {
             const getRank = (feature) => {
                 const cat = (feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "").toUpperCase();
                 if (cat.includes("HIGH")) return 4;
                 if (cat.includes("MDT") || cat.includes("MODERATE")) return 3;
                 if (cat.includes("SLGT") || cat.includes("SLIGHT")) return 2;
-                return 1; // MRGL or unknown defaults to bottom
+                return 1; 
             };
-            return getRank(a) - getRank(b); // Sorts Ascending: 1, 2, 3, 4
+            return getRank(a) - getRank(b); 
         });
         
         if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
@@ -237,7 +246,6 @@ async function fetchWPCData() {
 fetchWPCData();
 
 // --- RAP MESOANALYSIS LAYERS & UI ---
-// Default bounds for Leaflet initialization (will be instantly overwritten by JSON)
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
 const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
@@ -271,7 +279,7 @@ timeControl.onAdd = function(map) {
     div.style.borderRadius = '6px';
     div.style.marginBottom = '5px';
     div.style.textAlign = 'center';
-    div.style.display = 'none'; // Hidden until RAP data is fetched
+    div.style.display = 'none'; 
     return div;
 };
 timeControl.addTo(map);
@@ -298,7 +306,6 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
         timeBox.innerHTML = `<strong>${data.valid_time}</strong>`;
         timeBox.style.display = 'block';
 
-        // Dynamically apply the mathematically perfect bounds from Python
         if (data.bounds) {
             const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
             pwatLayer.setBounds(exactBounds);
@@ -364,7 +371,6 @@ const baseMaps = {
     "OpenStreetMap": osmLayer
 };
 
-// Reordered and relabeled to group Radar and Satellite logically
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
@@ -404,7 +410,6 @@ const groupedOverlays = {
     }
 };
 
-// Assign control to a variable so we can target its container
 const layerControl = L.control.groupedLayers(baseMaps, groupedOverlays, { 
     collapsed: true 
 }).addTo(map);
