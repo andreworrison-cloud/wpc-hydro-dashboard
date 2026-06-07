@@ -2,8 +2,8 @@
 const customStyle = document.createElement('style');
 customStyle.innerHTML = `
     .leaflet-control-layers-expanded {
-        max-height: 60vh !important; /* Forces menu to stop expanding at 60% of screen height */
-        overflow-y: auto !important; /* Adds a scrollbar for the rest of the list */
+        max-height: 60vh !important; 
+        overflow-y: auto !important; 
     }
 `;
 document.head.appendChild(customStyle);
@@ -276,7 +276,7 @@ const vort500Layer = L.imageOverlay('static/rap_vort500.png', rapBounds, {zIndex
 const diffAdvLayer = L.imageOverlay('static/rap_diff_adv.png', rapBounds, {zIndex: 10});
 const div250Layer = L.imageOverlay('static/rap_div250.png', rapBounds, {zIndex: 10});
 
-// Valid Time UI Box
+// RAP Valid Time UI Box
 const timeControl = L.control({position: 'bottomright'});
 timeControl.onAdd = function(map) {
     const div = L.DomUtil.create('div', 'time-box');
@@ -292,6 +292,22 @@ timeControl.onAdd = function(map) {
 };
 timeControl.addTo(map);
 
+// MRMS Valid Time UI Box (Dynamic Rolling Window)
+const mrmsTimeControl = L.control({position: 'bottomright'});
+mrmsTimeControl.onAdd = function(map) {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'mrms-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+mrmsTimeControl.addTo(map);
+
 // Legend UI Box
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function (map) {
@@ -306,7 +322,7 @@ legendControl.onAdd = function (map) {
 };
 legendControl.addTo(map);
 
-// Fetch the valid time AND exact projection bounds from the Python JSON output
+// Fetch the RAP bounds and time
 fetch('static/rap_metadata.json?t=' + new Date().getTime())
     .then(r => r.json())
     .then(data => {
@@ -339,11 +355,23 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
     })
     .catch(err => console.log("RAP metadata not found yet."));
 
-// Dynamically route the legend images on layer add
+// Helper function to calculate rolling MRMS UTC time strings
+function formatUTC(date) {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const m = months[date.getUTCMonth()];
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    const h = String(date.getUTCHours()).padStart(2, '0');
+    const min = String(date.getUTCMinutes()).padStart(2, '0');
+    return `${m} ${d}, ${h}${min}Z`;
+}
+
+// Dynamically route the legend images and time boxes
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
+    const mrmsTimeBox = document.getElementById('mrms-time-box');
     
+    // RAP Legends
     if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'block';
         
@@ -363,13 +391,40 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Diff Vorticity')) legendImg.src = 'static/leg_diff_adv.png';
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
+    
+    // MRMS Legends & Time Logic
+    if (eventLayer.name.includes('MRMS')) {
+        legendContainer.style.display = 'block';
+        
+        let layerId = 'mrms_p1h';
+        let hours = 1;
+        if (eventLayer.name.includes('24-Hour')) { layerId = 'mrms_p24h'; hours = 24; }
+        if (eventLayer.name.includes('48-Hour')) { layerId = 'mrms_p48h'; hours = 48; }
+        if (eventLayer.name.includes('72-Hour')) { layerId = 'mrms_p72h'; hours = 72; }
+
+        // Fetch exact WMS Legend Graphic from NCEP/IEM
+        legendImg.src = `https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi?VERSION=1.1.1&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${layerId}`;
+        
+        // Calculate the rolling window
+        const now = new Date();
+        const start = new Date(now.getTime() - (hours * 60 * 60 * 1000));
+        
+        mrmsTimeBox.innerHTML = `<strong>MRMS ${hours}-Hour Accumulation</strong><br>${formatUTC(start)} &mdash; ${formatUTC(now)}`;
+        mrmsTimeBox.style.display = 'block';
+    }
 });
 
-// Hide the legend when a RAP layer is toggled off via checkbox
+// Hide the legend/time when a layer is toggled off
 map.on('overlayremove', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
+    const mrmsTimeBox = document.getElementById('mrms-time-box');
+    
     if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'none';
+    }
+    if (eventLayer.name.includes('MRMS')) {
+        legendContainer.style.display = 'none';
+        mrmsTimeBox.style.display = 'none';
     }
 });
 
