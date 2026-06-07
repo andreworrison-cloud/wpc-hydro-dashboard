@@ -78,7 +78,7 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
 
 whiteBorders.addTo(map); // Default to white borders for the dark map
 
-// Listen for basemap changes and automatically swap border colors!
+// Listen for basemap changes and automatically swap border colors
 map.on('baselayerchange', function(e) {
     if (e.name === "OpenStreetMap") {
         if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
@@ -187,7 +187,6 @@ async function fetchNWSAlerts() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
-        // Added fail-safe in case the payload is empty
         if (data && data.features) {
             const warningFeatures = data.features.filter(f => !f.properties.prod_type.includes("Watch"));
             const watchFeatures = data.features.filter(f => f.properties.prod_type.includes("Watch"));
@@ -360,29 +359,40 @@ legendControl.onAdd = function (map) {
 };
 legendControl.addTo(map);
 
-// Programmatic HTML Generator for the MRMS Color Bar
-function getMRMSLegendHTML() {
-    const levels = [
-        {v: '8.0+', c: '#FFFFCC'}, {v: '7.0', c: '#9966CC'}, {v: '6.5', c: '#CC00FF'}, {v: '6.0', c: '#FF00FF'},
-        {v: '5.5', c: '#990000'}, {v: '5.0', c: '#CC0000'}, {v: '4.5', c: '#FF0000'}, {v: '4.0', c: '#FF3300'},
-        {v: '3.0', c: '#FF6600'}, {v: '2.0', c: '#FF9900'}, {v: '1.75', c: '#FFCC00'}, {v: '1.25', c: '#FFFF00'},
-        {v: '1.00', c: '#CCFF33'}, {v: '0.80', c: '#66FF33'}, {v: '0.60', c: '#33CC33'}, {v: '0.40', c: '#009900'},
-        {v: '0.20', c: '#0000FF'}, {v: '0.10', c: '#3366FF'}, {v: '0.05', c: '#33CCFF'}, {v: '0.01', c: '#66FFFF'}
+// --- 4-TIER DYNAMIC HTML LEGEND GENERATOR FOR MRMS QPE ---
+function getMRMSLegendHTML(hours) {
+    // Top-to-Bottom mapping of the official NWS QPE 24-color scale
+    const mrmsColors = [
+        '#FFFFCC', '#CCFFFF', '#CCCCFF', '#FFFFFF', '#660066', '#990099',
+        '#CC00CC', '#FF00FF', '#990000', '#CC0000', '#FF3333', '#FF9999',
+        '#CC6600', '#FF9900', '#FFCC00', '#FFFF00', '#009900', '#33CC33',
+        '#66FF66', '#99FF99', '#0000FF', '#3366FF', '#33CCFF', '#66FFFF'
     ];
     
+    // Arrays representing the text labels for the specific hour selected
+    const scaleValues = {
+        1:  ['8.0', '7.0', '6.5', '6.0', '5.5', '5.0', '4.5', '4.0', '3.5', '3.0', '2.5', '2.0', '1.75', '1.50', '1.25', '1.00', '0.80', '0.60', '0.40', '0.20', '0.15', '0.10', '0.05', '0.01'],
+        24: ['24.0', '20.0', '18.0', '16.0', '14.0', '12.0', '10.0', '9.0', '8.0', '7.0', '6.0', '5.0', '4.0', '3.0', '2.5', '2.0', '1.5', '1.0', '0.75', '0.50', '0.25', '0.10', '0.05', '0.01'],
+        48: ['32.0', '28.0', '24.0', '20.0', '18.0', '16.0', '14.0', '12.0', '10.0', '8.0', '7.0', '6.0', '5.0', '4.0', '3.0', '2.5', '2.0', '1.5', '1.0', '0.75', '0.50', '0.25', '0.10', '0.01'],
+        72: ['40.0', '36.0', '32.0', '28.0', '24.0', '20.0', '18.0', '16.0', '14.0', '12.0', '10.0', '8.0', '7.0', '6.0', '5.0', '4.0', '3.0', '2.0', '1.5', '1.0', '0.50', '0.25', '0.10', '0.01']
+    };
+
+    const targetVals = scaleValues[hours];
+
     let html = `
-        <div style="background: #f4f4f4; padding: 12px 16px; border-radius: 8px; color: #2c3e50; font-family: sans-serif; font-size: 12px; border: 1px solid #ccc; width: max-content;">
-            <div style="font-weight: bold; text-align: center; margin-bottom: 8px; font-size: 16px; color: #1a252f;">inches</div>
+        <div style="background: #e2e8ed; padding: 12px 16px; border-radius: 8px; color: #2c3e50; font-family: sans-serif; font-size: 12px; border: 1px solid #ccc; width: max-content;">
+            <div style="font-weight: bold; text-align: center; margin-bottom: 8px; font-size: 16px; color: #1a252f;">in</div>
     `;
     
-    levels.forEach(lvl => {
+    // Loop through all 24 colors and dynamically attach the proper hourly value next to it
+    for (let i = 0; i < 24; i++) {
         html += `
             <div style="display: flex; align-items: center; margin-bottom: 2px;">
-                <div style="width: 24px; height: 14px; background: ${lvl.c}; border: 1px solid #999; margin-right: 10px;"></div>
-                <div style="font-family: monospace; font-size: 13px;">${lvl.v}</div>
+                <div style="width: 24px; height: 14px; background: ${mrmsColors[i]}; border: 1px solid rgba(0,0,0,0.1); margin-right: 10px;"></div>
+                <div style="font-family: monospace; font-size: 13px; font-weight: bold;">${targetVals[i]}</div>
             </div>
         `;
-    });
+    }
     
     html += `</div>`;
     return html;
@@ -462,20 +472,22 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
     
-    // MRMS Legends (Uses dynamically generated HTML color bar)
+    // MRMS Legends (Uses 4-Tier dynamically generated HTML color bar)
     if (eventLayer.name.includes('MRMS')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'transparent'; // Let the HTML box background show cleanly
         legendImg.style.display = 'none';
         legendHtml.style.display = 'block';
         
-        legendHtml.innerHTML = getMRMSLegendHTML();
-        
         let hours = 1;
         if (eventLayer.name.includes('24-Hour')) { hours = 24; }
         if (eventLayer.name.includes('48-Hour')) { hours = 48; }
         if (eventLayer.name.includes('72-Hour')) { hours = 72; }
 
+        // Inject the dynamically generated HTML using the correct hourly threshold array
+        legendHtml.innerHTML = getMRMSLegendHTML(hours);
+        
+        // Calculate the rolling window
         const now = new Date();
         const start = new Date(now.getTime() - (hours * 60 * 60 * 1000));
         
