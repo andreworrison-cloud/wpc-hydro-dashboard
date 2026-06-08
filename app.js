@@ -259,7 +259,8 @@ async function fetchFFDData() {
         
         const lines = text.split('\n');
         let currentColor = '#00ff00'; 
-        let currentImpact = 'Monitor';
+        let colorInferredImpact = 'Monitor';
+        let currentTooltipHTML = '<strong>Monitor</strong>';
         let isDrawing = false;
         let currentCoords = [];
         
@@ -274,12 +275,12 @@ async function fetchFFDData() {
                 const b = parseInt(colorMatch[3]);
                 currentColor = `rgb(${r}, ${g}, ${b})`;
                 
-                if (r === 0 && g >= 200 && b === 0) currentImpact = "Monitor";
-                else if (r === 255 && g === 255 && b === 0) currentImpact = "Advisory";
-                else if (r === 255 && (g > 100 && g < 200) && b === 0) currentImpact = "Base FFW";
-                else if (r === 255 && g === 0 && b === 0) currentImpact = "Considerable FFW";
-                else if (r === 255 && g === 0 && b === 255) currentImpact = "Catastrophic FFW";
-                else currentImpact = "Flash Flood Detector";
+                if (r === 0 && g >= 200 && b === 0) colorInferredImpact = "Monitor";
+                else if (r === 255 && g === 255 && b === 0) colorInferredImpact = "Advisory";
+                else if (r === 255 && (g > 100 && g < 200) && b === 0) colorInferredImpact = "Base FFW";
+                else if (r === 255 && g === 0 && b === 0) colorInferredImpact = "Considerable FFW";
+                else if (r === 255 && g === 0 && b === 255) colorInferredImpact = "Catastrophic FFW";
+                else colorInferredImpact = "Flash Flood Detector";
                 return; 
             }
             
@@ -287,9 +288,25 @@ async function fetchFFDData() {
             if (cleanLine.match(/^(Line:|Polygon:)/i)) {
                 isDrawing = true;
                 currentCoords = [];
+                
                 const titleMatch = cleanLine.match(/"([^"]+)"/);
                 if (titleMatch) {
-                    currentImpact = titleMatch[1];
+                    let rawLabel = titleMatch[1];
+                    // Remove "boundary" (case-insensitive) and clean up any double spaces
+                    rawLabel = rawLabel.replace(/boundary/i, '').replace(/\s+/g, ' ').trim();
+                    
+                    // Separate timestamp (e.g., 1430Z) from the impact tag
+                    const parts = rawLabel.split(' ');
+                    if (parts.length > 0 && /Z$/i.test(parts[0])) {
+                        const timeStamp = parts[0];
+                        // If no impact tag is present, fall back to the color-inferred tag
+                        const impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
+                        currentTooltipHTML = `${timeStamp}<br><span style="font-size: 1.1em;"><strong>${impactTag}</strong></span>`;
+                    } else {
+                        currentTooltipHTML = `<strong>${rawLabel}</strong>`;
+                    }
+                } else {
+                    currentTooltipHTML = `<strong>${colorInferredImpact}</strong>`;
                 }
                 return;
             }
@@ -306,7 +323,7 @@ async function fetchFFDData() {
                         pane: 'ffd'
                     });
                     
-                    polygon.bindTooltip(`<strong>FFD Recommended Impact:</strong> ${currentImpact}`, { sticky: true, direction: 'top', className: 'ffd-tooltip' });
+                    polygon.bindTooltip(`<div style="text-align: center; line-height: 1.4; font-family: sans-serif;">${currentTooltipHTML}</div>`, { sticky: true, direction: 'top', className: 'ffd-tooltip' });
                     ffdLayer.addLayer(polygon);
                 }
                 return;
