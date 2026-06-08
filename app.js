@@ -632,8 +632,8 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
     
-    // Explicitly check for MRMS QPE
-    if (eventLayer.name.includes('MRMS QPE')) {
+    // Explicitly check for MRMS and QPE strings together so we don't accidentally grab the FFD layer
+    if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'transparent'; 
         legendImg.style.display = 'none';
@@ -662,7 +662,7 @@ map.on('overlayremove', function(eventLayer) {
     if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'none';
     }
-    if (eventLayer.name.includes('MRMS QPE')) {
+    if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         legendContainer.style.display = 'none';
         mrmsTimeBox.style.display = 'none';
     }
