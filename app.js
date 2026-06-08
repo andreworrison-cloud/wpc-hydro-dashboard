@@ -292,16 +292,30 @@ async function fetchFFDData() {
                 const titleMatch = cleanLine.match(/"([^"]+)"/);
                 if (titleMatch) {
                     let rawLabel = titleMatch[1];
-                    // Remove "boundary" (case-insensitive) and clean up any double spaces
-                    rawLabel = rawLabel.replace(/boundary/i, '').replace(/\s+/g, ' ').trim();
+                    
+                    // Strip literal \n or /n that GR uses for newlines
+                    rawLabel = rawLabel.replace(/\\[nN]/g, ' ').replace(/\/[nN]/g, ' ');
+                    
+                    // Remove "boundary" (case-insensitive)
+                    rawLabel = rawLabel.replace(/boundary/i, '');
+                    
+                    // Clean up any weird double spaces left behind
+                    rawLabel = rawLabel.replace(/\s+/g, ' ').trim();
                     
                     // Separate timestamp (e.g., 1430Z) from the impact tag
                     const parts = rawLabel.split(' ');
                     if (parts.length > 0 && /Z$/i.test(parts[0])) {
                         const timeStamp = parts[0];
-                        // If no impact tag is present, fall back to the color-inferred tag
-                        const impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
-                        currentTooltipHTML = `${timeStamp}<br><span style="font-size: 1.1em;"><strong>${impactTag}</strong></span>`;
+                        // If an impact tag is present, grab it. If not, fallback to the color inferred text.
+                        let impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
+                        
+                        // Capitalize the first letter just to keep it clean (e.g., "monitor" -> "Monitor")
+                        if (impactTag.length > 0) {
+                            impactTag = impactTag.charAt(0).toUpperCase() + impactTag.slice(1);
+                        }
+                        
+                        // Break into two lines, bolding the impact tag
+                        currentTooltipHTML = `<span style="font-size: 0.9em;">${timeStamp}</span><br><span style="font-size: 1.1em;"><strong>${impactTag}</strong></span>`;
                     } else {
                         currentTooltipHTML = `<strong>${rawLabel}</strong>`;
                     }
