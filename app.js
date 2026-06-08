@@ -44,9 +44,9 @@ map.getPane('watches').style.zIndex = 400;
 map.createPane('warnings');
 map.getPane('warnings').style.zIndex = 410;
 
-// FFD dots should sit highly visible above everything but labels
+// FFD polygons sit visibly above the background and warnings, but below the map labels
 map.createPane('ffd');
-map.getPane('ffd').style.zIndex = 500;
+map.getPane('ffd').style.zIndex = 450;
 
 // Dark Base
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
@@ -147,7 +147,7 @@ const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/w
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
 
-// --- RESTORED & CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
+// --- CLEANED NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
     if (!event) return "gray";
     if (event === "Flash Flood Warning") return "red";
@@ -229,15 +229,15 @@ async function fetchNWSAlerts() {
 }
 fetchNWSAlerts();
 
-// --- MRMS FLASH FLOOD DETECTOR (FFD) PARSER ---
+// --- MRMS FLASH FLOOD DETECTOR (FFD) CONTOUR PARSER ---
 const ffdLayer = L.layerGroup();
 
 async function fetchFFDData() {
     try {
         // Appending timestamp prevents the browser from caching old data
-        const targetUrl = `https://www.dragmetostorm.com/wfo/FFDetector/FFDetectorPlacefile_size40.txt?t=${new Date().getTime()}`;
-        // Routing through an open CORS proxy so the browser allows the fetch to occur
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        const targetUrl = `https://www.dragmetostorm.com/wfo/FFDetector/FFDetector_Contours.txt?t=${new Date().getTime()}`;
+        // Routing through corsproxy.io to bypass browser security blocks
+        const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(targetUrl);
         
         const response = await fetch(proxyUrl);
         if (!response.ok) throw new Error("Could not fetch FFD placefile.");
@@ -246,48 +246,76 @@ async function fetchFFDData() {
         ffdLayer.clearLayers(); 
         
         const lines = text.split('\n');
-        let currentColor = '#00ff00'; // Default fallback color
+        let currentColor = '#00ff00'; 
+        let currentImpact = 'Monitor';
+        let isDrawing = false;
+        let currentCoords = [];
         
         lines.forEach(line => {
-            // Dynamically check for GR placefile color tags (e.g., Color: 255 0 0)
-            const colorMatch = line.match(/^Color:\s*(\d+)\s+(\d+)\s+(\d+)/i);
+            const cleanLine = line.trim();
+            
+            // 1. Check for Color Update
+            const colorMatch = cleanLine.match(/^Color:\s*(\d+)\s+(\d+)\s+(\d+)/i);
             if (colorMatch) {
                 const r = parseInt(colorMatch[1]);
                 const g = parseInt(colorMatch[2]);
                 const b = parseInt(colorMatch[3]);
                 currentColor = `rgb(${r}, ${g}, ${b})`;
-                return; // Once color updates, move to next line
+                
+                // Infer impact from RGB based on the standard FFD scale
+                if (r === 0 && g >= 200 && b === 0) currentImpact = "Monitor";
+                else if (r === 255 && g === 255 && b === 0) currentImpact = "Advisory";
+                else if (r === 255 && (g > 100 && g < 200) && b === 0) currentImpact = "Base FFW";
+                else if (r === 255 && g === 0 && b === 0) currentImpact = "Considerable FFW";
+                else if (r === 255 && g === 0 && b === 255) currentImpact = "Catastrophic FFW";
+                else currentImpact = "Flash Flood Detector";
+                return; 
             }
             
-            // Check for Lat/Lon coordinates and plot the marker using the current active color
-            const locMatch = line.match(/([-+]?\d{1,2}\.\d+)\s*,\s*([-+]?\d{1,3}\.\d+)/);
-            if (locMatch) {
-                const lat = parseFloat(locMatch[1]);
-                const lon = parseFloat(locMatch[2]);
-                
-                // Identify the impact tag from the line text for the popup
-                let impactText = "Monitor";
-                if (line.match(/Advisory/i)) impactText = "Advisory";
-                if (line.match(/Base/i)) impactText = "Base";
-                if (line.match(/Considerable/i)) impactText = "Considerable";
-                if (line.match(/Catastrophic/i)) impactText = "Catastrophic";
-                
-                const marker = L.circleMarker([lat, lon], {
-                    radius: 6,
-                    fillColor: currentColor, // Dynamically pulls from the placefile's Color variable
-                    color: '#000', 
-                    weight: 1.5,
-                    fillOpacity: 0.9,
-                    pane: 'ffd'
-                });
-                
-                marker.bindTooltip(`<strong>FFD Impact:</strong> ${impactText}`, { direction: 'top' });
-                ffdLayer.addLayer(marker);
+            // 2. Check for Start of Polygon/Line
+            if (cleanLine.match(/^(Line:|Polygon:)/i)) {
+                isDrawing = true;
+                currentCoords = [];
+                // Check if the file explicitly provided a label (e.g. Line: 2, 0, "Base")
+                const titleMatch = cleanLine.match(/"([^"]+)"/);
+                if (titleMatch) {
+                    currentImpact = titleMatch[1];
+                }
+                return;
+            }
+            
+            // 3. Check for End of Polygon/Line
+            if (cleanLine.match(/^End:/i) && isDrawing) {
+                isDrawing = false;
+                if (currentCoords.length > 2) {
+                    // Draw a shaded Leaflet polygon using the accumulated coordinates
+                    const polygon = L.polygon(currentCoords, {
+                        color: currentColor,
+                        weight: 2,
+                        fillColor: currentColor,
+                        fillOpacity: 0.35,
+                        pane: 'ffd'
+                    });
+                    
+                    polygon.bindTooltip(`<strong>FFD Recommended Impact:</strong> ${currentImpact}`, { sticky: true, direction: 'top' });
+                    ffdLayer.addLayer(polygon);
+                }
+                return;
+            }
+            
+            // 4. Collect Coordinates while actively inside a block
+            if (isDrawing) {
+                const locMatch = cleanLine.match(/^([-+]?\d{1,2}\.\d+)\s*,\s*([-+]?\d{1,3}\.\d+)/);
+                if (locMatch) {
+                    const lat = parseFloat(locMatch[1]);
+                    const lon = parseFloat(locMatch[2]);
+                    currentCoords.push([lat, lon]);
+                }
             }
         });
         
     } catch (error) {
-        console.error("FFD Fetch Error:", error);
+        console.error("FFD Contour Fetch Error (Likely blocked by CORS proxy):", error);
     }
 }
 // Run immediately, then loop every 10 minutes
