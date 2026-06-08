@@ -229,18 +229,16 @@ async function fetchNWSAlerts() {
 }
 fetchNWSAlerts();
 
-// --- MRMS FLASH FLOOD DETECTOR (FFD) CONTOUR PARSER ---
+// --- LOCAL MRMS FLASH FLOOD DETECTOR (FFD) CONTOUR PARSER ---
 const ffdLayer = L.layerGroup();
 
 async function fetchFFDData() {
     try {
-        // Appending timestamp prevents the browser from caching old data
-        const targetUrl = `https://www.dragmetostorm.com/wfo/FFDetector/FFDetector_Contours.txt?t=${new Date().getTime()}`;
-        // Routing through corsproxy.io to bypass browser security blocks
-        const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(targetUrl);
+        // Fetching locally from the static folder to bypass CORS proxies!
+        const targetUrl = `static/ffd_contours.txt?t=${new Date().getTime()}`;
         
-        const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error("Could not fetch FFD placefile.");
+        const response = await fetch(targetUrl);
+        if (!response.ok) throw new Error("Could not fetch local FFD placefile.");
         
         const text = await response.text();
         ffdLayer.clearLayers(); 
@@ -262,7 +260,6 @@ async function fetchFFDData() {
                 const b = parseInt(colorMatch[3]);
                 currentColor = `rgb(${r}, ${g}, ${b})`;
                 
-                // Infer impact from RGB based on the standard FFD scale
                 if (r === 0 && g >= 200 && b === 0) currentImpact = "Monitor";
                 else if (r === 255 && g === 255 && b === 0) currentImpact = "Advisory";
                 else if (r === 255 && (g > 100 && g < 200) && b === 0) currentImpact = "Base FFW";
@@ -276,7 +273,6 @@ async function fetchFFDData() {
             if (cleanLine.match(/^(Line:|Polygon:)/i)) {
                 isDrawing = true;
                 currentCoords = [];
-                // Check if the file explicitly provided a label (e.g. Line: 2, 0, "Base")
                 const titleMatch = cleanLine.match(/"([^"]+)"/);
                 if (titleMatch) {
                     currentImpact = titleMatch[1];
@@ -288,7 +284,6 @@ async function fetchFFDData() {
             if (cleanLine.match(/^End:/i) && isDrawing) {
                 isDrawing = false;
                 if (currentCoords.length > 2) {
-                    // Draw a shaded Leaflet polygon using the accumulated coordinates
                     const polygon = L.polygon(currentCoords, {
                         color: currentColor,
                         weight: 2,
@@ -315,10 +310,9 @@ async function fetchFFDData() {
         });
         
     } catch (error) {
-        console.error("FFD Contour Fetch Error (Likely blocked by CORS proxy):", error);
+        console.log("Waiting for GitHub Actions to download FFD Contours...");
     }
 }
-// Run immediately, then loop every 10 minutes
 fetchFFDData();
 setInterval(fetchFFDData, 10 * 60 * 1000); 
 
@@ -591,7 +585,7 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
     
-    // Explicitly check for MRMS QPE to avoid triggering on the FFD layer
+    // Explicitly check for MRMS QPE
     if (eventLayer.name.includes('MRMS QPE')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'transparent'; 
