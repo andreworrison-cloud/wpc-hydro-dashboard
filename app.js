@@ -646,9 +646,9 @@ const baseMaps = {
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
+        "Active Hydro Watches": watchesLayer,
         "WPC Active MPDs": mpdLayer,
-        "Day 1 ERO (Real-Time)": eroLayer,
-        "Active Hydro Watches": watchesLayer
+        "Day 1 ERO (Real-Time)": eroLayer
     },
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
