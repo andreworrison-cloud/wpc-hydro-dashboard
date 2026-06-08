@@ -1,9 +1,16 @@
-// --- UI CSS FIXES (Scrollable Menu) ---
+// --- UI CSS FIXES (Scrollable Menu & Popup/Tooltip Priority) ---
 const customStyle = document.createElement('style');
 customStyle.innerHTML = `
     .leaflet-control-layers-expanded {
         max-height: 60vh !important; 
         overflow-y: auto !important; 
+    }
+    /* Force popups and tooltips to ALWAYS sit above city labels and map layers */
+    .leaflet-popup-pane {
+        z-index: 7000 !important;
+    }
+    .leaflet-tooltip-pane {
+        z-index: 6500 !important;
     }
 `;
 document.head.appendChild(customStyle);
@@ -33,20 +40,27 @@ mapTitle.style.letterSpacing = '1px';
 mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
 
-// --- CUSTOM MAP PANES FOR Z-INDEX PRIORITY ---
+// --- CUSTOM MAP PANES FOR STRICT Z-INDEX HAZARD PRIORITY ---
+// City Labels (Sits above weather data, but below tooltips/popups)
 map.createPane('labels');
-map.getPane('labels').style.zIndex = 650;
+map.getPane('labels').style.zIndex = 600;
 map.getPane('labels').style.pointerEvents = 'none'; 
 
-// Ensures Warnings (410) always draw on top of Watches (400)
+// Hazard Hierarchy (Higher number = Draws on top and gets hover priority)
 map.createPane('watches');
-map.getPane('watches').style.zIndex = 400;
-map.createPane('warnings');
-map.getPane('warnings').style.zIndex = 410;
+map.getPane('watches').style.zIndex = 410;
 
-// FFD polygons sit visibly above the background and warnings, but below the map labels
+map.createPane('ero');
+map.getPane('ero').style.zIndex = 420;
+
+map.createPane('mpd');
+map.getPane('mpd').style.zIndex = 430;
+
 map.createPane('ffd');
-map.getPane('ffd').style.zIndex = 450;
+map.getPane('ffd').style.zIndex = 440;
+
+map.createPane('warnings');
+map.getPane('warnings').style.zIndex = 450;
 
 // Dark Base
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
@@ -172,7 +186,7 @@ window.loadNWSAlertText = async function(event, url, containerId) {
         const data = await response.json();
         const desc = data.properties.description ? data.properties.description.replace(/\n/g, '<br>') : "No text description provided by WFO.";
         const inst = data.properties.instruction ? "<br><br><strong>Instructions:</strong><br>" + data.properties.instruction.replace(/\n/g, '<br>') : "";
-        container.innerHTML = `<div style="text-align: left; margin-top: 10px; padding: 10px; background: #f9f9f9; border: 1px solid #ccc; border-radius: 4px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #333;">${desc}${inst}</div>`;
+        container.innerHTML = `<div style="text-align: left; margin-top: 10px; padding: 10px; background: #ffffff; border: 1px solid #ccc; border-radius: 4px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #333; z-index: 9999;">${desc}${inst}</div>`;
     } catch (error) {
         container.innerHTML = "<span style='color: red;'>Failed to load alert text from NWS API.</span>";
     }
@@ -194,7 +208,7 @@ const commonAlertOptions = (paneName) => ({
         const linkHTML = props.url ? `<br><div id="${alertId}" style="margin-top: 10px;"><button onclick="loadNWSAlertText(event, '${props.url}', '${alertId}')" style="background: #007bff; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Load Official Alert Text</button></div>` : "";
 
         layer.bindPopup(`
-            <div style="font-family: sans-serif; text-align: center; min-width: 260px;">
+            <div style="font-family: sans-serif; text-align: center; min-width: 260px; background: white;">
                 <strong style="color: ${getAlertColor(eventName)}; font-size: 1.1em;">${eventName}</strong><br>
                 <em>Issued by ${wfo}</em><br>
                 <hr style="margin: 5px 0;">
@@ -229,12 +243,12 @@ async function fetchNWSAlerts() {
 }
 fetchNWSAlerts();
 
-// --- LOCAL MRMS FLASH FLOOD DETECTOR (FFD) CONTOUR PARSER ---
+// --- LOCAL MRMS DVD FLASH FLOOD DETECTOR (FFD) CONTOUR PARSER ---
 const ffdLayer = L.layerGroup();
 
 async function fetchFFDData() {
     try {
-        // Fetching locally from the static folder to bypass CORS proxies!
+        // Fetching locally from the static folder
         const targetUrl = `static/ffd_contours.txt?t=${new Date().getTime()}`;
         
         const response = await fetch(targetUrl);
@@ -292,7 +306,7 @@ async function fetchFFDData() {
                         pane: 'ffd'
                     });
                     
-                    polygon.bindTooltip(`<strong>FFD Recommended Impact:</strong> ${currentImpact}`, { sticky: true, direction: 'top' });
+                    polygon.bindTooltip(`<strong>FFD Recommended Impact:</strong> ${currentImpact}`, { sticky: true, direction: 'top', className: 'ffd-tooltip' });
                     ffdLayer.addLayer(polygon);
                 }
                 return;
@@ -335,11 +349,12 @@ function getMpdStyle(feature) {
 }
 
 const eroLayer = L.geoJSON(null, {
+    pane: 'ero',
     style: getEroStyle,
     onEachFeature: function (feature, layer) {
         const cat = feature.properties.OUTLOOK || feature.properties.outlook || feature.properties.Outlook || "Unknown";
         layer.bindPopup(`
-            <div style="text-align: center; font-family: sans-serif;">
+            <div style="text-align: center; font-family: sans-serif; background: white;">
                 <strong>WPC Day 1 ERO</strong><br>Category: ${cat}<br><br>
                 <a href="https://www.wpc.ncep.noaa.gov/discussions/qpferd.html" target="_blank" rel="noopener noreferrer">Read ERO Discussion</a>
             </div>
@@ -348,6 +363,7 @@ const eroLayer = L.geoJSON(null, {
 });
 
 const mpdLayer = L.geoJSON(null, {
+    pane: 'mpd',
     style: getMpdStyle,
     onEachFeature: function (feature, layer) {
         const props = feature.properties;
@@ -361,7 +377,7 @@ const mpdLayer = L.geoJSON(null, {
             layer.bindTooltip(tooltipHTML, { sticky: true, direction: "top" });
             
             const popupHTML = `
-                <div style="font-family: sans-serif; font-size: 14px; min-width: 240px; text-align: center;">
+                <div style="font-family: sans-serif; font-size: 14px; min-width: 240px; text-align: center; background: white;">
                     <strong>MPD ${mpdNum}</strong><br>
                     <span style="color: #d84b2a;"><strong>${mpdTag}</strong></span><br>
                     <hr style="margin: 5px 0;">
@@ -621,7 +637,7 @@ map.on('overlayremove', function(eventLayer) {
     }
 });
 
-// --- GROUPED LAYER CONTROLS ---
+// --- GROUPED LAYER CONTROLS (Updated Ordering) ---
 const baseMaps = {
     "Esri Dark Gray": esriDarkBase,
     "OpenStreetMap": osmLayer
@@ -630,13 +646,13 @@ const baseMaps = {
 const groupedOverlays = {
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
-        "Active Hydro Watches": watchesLayer,
-        "Flash Flood Detector (FFD)": ffdLayer,
         "WPC Active MPDs": mpdLayer,
-        "Day 1 ERO (Real-Time)": eroLayer
+        "Day 1 ERO (Real-Time)": eroLayer,
+        "Active Hydro Watches": watchesLayer
     },
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
+        "MRMS DVD Flash Flood Detector": ffdLayer,
         "MRMS 1-Hour QPE": mrms1hr,
         "MRMS 24-Hour QPE": mrms24hr,
         "MRMS 48-Hour QPE": mrms48hr,
