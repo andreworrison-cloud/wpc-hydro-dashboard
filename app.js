@@ -43,6 +43,9 @@ map.createPane('watches');
 map.getPane('watches').style.zIndex = 400;
 map.createPane('warnings');
 map.getPane('warnings').style.zIndex = 410;
+// FFD dots should sit highly visible above everything but labels
+map.createPane('ffd');
+map.getPane('ffd').style.zIndex = 500;
 
 // Dark Base
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
@@ -57,7 +60,7 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     attribution: '© OpenStreetMap contributors'
 });
 
-// The floating borders and labels (Always sits on top of weather data)
+// The floating borders and labels
 const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels',
     maxZoom: 16
@@ -153,14 +156,11 @@ function getAlertColor(event) {
     return "gray"; 
 }
 
-// Global function with STOP PROPAGATION to prevent Leaflet from closing the popup
 window.loadNWSAlertText = async function(event, url, containerId) {
-    // Prevent the map from hearing the click
     if (event) {
         event.stopPropagation();
         event.preventDefault();
     }
-    
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = "<em>Loading official text...</em>";
@@ -169,15 +169,9 @@ window.loadNWSAlertText = async function(event, url, containerId) {
         const response = await fetch(url);
         if (!response.ok) throw new Error("API not responding");
         const data = await response.json();
-        
         const desc = data.properties.description ? data.properties.description.replace(/\n/g, '<br>') : "No text description provided by WFO.";
         const inst = data.properties.instruction ? "<br><br><strong>Instructions:</strong><br>" + data.properties.instruction.replace(/\n/g, '<br>') : "";
-        
-        container.innerHTML = `
-            <div style="text-align: left; margin-top: 10px; padding: 10px; background: #f9f9f9; border: 1px solid #ccc; border-radius: 4px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #333;">
-                ${desc}${inst}
-            </div>
-        `;
+        container.innerHTML = `<div style="text-align: left; margin-top: 10px; padding: 10px; background: #f9f9f9; border: 1px solid #ccc; border-radius: 4px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #333;">${desc}${inst}</div>`;
     } catch (error) {
         container.innerHTML = "<span style='color: red;'>Failed to load alert text from NWS API.</span>";
     }
@@ -196,16 +190,7 @@ const commonAlertOptions = (paneName) => ({
         const expires = props.expiration || "Unknown";
         
         const alertId = "alert-" + Math.random().toString(36).substr(2, 9);
-        
-        // Converted to a styled button to prevent URL routing and explicitly pass the event
-        const linkHTML = props.url ? `
-            <br>
-            <div id="${alertId}" style="margin-top: 10px;">
-                <button onclick="loadNWSAlertText(event, '${props.url}', '${alertId}')" style="background: #007bff; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">
-                    Load Official Alert Text
-                </button>
-            </div>
-        ` : "";
+        const linkHTML = props.url ? `<br><div id="${alertId}" style="margin-top: 10px;"><button onclick="loadNWSAlertText(event, '${props.url}', '${alertId}')" style="background: #007bff; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Load Official Alert Text</button></div>` : "";
 
         layer.bindPopup(`
             <div style="font-family: sans-serif; text-align: center; min-width: 260px;">
@@ -229,7 +214,6 @@ async function fetchNWSAlerts() {
     try {
         const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
         const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson`;
-        
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
@@ -237,13 +221,64 @@ async function fetchNWSAlerts() {
         if (data && data.features) {
             const warningFeatures = data.features.filter(f => f.properties && f.properties.prod_type && !f.properties.prod_type.includes("Watch"));
             const watchFeatures = data.features.filter(f => f.properties && f.properties.prod_type && f.properties.prod_type.includes("Watch"));
-            
             if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
             if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
         }
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
+
+// --- MRMS FLASH FLOOD DETECTOR (FFD) PARSER ---
+const ffdLayer = L.layerGroup();
+
+async function fetchFFDData() {
+    try {
+        // Appending timestamp prevents the browser from caching old data
+        const url = `https://www.dragmetostorm.com/wfo/FFDetector/FFDetectorPlacefile_size40.txt?t=${new Date().getTime()}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Could not fetch FFD placefile.");
+        
+        const text = await response.text();
+        ffdLayer.clearLayers(); // Clear old dots before drawing new ones
+        
+        const lines = text.split('\n');
+        
+        lines.forEach(line => {
+            // Regex to find: (Lat), (Lon) ... (Impact Keyword)
+            const match = line.match(/([-+]?\d{1,2}(?:\.\d+)?)\s*,\s*([-+]?\d{1,3}(?:\.\d+)?).*?(Monitor|Advisory|Base|Considerable|Catastrophic)/i);
+            
+            if (match) {
+                const lat = parseFloat(match[1]);
+                const lon = parseFloat(match[2]);
+                const cat = match[3].toUpperCase();
+                
+                let dotColor = '#00ff00'; // Default Monitor (Green)
+                if (cat.includes('ADVISORY')) dotColor = '#ffff00'; // Yellow
+                if (cat.includes('BASE')) dotColor = '#ffa500'; // Orange
+                if (cat.includes('CONSIDERABLE')) dotColor = '#ff0000'; // Red
+                if (cat.includes('CATASTROPHIC')) dotColor = '#ff00ff'; // Magenta
+                
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 6,
+                    fillColor: dotColor,
+                    color: '#000', // Black border for high visibility
+                    weight: 1.5,
+                    fillOpacity: 0.9,
+                    pane: 'ffd'
+                });
+                
+                marker.bindTooltip(`<strong>FFD Impact:</strong> ${match[3]}`, { direction: 'top' });
+                ffdLayer.addLayer(marker);
+            }
+        });
+        
+    } catch (error) {
+        console.error("FFD Fetch Error (Likely blocked by CORS on local browser):", error);
+    }
+}
+// Run immediately, then loop every 10 minutes
+fetchFFDData();
+setInterval(fetchFFDData, 10 * 60 * 1000); 
 
 // --- LIVE WPC GEOJSON (Day 1 ERO & MPDs) WITH DISCUSSION LINKS ---
 function getEroStyle(feature) {
@@ -329,7 +364,6 @@ async function fetchWPCData() {
         
         if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
         if (mpdFeatures.length > 0) mpdLayer.addData(mpdFeatures);
-        
     } catch (error) { console.error("Error fetching WPC GeoJSON:", error); }
 }
 fetchWPCData();
@@ -389,7 +423,7 @@ mrmsTimeControl.onAdd = function(map) {
 };
 mrmsTimeControl.addTo(map);
 
-// Legend UI Box (Handles both Images and Dynamic HTML)
+// Legend UI Box
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function (map) {
     const div = L.DomUtil.create('div', 'legend-box');
@@ -475,7 +509,6 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
     })
     .catch(err => console.log("RAP metadata not found yet."));
 
-// Helper function to calculate rolling MRMS UTC time strings
 function formatUTC(date) {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const m = months[date.getUTCMonth()];
@@ -485,7 +518,6 @@ function formatUTC(date) {
     return `${m} ${d}, ${h}${min}Z`;
 }
 
-// Dynamically route the legend images and time boxes
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
@@ -538,7 +570,6 @@ map.on('overlayadd', function(eventLayer) {
     }
 });
 
-// Hide the legend/time when a layer is toggled off
 map.on('overlayremove', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
@@ -562,6 +593,7 @@ const groupedOverlays = {
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
+        "MRMS Flash Flood Detector (FFD)": ffdLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
