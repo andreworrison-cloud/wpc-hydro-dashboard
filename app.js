@@ -43,6 +43,7 @@ map.createPane('watches');
 map.getPane('watches').style.zIndex = 400;
 map.createPane('warnings');
 map.getPane('warnings').style.zIndex = 410;
+
 // FFD dots should sit highly visible above everything but labels
 map.createPane('ffd');
 map.getPane('ffd').style.zIndex = 500;
@@ -234,46 +235,59 @@ const ffdLayer = L.layerGroup();
 async function fetchFFDData() {
     try {
         // Appending timestamp prevents the browser from caching old data
-        const url = `https://www.dragmetostorm.com/wfo/FFDetector/FFDetectorPlacefile_size40.txt?t=${new Date().getTime()}`;
-        const response = await fetch(url);
+        const targetUrl = `https://www.dragmetostorm.com/wfo/FFDetector/FFDetectorPlacefile_size40.txt?t=${new Date().getTime()}`;
+        // Routing through an open CORS proxy so the browser allows the fetch to occur
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        
+        const response = await fetch(proxyUrl);
         if (!response.ok) throw new Error("Could not fetch FFD placefile.");
         
         const text = await response.text();
-        ffdLayer.clearLayers(); // Clear old dots before drawing new ones
+        ffdLayer.clearLayers(); 
         
         const lines = text.split('\n');
+        let currentColor = '#00ff00'; // Default fallback color
         
         lines.forEach(line => {
-            // Regex to find: (Lat), (Lon) ... (Impact Keyword)
-            const match = line.match(/([-+]?\d{1,2}(?:\.\d+)?)\s*,\s*([-+]?\d{1,3}(?:\.\d+)?).*?(Monitor|Advisory|Base|Considerable|Catastrophic)/i);
+            // Dynamically check for GR placefile color tags (e.g., Color: 255 0 0)
+            const colorMatch = line.match(/^Color:\s*(\d+)\s+(\d+)\s+(\d+)/i);
+            if (colorMatch) {
+                const r = parseInt(colorMatch[1]);
+                const g = parseInt(colorMatch[2]);
+                const b = parseInt(colorMatch[3]);
+                currentColor = `rgb(${r}, ${g}, ${b})`;
+                return; // Once color updates, move to next line
+            }
             
-            if (match) {
-                const lat = parseFloat(match[1]);
-                const lon = parseFloat(match[2]);
-                const cat = match[3].toUpperCase();
+            // Check for Lat/Lon coordinates and plot the marker using the current active color
+            const locMatch = line.match(/([-+]?\d{1,2}\.\d+)\s*,\s*([-+]?\d{1,3}\.\d+)/);
+            if (locMatch) {
+                const lat = parseFloat(locMatch[1]);
+                const lon = parseFloat(locMatch[2]);
                 
-                let dotColor = '#00ff00'; // Default Monitor (Green)
-                if (cat.includes('ADVISORY')) dotColor = '#ffff00'; // Yellow
-                if (cat.includes('BASE')) dotColor = '#ffa500'; // Orange
-                if (cat.includes('CONSIDERABLE')) dotColor = '#ff0000'; // Red
-                if (cat.includes('CATASTROPHIC')) dotColor = '#ff00ff'; // Magenta
+                // Identify the impact tag from the line text for the popup
+                let impactText = "Monitor";
+                if (line.match(/Advisory/i)) impactText = "Advisory";
+                if (line.match(/Base/i)) impactText = "Base";
+                if (line.match(/Considerable/i)) impactText = "Considerable";
+                if (line.match(/Catastrophic/i)) impactText = "Catastrophic";
                 
                 const marker = L.circleMarker([lat, lon], {
                     radius: 6,
-                    fillColor: dotColor,
-                    color: '#000', // Black border for high visibility
+                    fillColor: currentColor, // Dynamically pulls from the placefile's Color variable
+                    color: '#000', 
                     weight: 1.5,
                     fillOpacity: 0.9,
                     pane: 'ffd'
                 });
                 
-                marker.bindTooltip(`<strong>FFD Impact:</strong> ${match[3]}`, { direction: 'top' });
+                marker.bindTooltip(`<strong>FFD Impact:</strong> ${impactText}`, { direction: 'top' });
                 ffdLayer.addLayer(marker);
             }
         });
         
     } catch (error) {
-        console.error("FFD Fetch Error (Likely blocked by CORS on local browser):", error);
+        console.error("FFD Fetch Error:", error);
     }
 }
 // Run immediately, then loop every 10 minutes
@@ -518,6 +532,7 @@ function formatUTC(date) {
     return `${m} ${d}, ${h}${min}Z`;
 }
 
+// Dynamically route the legend images and time boxes
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
@@ -548,8 +563,8 @@ map.on('overlayadd', function(eventLayer) {
         else if (eventLayer.name.includes('Divergence')) legendImg.src = 'static/leg_div.png';
     }
     
-    // MRMS Legends
-    if (eventLayer.name.includes('MRMS')) {
+    // Explicitly check for MRMS QPE to avoid triggering on the FFD layer
+    if (eventLayer.name.includes('MRMS QPE')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'transparent'; 
         legendImg.style.display = 'none';
@@ -570,6 +585,7 @@ map.on('overlayadd', function(eventLayer) {
     }
 });
 
+// Hide the legend/time when a layer is toggled off
 map.on('overlayremove', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
@@ -577,7 +593,7 @@ map.on('overlayremove', function(eventLayer) {
     if (eventLayer.name.includes('RAP') || eventLayer.name.includes('Lapse Rate')) {
         legendContainer.style.display = 'none';
     }
-    if (eventLayer.name.includes('MRMS')) {
+    if (eventLayer.name.includes('MRMS QPE')) {
         legendContainer.style.display = 'none';
         mrmsTimeBox.style.display = 'none';
     }
@@ -593,7 +609,7 @@ const groupedOverlays = {
     "Active Hazards & Warnings": {
         "Active Hydro Warnings & Advisories": warningsLayer,
         "Active Hydro Watches": watchesLayer,
-        "MRMS Flash Flood Detector (FFD)": ffdLayer,
+        "Flash Flood Detector (FFD)": ffdLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
     },
