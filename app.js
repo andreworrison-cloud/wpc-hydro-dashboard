@@ -1,9 +1,14 @@
 // --- UI CSS FIXES (Scrollable Menu & Popup/Tooltip Priority) ---
 const customStyle = document.createElement('style');
 customStyle.innerHTML = `
+    /* Fix for the double scrollbar: Apply scroll ONLY to the inner list */
     .leaflet-control-layers-expanded {
+        overflow: hidden !important; 
+    }
+    .leaflet-control-layers-list {
         max-height: 60vh !important; 
         overflow-y: auto !important; 
+        overflow-x: hidden !important;
     }
     /* Force popups and tooltips to ALWAYS sit above city labels and map layers */
     .leaflet-popup-pane {
@@ -412,7 +417,7 @@ async function fetchWPCData() {
 }
 fetchWPCData();
 
-// --- RAP MESOANALYSIS LAYERS (Including New 3-Hour Change Fields) ---
+// --- RAP MESOANALYSIS LAYERS ---
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
 // Base Layers
@@ -421,7 +426,7 @@ const sbcapeLayer = L.imageOverlay('static/rap_sbcape.png', rapBounds, {zIndex: 
 const mlcapeLayer = L.imageOverlay('static/rap_mlcape.png', rapBounds, {zIndex: 10});
 const mucapeLayer = L.imageOverlay('static/rap_mucape.png', rapBounds, {zIndex: 10});
 
-// New 3-Hour Change Layers
+// 3-Hour Change Layers
 const pwatDiffLayer = L.imageOverlay('static/rap_pwat_diff.png', rapBounds, {zIndex: 10});
 const sbcapeDiffLayer = L.imageOverlay('static/rap_sbcape_diff.png', rapBounds, {zIndex: 10});
 const mlcapeDiffLayer = L.imageOverlay('static/rap_mlcape_diff.png', rapBounds, {zIndex: 10});
@@ -498,7 +503,6 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
 
         if (data.bounds) {
             const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-            // Apply exact bounds to ALL layers including the 4 new difference layers
             [pwatLayer, pwatDiffLayer, sbcapeLayer, sbcapeDiffLayer, mlcapeLayer, mlcapeDiffLayer, 
              mucapeLayer, mucapeDiffLayer, lrsfc3Layer, lr75Layer, scpLayer, mfcLayer, 
              f925Layer, f850Layer, effShearLayer, corfidiUpLayer, corfidiDownLayer, 
@@ -519,13 +523,13 @@ function formatUTC(date) {
 // --- NEW CLEAN RAP LEGEND MAPPING DICTIONARY ---
 const rapLegendMapping = {
     "Precipitable Water (PWAT)": "static/leg_pwat.png",
-    "3-Hour PWAT Change": "static/leg_pwat_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": "static/leg_pwat_diff.png",
     "Surface Based CAPE": "static/leg_cape.png",
-    "3-Hour SBCAPE Change": "static/leg_cape_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": "static/leg_cape_diff.png",
     "Mixed Layer CAPE (90mb)": "static/leg_cape.png",
-    "3-Hour Mixed Layer CAPE Change": "static/leg_cape_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": "static/leg_cape_diff.png",
     "Most Unstable CAPE (255mb)": "static/leg_cape.png",
-    "3-Hour Most Unstable CAPE Change": "static/leg_cape_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": "static/leg_cape_diff.png",
     "Sfc-3km Low-Level Lapse Rate": "static/leg_lrsfc3.png",
     "700-500mb Mid-Level Lapse Rate": "static/leg_lr75.png",
     "Supercell Composite Parameter": "static/leg_scp.png",
@@ -593,7 +597,7 @@ map.on('overlayremove', function(eventLayer) {
     }
 });
 
-// --- MENU CONTROLS (Removed redundant "RAP" prefix, Added 3Hr Changes) ---
+// --- MENU CONTROLS (Updated with indentation and names) ---
 const baseMaps = {
     "Esri Dark Gray": esriDarkBase,
     "OpenStreetMap": osmLayer
@@ -620,15 +624,15 @@ const groupedOverlays = {
         "GOES-West: Mid-Level WV (Ch. 9)": goesWestWV,
         "GOES-West: Clean IR (Ch. 13)": goesWestIR
     },
-    "Mesoanalysis (Real-Time)": {
+    "RAP Mesoanalysis (Real-Time)": {
         "Precipitable Water (PWAT)": pwatLayer,
-        "3-Hour PWAT Change": pwatDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
         "Surface Based CAPE": sbcapeLayer,
-        "3-Hour SBCAPE Change": sbcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
         "Mixed Layer CAPE (90mb)": mlcapeLayer,
-        "3-Hour Mixed Layer CAPE Change": mlcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
         "Most Unstable CAPE (255mb)": mucapeLayer,
-        "3-Hour Most Unstable CAPE Change": mucapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
         "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
         "700-500mb Mid-Level Lapse Rate": lr75Layer,
         "Supercell Composite Parameter": scpLayer,
