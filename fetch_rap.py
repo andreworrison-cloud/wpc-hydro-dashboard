@@ -21,10 +21,10 @@ print("Connecting to NOAA NOMADS GRIB Filter...")
 
 def download_rap_subset():
     now = datetime.now(timezone.utc)
-    for offset in range(0, 5):
-        check_time = now - timedelta(hours=offset)
-        date_str = check_time.strftime('%Y%m%d')
-        cycle = f"{check_time.hour:02d}"
+    
+    def fetch_hour(target_time, filename):
+        date_str = target_time.strftime('%Y%m%d')
+        cycle = f"{target_time.hour:02d}"
         
         url = "https://nomads.ncep.noaa.gov/cgi-bin/filter_rap.pl"
         
@@ -48,19 +48,47 @@ def download_rap_subset():
         response = requests.get(url, params=params, headers=headers, timeout=30)
         
         if response.status_code == 200 and len(response.content) > 10000:
-            print(f"Success! Downloaded RAP Analysis for: {date_str} {cycle}Z")
-            with open("rap_subset.grib2", "wb") as f:
+            with open(filename, "wb") as f:
                 f.write(response.content)
-            return check_time
-            
-    raise Exception("Could not download RAP data.")
+            return target_time
+        return None
 
-valid_time_obj = download_rap_subset()
-valid_time_str = f"RAP F00 Analysis &mdash; {valid_time_obj.strftime('%b %d, %Y %H:00')}Z"
+    # Find the most recent available T-0 Hour
+    t0_time = None
+    for offset in range(0, 5):
+        check_time = now - timedelta(hours=offset)
+        t0_time = fetch_hour(check_time, "rap_subset_t0.grib2")
+        if t0_time:
+            print(f"Success! Downloaded Current RAP (T-0) for: {t0_time.strftime('%Y%m%d %H:00')}Z")
+            break
+            
+    if not t0_time:
+        raise Exception("Could not download current RAP data.")
+
+    # Explicitly calculate and fetch the T-3 hour
+    t3_target = t0_time - timedelta(hours=3)
+    t3_time = fetch_hour(t3_target, "rap_subset_t3.grib2")
+    if t3_time:
+        print(f"Success! Downloaded Historical RAP (T-3) for: {t3_time.strftime('%Y%m%d %H:00')}Z")
+    else:
+        print("WARNING: T-3 file not found. 3-Hour change fields will be blank.")
+
+    return t0_time, t3_time
+
+t0_obj, t3_obj = download_rap_subset()
+valid_time_str = f"Mesoanalysis F00 &mdash; {t0_obj.strftime('%b %d, %Y %H:00')}Z"
 
 print("Extracting grids and calculating variables...")
 
-datasets = cfgrib.open_datasets("rap_subset.grib2", indexpath='')
+def safe_extract(ds, var_name, coord_name, target_val):
+    if var_name in ds.data_vars and coord_name in ds.coords:
+        c_vals = ds.coords[coord_name].values
+        if c_vals.ndim == 0 and c_vals == target_val: return np.squeeze(ds[var_name].values)
+        elif c_vals.ndim > 0 and target_val in c_vals: return np.squeeze(ds[var_name].sel({coord_name: target_val}).values)
+    return None
+
+# --- PROCESS CURRENT (T-0) FILE ---
+datasets_t0 = cfgrib.open_datasets("rap_subset_t0.grib2", indexpath='')
 
 pwat, sbcape, mlcape, mucape, cin = None, None, None, None, None
 u_10m, v_10m = None, None
@@ -75,18 +103,11 @@ hgt_500, hgt_700, hgt_sfc, t_sfc, hgt_el = None, None, None, None, None
 lats, lons = None, None
 srh3 = None
 
-def safe_extract(ds, var_name, coord_name, target_val):
-    if var_name in ds.data_vars and coord_name in ds.coords:
-        c_vals = ds.coords[coord_name].values
-        if c_vals.ndim == 0 and c_vals == target_val: return np.squeeze(ds[var_name].values)
-        elif c_vals.ndim > 0 and target_val in c_vals: return np.squeeze(ds[var_name].sel({coord_name: target_val}).values)
-    return None
-
 u_stack, v_stack, rh_stack, t_stack = [], [], [], []
 u_dict, v_dict, z_dict = {}, {}, {}
 req_levels = [1000, 975, 950, 925, 900, 875, 850, 700, 500, 400, 300, 250]
 
-for ds in datasets:
+for ds in datasets_t0:
     if 'pwat' in ds.data_vars:
         pwat = np.squeeze(ds['pwat'].values)
         lats = ds['latitude'].values
@@ -167,6 +188,27 @@ dx, dy = mpcalc.lat_lon_grid_deltas(lons, lats)
 if pwat is not None: pwat = pwat / 25.4
 if srh3 is None: srh3 = np.zeros_like(lats)
 if hgt_sfc is None: hgt_sfc = np.zeros_like(lats)
+
+# --- PROCESS HISTORICAL (T-3) FILE FOR DIFFERENCES ---
+pwat_diff, sbcape_diff, mlcape_diff, mucape_diff = None, None, None, None
+
+if t3_obj and os.path.exists("rap_subset_t3.grib2"):
+    print("Extracting T-3 variables for difference fields...")
+    datasets_t3 = cfgrib.open_datasets("rap_subset_t3.grib2", indexpath='')
+    pwat_t3, sbcape_t3, mlcape_t3, mucape_t3 = None, None, None, None
+    
+    for ds in datasets_t3:
+        if 'pwat' in ds.data_vars: pwat_t3 = np.squeeze(ds['pwat'].values) / 25.4
+        if 'cape' in ds.data_vars and 'surface' in ds.coords: sbcape_t3 = np.squeeze(ds['cape'].values)
+        res = safe_extract(ds, 'cape', 'pressureFromGroundLayer', 9000)
+        if res is not None: mlcape_t3 = res
+        res = safe_extract(ds, 'cape', 'pressureFromGroundLayer', 25500)
+        if res is not None: mucape_t3 = res
+
+    if pwat is not None and pwat_t3 is not None: pwat_diff = pwat - pwat_t3
+    if sbcape is not None and sbcape_t3 is not None: sbcape_diff = sbcape - sbcape_t3
+    if mlcape is not None and mlcape_t3 is not None: mlcape_diff = mlcape - mlcape_t3
+    if mucape is not None and mucape_t3 is not None: mucape_diff = mucape - mucape_t3
 
 print("Executing Deep Kinematic Derivatives...")
 
@@ -321,6 +363,12 @@ pwat_smooth = np.where((p:=process_field(pwat, 1.0)) < 0.25, np.nan, p)
 sbcape_smooth = np.where((c:=process_field(sbcape, 1.5)) < 100, np.nan, c)
 mlcape_smooth = np.where((c:=process_field(mlcape, 1.5)) < 100, np.nan, c)
 mucape_smooth = np.where((c:=process_field(mucape, 1.5)) < 100, np.nan, c)
+
+pwat_diff_smooth = np.where(np.abs(p:=process_field(pwat_diff, 1.5)) < 0.1, np.nan, p)
+sbcape_diff_smooth = np.where(np.abs(c:=process_field(sbcape_diff, 2.0)) < 250, np.nan, c)
+mlcape_diff_smooth = np.where(np.abs(c:=process_field(mlcape_diff, 2.0)) < 250, np.nan, c)
+mucape_diff_smooth = np.where(np.abs(c:=process_field(mucape_diff, 2.0)) < 250, np.nan, c)
+
 mfc_smooth = np.where(np.abs(m:=process_field(mfc, 2.0)) < 1.0, np.nan, m)
 trans_850_smooth = np.where((t:=process_field(trans_850, 1.5)) < 50, np.nan, t)
 trans_700_smooth = np.where((t:=process_field(trans_700, 1.5)) < 50, np.nan, t)
@@ -346,7 +394,7 @@ def save_map_png(data, cmap, vmin, vmax, filename):
     fig.add_axes(ax)
     
     levels = np.linspace(vmin, vmax, 30)
-    ax.contourf(x_wm, y_wm, data, levels=levels, cmap=cmap, extend='max', alpha=0.65)
+    ax.contourf(x_wm, y_wm, data, levels=levels, cmap=cmap, extend='both', alpha=0.65)
     
     locator = ticker.MaxNLocator(nbins=6)
     tick_levels = locator.tick_values(vmin, vmax)
@@ -445,10 +493,19 @@ for cape_arr in [sbcape_smooth, mlcape_smooth, mucape_smooth]:
     if cape_arr is not None: max_cape = max(max_cape, np.nanmax(cape_arr))
 max_cape = int(np.ceil(max_cape / 1000) * 1000)
 
+# Standard Base Fields
 save_map_png(pwat_smooth, 'nipy_spectral', 0.25, 2.75, 'rap_pwat.png')
 save_map_png(sbcape_smooth, 'hot_r', 100, max_cape, 'rap_sbcape.png')
 save_map_png(mlcape_smooth, 'hot_r', 100, max_cape, 'rap_mlcape.png')
 save_map_png(mucape_smooth, 'hot_r', 100, max_cape, 'rap_mucape.png')
+
+# New Difference Fields (Centered on 0 using Divergent Colormaps)
+save_map_png(pwat_diff_smooth, 'BrBG', -1.0, 1.0, 'rap_pwat_diff.png')
+save_map_png(sbcape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_sbcape_diff.png')
+save_map_png(mlcape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_mlcape_diff.png')
+save_map_png(mucape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_mucape_diff.png')
+
+# Remaining Fields
 save_map_png(mfc_smooth, 'BrBG', -10, 10, 'rap_mfc.png')
 save_map_png(lr_75_smooth, 'YlOrRd', 5, 10, 'rap_lr_75.png')
 save_map_png(lr_sfc3_smooth, 'YlOrRd', 5, 10, 'rap_lr_sfc3.png')
@@ -467,6 +524,7 @@ save_barb_map_png(spd_corfidi_down_smooth, u_corfidi_down, v_corfidi_down, 'OrRd
 
 save_diff_adv_map_png(vort_500_smooth, diff_adv_smooth, u_500, v_500, 'rap_diff_adv.png')
 
+# Standard Legends
 save_legend_png('nipy_spectral', 0.25, 2.75, "Precipitable Water (inches)", 'leg_pwat.png')
 save_legend_png('hot_r', 100, max_cape, "CAPE (J/kg)", 'leg_cape.png')
 save_legend_png('BrBG', -10, 10, "Mean BL Moisture Convergence", 'leg_mfc.png')
@@ -482,6 +540,10 @@ save_legend_png('YlOrRd', 1, 20, "Supercell Composite Parameter (SCP)", 'leg_scp
 save_legend_png('Purples', 25, 80, "Effective Bulk Wind Shear (knots)", 'leg_eff_shear.png', contour_levels=np.arange(30, 90, 10))
 save_legend_png('PuBu', 10, 60, "Corfidi Upwind Vector Magnitude (knots)", 'leg_corfidi_up.png', contour_levels=np.arange(10, 70, 10))
 save_legend_png('OrRd', 20, 80, "Corfidi Downwind Vector Magnitude (knots)", 'leg_corfidi_down.png', contour_levels=np.arange(20, 90, 10))
+
+# New Difference Legends
+save_legend_png('BrBG', -1.0, 1.0, "3-Hour PWAT Change (inches)", 'leg_pwat_diff.png')
+save_legend_png('RdBu_r', -2000, 2000, "3-Hour CAPE Change (J/kg)", 'leg_cape_diff.png')
 
 print("Exporting exact bounding box and metadata to JSON...")
 bounds = [
