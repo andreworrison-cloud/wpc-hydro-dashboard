@@ -1,14 +1,17 @@
-// --- UI CSS FIXES (Scrollable Menu & Popup/Tooltip Priority) ---
+// --- UI CSS FIXES (Scrollable Menu, Width & Popup/Tooltip Priority) ---
 const customStyle = document.createElement('style');
 customStyle.innerHTML = `
-    /* Fix for the double scrollbar: Apply scroll ONLY to the inner list */
+    /* Fix for the double scrollbar and widening the menu */
     .leaflet-control-layers-expanded {
         overflow: hidden !important; 
+        min-width: 350px !important; 
+        padding-right: 10px !important;
     }
     .leaflet-control-layers-list {
         max-height: 60vh !important; 
         overflow-y: auto !important; 
         overflow-x: hidden !important;
+        padding-right: 10px !important;
     }
     /* Force popups and tooltips to ALWAYS sit above city labels and map layers */
     .leaflet-popup-pane {
