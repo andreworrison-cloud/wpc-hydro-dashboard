@@ -189,13 +189,19 @@ if pwat is not None: pwat = pwat / 25.4
 if srh3 is None: srh3 = np.zeros_like(lats)
 if hgt_sfc is None: hgt_sfc = np.zeros_like(lats)
 
+trans_850 = np.zeros_like(lats)
+if u_850 is not None and rh_850 is not None:
+    trans_850 = mpcalc.mixing_ratio_from_relative_humidity(850 * units.hPa, t_850 * units.K, rh_850 * units.percent).magnitude * 1000 * (np.sqrt(u_850**2 + v_850**2) * 1.94384)
+
 # --- PROCESS HISTORICAL (T-3) FILE FOR DIFFERENCES ---
 pwat_diff, sbcape_diff, mlcape_diff, mucape_diff = None, None, None, None
+trans_850_diff = None
 
 if t3_obj and os.path.exists("rap_subset_t3.grib2"):
     print("Extracting T-3 variables for difference fields...")
     datasets_t3 = cfgrib.open_datasets("rap_subset_t3.grib2", indexpath='')
     pwat_t3, sbcape_t3, mlcape_t3, mucape_t3 = None, None, None, None
+    u_850_t3, v_850_t3, rh_850_t3, t_850_t3 = None, None, None, None
     
     for ds in datasets_t3:
         if 'pwat' in ds.data_vars: pwat_t3 = np.squeeze(ds['pwat'].values) / 25.4
@@ -204,11 +210,30 @@ if t3_obj and os.path.exists("rap_subset_t3.grib2"):
         if res is not None: mlcape_t3 = res
         res = safe_extract(ds, 'cape', 'pressureFromGroundLayer', 25500)
         if res is not None: mucape_t3 = res
+        
+        # New extraction for 850 mb T-3 variables
+        if 'isobaricInhPa' in ds.coords:
+            if 'u' in ds.data_vars:
+                res_u = safe_extract(ds, 'u', 'isobaricInhPa', 850)
+                if res_u is not None: u_850_t3 = res_u
+            if 'v' in ds.data_vars:
+                res_v = safe_extract(ds, 'v', 'isobaricInhPa', 850)
+                if res_v is not None: v_850_t3 = res_v
+            if 'r' in ds.data_vars:
+                res_rh = safe_extract(ds, 'r', 'isobaricInhPa', 850)
+                if res_rh is not None: rh_850_t3 = res_rh
+            if 't' in ds.data_vars:
+                res_t = safe_extract(ds, 't', 'isobaricInhPa', 850)
+                if res_t is not None: t_850_t3 = res_t
 
     if pwat is not None and pwat_t3 is not None: pwat_diff = pwat - pwat_t3
     if sbcape is not None and sbcape_t3 is not None: sbcape_diff = sbcape - sbcape_t3
     if mlcape is not None and mlcape_t3 is not None: mlcape_diff = mlcape - mlcape_t3
     if mucape is not None and mucape_t3 is not None: mucape_diff = mucape - mucape_t3
+    
+    if all(x is not None for x in [u_850_t3, v_850_t3, rh_850_t3, t_850_t3]):
+        trans_850_t3 = mpcalc.mixing_ratio_from_relative_humidity(850 * units.hPa, t_850_t3 * units.K, rh_850_t3 * units.percent).magnitude * 1000 * (np.sqrt(u_850_t3**2 + v_850_t3**2) * 1.94384)
+        if trans_850 is not None: trans_850_diff = trans_850 - trans_850_t3
 
 print("Executing Deep Kinematic Derivatives...")
 
@@ -334,10 +359,6 @@ if len(u_stack) > 0 and len(rh_stack) > 0:
     q_mean = mpcalc.mixing_ratio_from_relative_humidity(925 * units.hPa, np.nanmean(t_stack, axis=0) * units.K, np.nanmean(rh_stack, axis=0) * units.percent).to('g/kg')
     mfc = -mpcalc.divergence(np.nanmean(u_stack, axis=0)*units('m/s') * q_mean, np.nanmean(v_stack, axis=0)*units('m/s') * q_mean, dx=dx, dy=dy).magnitude * 10000 
 
-trans_850 = np.zeros_like(lats)
-if u_850 is not None and rh_850 is not None:
-    trans_850 = mpcalc.mixing_ratio_from_relative_humidity(850 * units.hPa, t_850 * units.K, rh_850 * units.percent).magnitude * 1000 * (np.sqrt(u_850**2 + v_850**2) * 1.94384)
-
 trans_700 = np.zeros_like(lats)
 if u_700 is not None and rh_700 is not None:
     trans_700 = mpcalc.mixing_ratio_from_relative_humidity(700 * units.hPa, t_700 * units.K, rh_700 * units.percent).magnitude * 1000 * (np.sqrt(u_700**2 + v_700**2) * 1.94384)
@@ -368,6 +389,7 @@ pwat_diff_smooth = np.where(np.abs(p:=process_field(pwat_diff, 1.5)) < 0.1, np.n
 sbcape_diff_smooth = np.where(np.abs(c:=process_field(sbcape_diff, 2.0)) < 250, np.nan, c)
 mlcape_diff_smooth = np.where(np.abs(c:=process_field(mlcape_diff, 2.0)) < 250, np.nan, c)
 mucape_diff_smooth = np.where(np.abs(c:=process_field(mucape_diff, 2.0)) < 250, np.nan, c)
+trans_850_diff_smooth = np.where(np.abs(t:=process_field(trans_850_diff, 1.5)) < 25, np.nan, t)
 
 mfc_smooth = np.where(np.abs(m:=process_field(mfc, 2.0)) < 1.0, np.nan, m)
 trans_850_smooth = np.where((t:=process_field(trans_850, 1.5)) < 50, np.nan, t)
@@ -504,6 +526,7 @@ save_map_png(pwat_diff_smooth, 'BrBG', -1.0, 1.0, 'rap_pwat_diff.png')
 save_map_png(sbcape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_sbcape_diff.png')
 save_map_png(mlcape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_mlcape_diff.png')
 save_map_png(mucape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_mucape_diff.png')
+save_map_png(trans_850_diff_smooth, 'BrBG', -250, 250, 'rap_trans850_diff.png')
 
 # Remaining Fields
 save_map_png(mfc_smooth, 'BrBG', -10, 10, 'rap_mfc.png')
@@ -544,6 +567,7 @@ save_legend_png('OrRd', 20, 80, "Corfidi Downwind Vector Magnitude (knots)", 'le
 # New Difference Legends
 save_legend_png('BrBG', -1.0, 1.0, "3-Hour PWAT Change (inches)", 'leg_pwat_diff.png')
 save_legend_png('RdBu_r', -2000, 2000, "3-Hour CAPE Change (J/kg)", 'leg_cape_diff.png')
+save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture Transport Change", 'leg_trans_diff.png')
 
 print("Exporting exact bounding box and metadata to JSON...")
 bounds = [
