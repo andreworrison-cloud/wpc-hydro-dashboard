@@ -443,6 +443,7 @@ const effShearLayer = L.imageOverlay('static/rap_eff_shear.png', rapBounds, {zIn
 const corfidiUpLayer = L.imageOverlay('static/rap_corfidi_up.png', rapBounds, {zIndex: 10});
 const corfidiDownLayer = L.imageOverlay('static/rap_corfidi_down.png', rapBounds, {zIndex: 10});
 const trans850Layer = L.imageOverlay('static/rap_trans850.png', rapBounds, {zIndex: 10});
+const trans850DiffLayer = L.imageOverlay('static/rap_trans850_diff.png', rapBounds, {zIndex: 10});
 const trans700Layer = L.imageOverlay('static/rap_trans700.png', rapBounds, {zIndex: 10});
 const meanWindLayer = L.imageOverlay('static/rap_mean_wind.png', rapBounds, {zIndex: 10});
 const vort500Layer = L.imageOverlay('static/rap_vort500.png', rapBounds, {zIndex: 10});
@@ -506,7 +507,7 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
             [pwatLayer, pwatDiffLayer, sbcapeLayer, sbcapeDiffLayer, mlcapeLayer, mlcapeDiffLayer, 
              mucapeLayer, mucapeDiffLayer, lrsfc3Layer, lr75Layer, scpLayer, mfcLayer, 
              f925Layer, f850Layer, effShearLayer, corfidiUpLayer, corfidiDownLayer, 
-             trans850Layer, trans700Layer, meanWindLayer, vort500Layer, diffAdvLayer, div250Layer].forEach(layer => layer.setBounds(exactBounds));
+             trans850Layer, trans850DiffLayer, trans700Layer, meanWindLayer, vort500Layer, diffAdvLayer, div250Layer].forEach(layer => layer.setBounds(exactBounds));
         }
     })
     .catch(err => console.log("RAP metadata not found yet."));
@@ -540,6 +541,7 @@ const rapLegendMapping = {
     "Corfidi Upwind (Back-Building) Vectors": "static/leg_corfidi_up.png",
     "Corfidi Downwind (Forward) Vectors": "static/leg_corfidi_down.png",
     "850mb Moisture Transport": "static/leg_trans.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Transport Change": "static/leg_trans_diff.png",
     "700mb Moisture Transport": "static/leg_trans.png",
     "850-300mb Mean Layer Wind": "static/leg_mean_wind.png",
     "500mb Absolute Vorticity": "static/leg_vort.png",
@@ -597,7 +599,7 @@ map.on('overlayremove', function(eventLayer) {
     }
 });
 
-// --- MENU CONTROLS (Updated with indentation and names) ---
+// --- MENU CONTROLS ---
 const baseMaps = {
     "Esri Dark Gray": esriDarkBase,
     "OpenStreetMap": osmLayer
@@ -643,6 +645,7 @@ const groupedOverlays = {
         "Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
         "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
         "850mb Moisture Transport": trans850Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Transport Change": trans850DiffLayer,
         "700mb Moisture Transport": trans700Layer,
         "850-300mb Mean Layer Wind": meanWindLayer,
         "500mb Absolute Vorticity": vort500Layer,
