@@ -500,7 +500,8 @@ def save_diff_adv_map_png(vort_data, diff_adv_data, u, v, filename):
     plt.close()
 
 def save_legend_png(cmap, vmin, vmax, title, filename, contour_levels=None):
-    fig, ax = plt.subplots(figsize=(4, 0.85), dpi=100)
+    # Expand the width to 5 inches and the height to 1.2 inches so long multiline text doesn't get clipped
+    fig, ax = plt.subplots(figsize=(5, 1.2), dpi=100)
     fig.patch.set_alpha(0.0) 
     norm = plt.Normalize(vmin=vmin, vmax=vmax)
     
