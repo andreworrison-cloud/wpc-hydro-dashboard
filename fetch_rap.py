@@ -500,7 +500,6 @@ def save_diff_adv_map_png(vort_data, diff_adv_data, u, v, filename):
     plt.close()
 
 def save_legend_png(cmap, vmin, vmax, title, filename, contour_levels=None):
-    # Expand the width to 5 inches and the height to 1.2 inches so long multiline text doesn't get clipped
     fig, ax = plt.subplots(figsize=(5, 1.2), dpi=100)
     fig.patch.set_alpha(0.0) 
     norm = plt.Normalize(vmin=vmin, vmax=vmax)
@@ -517,7 +516,8 @@ def save_legend_png(cmap, vmin, vmax, title, filename, contour_levels=None):
     cb.ax.tick_params(colors='white', labelsize=8)
     cb.outline.set_edgecolor('white')
     
-    plt.savefig(f'static/{filename}', format='png', transparent=True, bbox_inches='tight')
+    # Added pad_inches to create a physical bumper around the entire image text
+    plt.savefig(f'static/{filename}', format='png', transparent=True, bbox_inches='tight', pad_inches=0.15)
     plt.close()
 
 print("Saving maps directly to static/ folder...")
@@ -576,10 +576,10 @@ save_legend_png('Purples', 25, 80, "Effective Bulk Wind Shear (knots)", 'leg_eff
 save_legend_png('PuBu', 10, 60, "Corfidi Upwind Vector Magnitude (knots)", 'leg_corfidi_up.png', contour_levels=np.arange(10, 70, 10))
 save_legend_png('OrRd', 20, 80, "Corfidi Downwind Vector Magnitude (knots)", 'leg_corfidi_down.png', contour_levels=np.arange(20, 90, 10))
 
-# New Difference Legends
+# New Difference Legends split evenly onto two lines with \n
 save_legend_png('BrBG', -1.0, 1.0, "3-Hour PWAT Change (inches)", 'leg_pwat_diff.png')
 save_legend_png('RdBu_r', -2000, 2000, "3-Hour CAPE Change (J/kg)", 'leg_cape_diff.png')
-save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture Transport Change\n(g/kg * kts)", 'leg_trans_diff.png')
+save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture\nTransport Change (g/kg * kts)", 'leg_trans_diff.png')
 
 print("Exporting exact bounding box and metadata to JSON...")
 bounds = [
