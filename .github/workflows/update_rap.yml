@@ -41,4 +41,5 @@ jobs:
           # Stage ONLY the RAP outputs
           git add static/
           
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update hourly RAP maps" && git push)
+          # Commit, neatly pull any changes from the 5-minute script, and push
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update hourly RAP maps" && git pull --rebase && git push)
