@@ -380,32 +380,43 @@ def process_field(data, smooth_sigma=1.0):
     if data is None: return None
     return ndimage.gaussian_filter(np.nan_to_num(data, nan=0.0), sigma=smooth_sigma)
 
-pwat_smooth = np.where((p:=process_field(pwat, 1.0)) < 0.25, np.nan, p)
-sbcape_smooth = np.where((c:=process_field(sbcape, 1.5)) < 100, np.nan, c)
-mlcape_smooth = np.where((c:=process_field(mlcape, 1.5)) < 100, np.nan, c)
-mucape_smooth = np.where((c:=process_field(mucape, 1.5)) < 100, np.nan, c)
+def safe_smooth(data, sigma, threshold, use_abs=False):
+    if data is None: return None
+    smoothed = process_field(data, sigma)
+    if smoothed is None: return None
+    if use_abs:
+        return np.where(np.abs(smoothed) < threshold, np.nan, smoothed)
+    return np.where(smoothed < threshold, np.nan, smoothed)
 
-pwat_diff_smooth = np.where(np.abs(p:=process_field(pwat_diff, 1.5)) < 0.1, np.nan, p)
-sbcape_diff_smooth = np.where(np.abs(c:=process_field(sbcape_diff, 2.0)) < 250, np.nan, c)
-mlcape_diff_smooth = np.where(np.abs(c:=process_field(mlcape_diff, 2.0)) < 250, np.nan, c)
-mucape_diff_smooth = np.where(np.abs(c:=process_field(mucape_diff, 2.0)) < 250, np.nan, c)
-trans_850_diff_smooth = np.where(np.abs(t:=process_field(trans_850_diff, 1.5)) < 25, np.nan, t)
+# Base Fields
+pwat_smooth = safe_smooth(pwat, 1.0, 0.25)
+sbcape_smooth = safe_smooth(sbcape, 1.5, 100)
+mlcape_smooth = safe_smooth(mlcape, 1.5, 100)
+mucape_smooth = safe_smooth(mucape, 1.5, 100)
 
-mfc_smooth = np.where(np.abs(m:=process_field(mfc, 2.0)) < 1.0, np.nan, m)
-trans_850_smooth = np.where((t:=process_field(trans_850, 1.5)) < 50, np.nan, t)
-trans_700_smooth = np.where((t:=process_field(trans_700, 1.5)) < 50, np.nan, t)
-vort_500_smooth = np.where((v:=process_field(vort_500, 1.5)) < 4, np.nan, v)
-div_250_smooth = np.where((d:=process_field(div_250, 1.5)) < 2, np.nan, d)
-lr_75_smooth = np.where((l:=process_field(lr_75, 1.5)) < 5, np.nan, l)
-lr_sfc3_smooth = np.where((l:=process_field(lr_sfc3, 1.5)) < 5, np.nan, l)
-spd_mean_83_smooth = np.where((s:=process_field(spd_mean_83, 1.5)) < 25, np.nan, s)
-f_925_850_smooth = np.where((f:=process_field(fronto_925_850, 1.5)) < 1.0, np.nan, f)
-f_850_700_smooth = np.where((f:=process_field(fronto_850_700, 1.5)) < 1.0, np.nan, f)
-scp_smooth = np.where((s:=process_field(scp, 1.5)) < 1.0, np.nan, s)
-spd_eff_smooth = np.where((s:=process_field(spd_eff, 1.5)) < 20, np.nan, s) 
-spd_corfidi_up_smooth = np.where((s:=process_field(spd_corfidi_up, 1.5)) < 5, np.nan, s)
-spd_corfidi_down_smooth = np.where((s:=process_field(spd_corfidi_down, 1.5)) < 15, np.nan, s)
-diff_adv_smooth = process_field(diff_adv, 2.0) 
+# Difference Fields (Safely handles missing T-3 data)
+pwat_diff_smooth = safe_smooth(pwat_diff, 1.5, 0.1, use_abs=True)
+sbcape_diff_smooth = safe_smooth(sbcape_diff, 2.0, 250, use_abs=True)
+mlcape_diff_smooth = safe_smooth(mlcape_diff, 2.0, 250, use_abs=True)
+mucape_diff_smooth = safe_smooth(mucape_diff, 2.0, 250, use_abs=True)
+trans_850_diff_smooth = safe_smooth(trans_850_diff, 1.5, 25, use_abs=True)
+
+# Remaining Fields
+mfc_smooth = safe_smooth(mfc, 2.0, 1.0, use_abs=True)
+trans_850_smooth = safe_smooth(trans_850, 1.5, 50)
+trans_700_smooth = safe_smooth(trans_700, 1.5, 50)
+vort_500_smooth = safe_smooth(vort_500, 1.5, 4)
+div_250_smooth = safe_smooth(div_250, 1.5, 2)
+lr_75_smooth = safe_smooth(lr_75, 1.5, 5)
+lr_sfc3_smooth = safe_smooth(lr_sfc3, 1.5, 5)
+spd_mean_83_smooth = safe_smooth(spd_mean_83, 1.5, 25)
+f_925_850_smooth = safe_smooth(fronto_925_850, 1.5, 1.0)
+f_850_700_smooth = safe_smooth(fronto_850_700, 1.5, 1.0)
+scp_smooth = safe_smooth(scp, 1.5, 1.0)
+spd_eff_smooth = safe_smooth(spd_eff, 1.5, 20) 
+spd_corfidi_up_smooth = safe_smooth(spd_corfidi_up, 1.5, 5)
+spd_corfidi_down_smooth = safe_smooth(spd_corfidi_down, 1.5, 15)
+diff_adv_smooth = process_field(diff_adv, 2.0)
 
 # --- SAVING IMAGES DIRECTLY TO DISK ---
 def save_map_png(data, cmap, vmin, vmax, filename):
