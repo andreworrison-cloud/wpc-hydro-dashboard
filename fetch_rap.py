@@ -562,7 +562,7 @@ save_diff_adv_map_png(vort_500_smooth, diff_adv_smooth, u_500, v_500, 'rap_diff_
 save_legend_png('nipy_spectral', 0.25, 2.75, "Precipitable Water (inches)", 'leg_pwat.png')
 save_legend_png('hot_r', 100, max_cape, "CAPE (J/kg)", 'leg_cape.png')
 save_legend_png('BrBG', -10, 10, "Mean BL Moisture Convergence", 'leg_mfc.png')
-save_legend_png('YlGnBu', 50, 400, "Moisture Transport Magnitude", 'leg_trans.png')
+save_legend_png('YlGnBu', 50, 400, "Moisture Transport Magnitude (g/kg * kts)", 'leg_trans.png')
 save_legend_png('YlOrRd', 4, 30, "500mb Absolute Vorticity (x 10^5 s^-1)", 'leg_vort.png')
 save_legend_png('PuRd', 2, 10, "250mb Divergence (x 10^5 s^-1)", 'leg_div.png')
 save_legend_png('YlOrRd', 5, 10, "700-500mb Lapse Rate (°C/km)", 'leg_lr75.png')
@@ -578,7 +578,7 @@ save_legend_png('OrRd', 20, 80, "Corfidi Downwind Vector Magnitude (knots)", 'le
 # New Difference Legends
 save_legend_png('BrBG', -1.0, 1.0, "3-Hour PWAT Change (inches)", 'leg_pwat_diff.png')
 save_legend_png('RdBu_r', -2000, 2000, "3-Hour CAPE Change (J/kg)", 'leg_cape_diff.png')
-save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture Transport Change", 'leg_trans_diff.png')
+save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture Transport Change (g/kg * kts)", 'leg_trans_diff.png')
 
 print("Exporting exact bounding box and metadata to JSON...")
 bounds = [
