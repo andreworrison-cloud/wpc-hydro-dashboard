@@ -423,19 +423,14 @@ fetchWPCData();
 // --- RAP MESOANALYSIS LAYERS ---
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
-// Base Layers
 const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
-const sbcapeLayer = L.imageOverlay('static/rap_sbcape.png', rapBounds, {zIndex: 10});
-const mlcapeLayer = L.imageOverlay('static/rap_mlcape.png', rapBounds, {zIndex: 10});
-const mucapeLayer = L.imageOverlay('static/rap_mucape.png', rapBounds, {zIndex: 10});
-
-// 3-Hour Change Layers
 const pwatDiffLayer = L.imageOverlay('static/rap_pwat_diff.png', rapBounds, {zIndex: 10});
+const sbcapeLayer = L.imageOverlay('static/rap_sbcape.png', rapBounds, {zIndex: 10});
 const sbcapeDiffLayer = L.imageOverlay('static/rap_sbcape_diff.png', rapBounds, {zIndex: 10});
+const mlcapeLayer = L.imageOverlay('static/rap_mlcape.png', rapBounds, {zIndex: 10});
 const mlcapeDiffLayer = L.imageOverlay('static/rap_mlcape_diff.png', rapBounds, {zIndex: 10});
+const mucapeLayer = L.imageOverlay('static/rap_mucape.png', rapBounds, {zIndex: 10});
 const mucapeDiffLayer = L.imageOverlay('static/rap_mucape_diff.png', rapBounds, {zIndex: 10});
-
-// Remaining Fields
 const lrsfc3Layer = L.imageOverlay('static/rap_lr_sfc3.png', rapBounds, {zIndex: 10});
 const lr75Layer = L.imageOverlay('static/rap_lr_75.png', rapBounds, {zIndex: 10});
 const scpLayer = L.imageOverlay('static/rap_scp.png', rapBounds, {zIndex: 10});
@@ -452,6 +447,19 @@ const meanWindLayer = L.imageOverlay('static/rap_mean_wind.png', rapBounds, {zIn
 const vort500Layer = L.imageOverlay('static/rap_vort500.png', rapBounds, {zIndex: 10});
 const diffAdvLayer = L.imageOverlay('static/rap_diff_adv.png', rapBounds, {zIndex: 10});
 const div250Layer = L.imageOverlay('static/rap_div250.png', rapBounds, {zIndex: 10});
+
+// --- NEW CAM NOWCAST ENSEMBLE LAYERS ---
+const camLayers = {};
+const camTempBounds = [[20, -130], [50, -60]]; 
+
+['3h_to_9h', '9h_to_15h'].forEach(w => {
+    ['href', 'refs', 'super'].forEach(m => {
+        camLayers[`ffg_${w}_${m}`] = L.imageOverlay(`static/cam_ffg_${w}_${m}.png`, camTempBounds, {zIndex: 11});
+        ['0.5_inch', '1_inch', '2_inch', '3_inch'].forEach(q => {
+            camLayers[`qpf_${w}_${q}_${m}`] = L.imageOverlay(`static/cam_qpf_${w}_${q}_${m}.png`, camTempBounds, {zIndex: 11});
+        });
+    });
+});
 
 // --- TIME AND LEGEND UI CONTROLS ---
 const timeControl = L.control({position: 'bottomright'});
@@ -484,6 +492,22 @@ mrmsTimeControl.onAdd = function() {
 };
 mrmsTimeControl.addTo(map);
 
+// New Time Box for CAM Models
+const camTimeControl = L.control({position: 'bottomright'});
+camTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'cam-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+camTimeControl.addTo(map);
+
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend-box');
@@ -514,6 +538,21 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
         }
     })
     .catch(err => console.log("RAP metadata not found yet."));
+
+// --- CAM METADATA FETCH ---
+fetch('static/cam_metadata.json?t=' + new Date().getTime())
+    .then(r => r.json())
+    .then(data => {
+        const timeBox = document.getElementById('cam-time-box');
+        if (data.valid_time) {
+            timeBox.innerHTML = `<strong>${data.valid_time}</strong>`;
+        }
+        if (data.bounds) {
+            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+            Object.values(camLayers).forEach(layer => layer.setBounds(exactBounds));
+        }
+    })
+    .catch(err => console.log("CAM metadata not found yet."));
 
 function formatUTC(date) {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -552,14 +591,42 @@ const rapLegendMapping = {
     "250mb Divergence": "static/leg_div.png"
 };
 
+// --- CAM HTML LEGENDS ---
+const camLegendQPF = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
+        <strong>QPF Probability (%)</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
+            <div style="background: #ffffcc; flex: 1; padding: 2px 5px;">10</div>
+            <div style="background: #a1dab4; flex: 1; padding: 2px 5px;">30</div>
+            <div style="background: #41b6c4; flex: 1; padding: 2px 5px;">50</div>
+            <div style="background: #2c7fb8; flex: 1; padding: 2px 5px; color: white;">70</div>
+            <div style="background: #253494; flex: 1; padding: 2px 5px; color: white;">90+</div>
+        </div>
+    </div>
+`;
+
+const camLegendFFG = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
+        <strong>FFG Exceedance Prob (%)</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
+            <div style="background: #ffffb2; flex: 1; padding: 2px 5px;">10</div>
+            <div style="background: #fecc5c; flex: 1; padding: 2px 5px;">30</div>
+            <div style="background: #fd8d3c; flex: 1; padding: 2px 5px;">50</div>
+            <div style="background: #f03b20; flex: 1; padding: 2px 5px; color: white;">70</div>
+            <div style="background: #bd0026; flex: 1; padding: 2px 5px; color: white;">90+</div>
+        </div>
+    </div>
+`;
+
 // Map overlay handling
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
     const legendHtml = document.getElementById('legend-html');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
+    const camTimeBox = document.getElementById('cam-time-box');
     
-    // Check if the toggled layer is exactly in our RAP dictionary
+    // RAP Legend Handler
     if (rapLegendMapping[eventLayer.name]) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'rgba(0, 0, 0, 0.7)';
@@ -587,11 +654,23 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.innerHTML = `<strong>MRMS ${hours}-Hour Accumulation</strong><br>${formatUTC(start)} &mdash; ${formatUTC(now)}`;
         mrmsTimeBox.style.display = 'block';
     }
+
+    // CAM HTML Legend Handler
+    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
+        legendContainer.style.display = 'block';
+        legendContainer.style.background = 'transparent'; 
+        legendImg.style.display = 'none';
+        legendHtml.style.display = 'block';
+        legendHtml.innerHTML = eventLayer.name.includes('Flash Flood Guidance') ? camLegendFFG : camLegendQPF;
+        
+        camTimeBox.style.display = 'block';
+    }
 });
 
 map.on('overlayremove', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
+    const camTimeBox = document.getElementById('cam-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         legendContainer.style.display = 'none';
@@ -599,6 +678,10 @@ map.on('overlayremove', function(eventLayer) {
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         legendContainer.style.display = 'none';
         mrmsTimeBox.style.display = 'none';
+    }
+    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
+        legendContainer.style.display = 'none';
+        camTimeBox.style.display = 'none';
     }
 });
 
@@ -628,6 +711,40 @@ const groupedOverlays = {
         "GOES-West: Visible (Ch. 2)": goesWestVis,
         "GOES-West: Mid-Level WV (Ch. 9)": goesWestWV,
         "GOES-West: Clean IR (Ch. 13)": goesWestIR
+    },
+    "CAM Nowcasts (+3h to +9h)": {
+        "<b>SuperEnsemble</b>: Flash Flood Guidance": camLayers['ffg_3h_to_9h_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Flash Flood Guidance": camLayers['ffg_3h_to_9h_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Flash Flood Guidance": camLayers['ffg_3h_to_9h_refs'],
+        "<b>SuperEnsemble</b>: Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_refs'],
+        "<b>SuperEnsemble</b>: Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_refs'],
+        "<b>SuperEnsemble</b>: Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_refs'],
+        "<b>SuperEnsemble</b>: Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_refs']
+    },
+    "CAM Nowcasts (+9h to +15h)": {
+        "<b>SuperEnsemble</b>: Flash Flood Guidance": camLayers['ffg_9h_to_15h_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Flash Flood Guidance": camLayers['ffg_9h_to_15h_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Flash Flood Guidance": camLayers['ffg_9h_to_15h_refs'],
+        "<b>SuperEnsemble</b>: Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_refs'],
+        "<b>SuperEnsemble</b>: Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_refs'],
+        "<b>SuperEnsemble</b>: Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_refs'],
+        "<b>SuperEnsemble</b>: Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_refs']
     },
     "RAP Mesoanalysis (Real-Time)": {
         "Precipitable Water (PWAT)": pwatLayer,
