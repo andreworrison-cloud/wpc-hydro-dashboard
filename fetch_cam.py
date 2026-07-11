@@ -117,8 +117,8 @@ class EnsembleNowcastEngine:
         except: return current_max, lats, lons, False
 
     def _create_super_ensemble(self, h_data, h_lats, h_lons, r_data, r_lats, r_lons):
-        if h_data is None: return None
-        if r_data is None: return h_data 
+        if h_data is None: return None, None
+        if r_data is None: return None, h_data 
         
         mask = ~np.isnan(r_data.ravel())
         pts = np.column_stack((r_lons.ravel()[mask], r_lats.ravel()[mask]))
@@ -129,8 +129,8 @@ class EnsembleNowcastEngine:
             refs_interp_flat[dists > 0.1] = np.nan
             refs_interp = refs_interp_flat.reshape(h_lats.shape)
             refs_interp[np.isnan(h_data)] = np.nan
-            return (h_data + refs_interp) / 2.0
-        return h_data
+            return refs_interp, (h_data + refs_interp) / 2.0
+        return None, h_data
 
     def generate_dashboard_data(self):
         print("Starting Super-Ensemble Data Generation...")
@@ -201,18 +201,18 @@ class EnsembleNowcastEngine:
             for t_in in self.qpf_thresh_in:
                 href_data = data_store[w]["QPF"][t_in]["HREF"]
                 refs_data = data_store[w]["QPF"][t_in]["REFS"]
-                super_ens = self._create_super_ensemble(href_data, coords["HREF"][0], coords["HREF"][1], refs_data, coords["REFS"][0], coords["REFS"][1])
+                refs_interp, super_ens = self._create_super_ensemble(href_data, coords["HREF"][0], coords["HREF"][1], refs_data, coords["REFS"][0], coords["REFS"][1])
                 
                 dashboard_payload["windows"][w_label]["QPF"][f"{t_in}_inch"] = {
-                    "HREF": href_data, "REFS": refs_data, "SUPER": super_ens
+                    "HREF": href_data, "REFS": refs_interp, "SUPER": super_ens
                 }
 
             href_ffg = data_store[w]["FFG_MAX"]["HREF"]
             refs_ffg = data_store[w]["FFG_MAX"]["REFS"]
-            super_ens_ffg = self._create_super_ensemble(href_ffg, coords["HREF"][0], coords["HREF"][1], refs_ffg, coords["REFS"][0], coords["REFS"][1])
+            refs_ffg_interp, super_ens_ffg = self._create_super_ensemble(href_ffg, coords["HREF"][0], coords["HREF"][1], refs_ffg, coords["REFS"][0], coords["REFS"][1])
             
             dashboard_payload["windows"][w_label]["FFG_MAX"] = {
-                "HREF": href_ffg, "REFS": refs_ffg, "SUPER": super_ens_ffg
+                "HREF": href_ffg, "REFS": refs_ffg_interp, "SUPER": super_ens_ffg
             }
 
         return dashboard_payload
