@@ -778,8 +778,16 @@ map.on('overlayadd', function(eventLayer) {
             validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
         }
 
+        // --- NEW: DYNAMIC PRODUCT NAME EXTRACTOR ---
+        let productName = "Probabilistic Guidance";
+        if (eventLayer.name.includes(':')) {
+            // This grabs everything after the colon in the layer menu name
+            productName = eventLayer.name.split(':')[1].trim(); 
+        }
+
         camTimeBox.innerHTML = `
             <strong>${titleText}</strong><br>
+            <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">${productName}</span><br>
             <span style="font-size: 0.9em;">${cycleText}</span>
             <hr style="margin: 5px 0; border-color: #555;">
             <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
