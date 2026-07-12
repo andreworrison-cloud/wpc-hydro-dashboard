@@ -1,14 +1,11 @@
-name: Update CAM Nowcasts
+name: Update CAM SuperEnsemble
 
 on:
-  schedule:
-    - cron: '30 * * * *'
   workflow_dispatch:
 
 jobs:
   update-cams:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: write 
 
@@ -21,7 +18,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (ecCodes for GRIB2)
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes0
