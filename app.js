@@ -547,9 +547,9 @@ fetch('static/cam_metadata.json?t=' + new Date().getTime())
     .then(data => {
         if (data.valid_time) {
             // Parses the Python string "Ensemble Nowcast (HREF 18Z | REFS 18Z)"
-            const match = data.valid_time.match(/HREF (\d{2}Z) \| REFS (\d{2}Z)/);
+            const match = data.valid_time.match(/HREF (\d{2})Z \| REFS (\d{2})Z/);
             if (match) {
-                camCycles.href = match[1];
+                camCycles.href = match[1]; // Grabs just the numbers
                 camCycles.refs = match[2];
             }
         }
@@ -567,6 +567,32 @@ function formatUTC(date) {
     const h = String(date.getUTCHours()).padStart(2, '0');
     const min = String(date.getUTCMinutes()).padStart(2, '0');
     return `${m} ${d}, ${h}${min}Z`;
+}
+
+// --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
+function getValidTimeRange(cycleStr, windowStr) {
+    if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
+    
+    let cycleHour = parseInt(cycleStr);
+    let now = new Date();
+    
+    // Create base UTC date anchored to the cycle hour
+    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
+    
+    // If the current UTC hour is less than the cycle hour, the cycle must have initialized yesterday!
+    if (now.getUTCHours() < cycleHour) {
+        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
+    }
+    
+    // Parse start and end offsets based on the selected group window
+    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
+    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
+    
+    // Add the offsets to the base cycle date
+    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
+    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
+    
+    return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
 }
 
 // --- NEW CLEAN RAP LEGEND MAPPING DICTIONARY ---
@@ -671,22 +697,40 @@ map.on('overlayadd', function(eventLayer) {
         // Dynamically insert the exact "Max" wording
         legendHtml.innerHTML = eventLayer.name.includes('Max FFG Exceedance') ? camLegendFFG : camLegendQPF;
         
-        // Dynamically adjust the Time Box cycle display
+        // Figure out which exact window the forecaster just clicked on
+        let currentWindow = "+3h to +9h"; // Fallback default
+        let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
+        if (matchedKey) {
+            currentWindow = matchedKey.includes('3h_to_9h') ? '+3h to +9h' : '+9h to +15h';
+        }
+        
+        // Dynamically adjust the Time Box cycle display and calculate the Valid Time
         let titleText = "";
         let cycleText = "";
+        let targetCycleForMath = camCycles.href; // Default to HREF for the math
         
         if (eventLayer.name.includes('SuperEnsemble')) {
             titleText = "SuperEnsemble Blend";
-            cycleText = `HREF: ${camCycles.href} &nbsp;|&nbsp; REFS: ${camCycles.refs}`;
+            cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
         } else if (eventLayer.name.includes('HREF')) {
             titleText = "HREF Only";
-            cycleText = `Latest Run: ${camCycles.href}`;
+            cycleText = `Latest Run: ${camCycles.href}Z`;
+            targetCycleForMath = camCycles.href;
         } else if (eventLayer.name.includes('REFS')) {
             titleText = "REFS Only";
-            cycleText = `Latest Run: ${camCycles.refs}`;
+            cycleText = `Latest Run: ${camCycles.refs}Z`;
+            targetCycleForMath = camCycles.refs;
         }
 
-        camTimeBox.innerHTML = `<strong>${titleText}</strong><br><span style="font-size: 0.9em;">${cycleText}</span>`;
+        // Run the dynamic UTC date calculator
+        let validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
+
+        camTimeBox.innerHTML = `
+            <strong>${titleText}</strong><br>
+            <span style="font-size: 0.9em;">${cycleText}</span>
+            <hr style="margin: 5px 0; border-color: #555;">
+            <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
+        `;
         camTimeBox.style.display = 'block';
     }
 });
