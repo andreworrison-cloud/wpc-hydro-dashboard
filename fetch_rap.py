@@ -22,14 +22,14 @@ print("Connecting to NOAA NOMADS GRIB Filter...")
 def download_rap_subset():
     now = datetime.now(timezone.utc)
     
-    def fetch_hour(target_time, filename):
+    def fetch_hour(target_time, filename, fxx="00"):
         date_str = target_time.strftime('%Y%m%d')
         cycle = f"{target_time.hour:02d}"
         
         url = "https://nomads.ncep.noaa.gov/cgi-bin/filter_rap.pl"
         
         params = {
-            'file': f'rap.t{cycle}z.awp130pgrbf00.grib2',
+            'file': f'rap.t{cycle}z.awp130pgrbf{fxx}.grib2',
             'lev_surface': 'on', 'lev_2_m_above_ground': 'on', 'lev_10_m_above_ground': 'on',
             'lev_90-0_mb_above_ground': 'on', 'lev_255-0_mb_above_ground': 'on',
             'lev_3000-0_m_above_ground': 'on', 'lev_equilibrium_level': 'on',
@@ -57,7 +57,7 @@ def download_rap_subset():
     t0_time = None
     for offset in range(0, 5):
         check_time = now - timedelta(hours=offset)
-        t0_time = fetch_hour(check_time, "rap_subset_t0.grib2")
+        t0_time = fetch_hour(check_time, "rap_subset_t0.grib2", fxx="00")
         if t0_time:
             print(f"Success! Downloaded Current RAP (T-0) for: {t0_time.strftime('%Y%m%d %H:00')}Z")
             break
@@ -65,9 +65,14 @@ def download_rap_subset():
     if not t0_time:
         raise Exception("Could not download current RAP data.")
 
-    # Explicitly calculate and fetch the T-3 hour
+    # Fetch the +3 hour forecast for the exact same cycle
+    f03_time = fetch_hour(t0_time, "rap_subset_f03.grib2", fxx="03")
+    if f03_time:
+        print(f"Success! Downloaded +3h Forecast RAP for: {t0_time.strftime('%Y%m%d %H:00')}Z cycle")
+
+    # Explicitly calculate and fetch the T-3 hour (Historical)
     t3_target = t0_time - timedelta(hours=3)
-    t3_time = fetch_hour(t3_target, "rap_subset_t3.grib2")
+    t3_time = fetch_hour(t3_target, "rap_subset_t3.grib2", fxx="00")
     if t3_time:
         print(f"Success! Downloaded Historical RAP (T-3) for: {t3_time.strftime('%Y%m%d %H:00')}Z")
     else:
@@ -76,7 +81,11 @@ def download_rap_subset():
     return t0_time, t3_time
 
 t0_obj, t3_obj = download_rap_subset()
+
+# Calculate metadata strings for both current and +3h forecast valid times
 valid_time_str = f"Mesoanalysis F00 &mdash; {t0_obj.strftime('%b %d, %Y %H:00')}Z"
+f03_valid_obj = t0_obj + timedelta(hours=3)
+valid_time_f03_str = f"+3h Forecast &mdash; {f03_valid_obj.strftime('%b %d, %Y %H:00')}Z"
 
 print("Extracting grids and calculating variables...")
 
@@ -193,6 +202,40 @@ trans_850 = np.zeros_like(lats)
 if u_850 is not None and rh_850 is not None:
     trans_850 = mpcalc.mixing_ratio_from_relative_humidity(850 * units.hPa, t_850 * units.K, rh_850 * units.percent).magnitude * 1000 * (np.sqrt(u_850**2 + v_850**2) * 1.94384)
 
+# --- PROCESS +3H FORECAST (F03) FILE ---
+pwat_f03, sbcape_f03, mlcape_f03, mucape_f03 = None, None, None, None
+u_850_f03, v_850_f03, rh_850_f03, t_850_f03 = None, None, None, None
+trans_850_f03 = None
+
+if os.path.exists("rap_subset_f03.grib2"):
+    print("Extracting F03 variables for +3 Hour Forecast fields...")
+    datasets_f03 = cfgrib.open_datasets("rap_subset_f03.grib2", indexpath='')
+    
+    for ds in datasets_f03:
+        if 'pwat' in ds.data_vars: pwat_f03 = np.squeeze(ds['pwat'].values) / 25.4
+        if 'cape' in ds.data_vars and 'surface' in ds.coords: sbcape_f03 = np.squeeze(ds['cape'].values)
+        res = safe_extract(ds, 'cape', 'pressureFromGroundLayer', 9000)
+        if res is not None: mlcape_f03 = res
+        res = safe_extract(ds, 'cape', 'pressureFromGroundLayer', 25500)
+        if res is not None: mucape_f03 = res
+        
+        if 'isobaricInhPa' in ds.coords:
+            if 'u' in ds.data_vars:
+                res_u = safe_extract(ds, 'u', 'isobaricInhPa', 850)
+                if res_u is not None: u_850_f03 = res_u
+            if 'v' in ds.data_vars:
+                res_v = safe_extract(ds, 'v', 'isobaricInhPa', 850)
+                if res_v is not None: v_850_f03 = res_v
+            if 'r' in ds.data_vars:
+                res_rh = safe_extract(ds, 'r', 'isobaricInhPa', 850)
+                if res_rh is not None: rh_850_f03 = res_rh
+            if 't' in ds.data_vars:
+                res_t = safe_extract(ds, 't', 'isobaricInhPa', 850)
+                if res_t is not None: t_850_f03 = res_t
+                
+    if all(x is not None for x in [u_850_f03, v_850_f03, rh_850_f03, t_850_f03]):
+        trans_850_f03 = mpcalc.mixing_ratio_from_relative_humidity(850 * units.hPa, t_850_f03 * units.K, rh_850_f03 * units.percent).magnitude * 1000 * (np.sqrt(u_850_f03**2 + v_850_f03**2) * 1.94384)
+
 # --- PROCESS HISTORICAL (T-3) FILE FOR DIFFERENCES ---
 pwat_diff, sbcape_diff, mlcape_diff, mucape_diff = None, None, None, None
 trans_850_diff = None
@@ -211,7 +254,6 @@ if t3_obj and os.path.exists("rap_subset_t3.grib2"):
         res = safe_extract(ds, 'cape', 'pressureFromGroundLayer', 25500)
         if res is not None: mucape_t3 = res
         
-        # New extraction for 850 mb T-3 variables
         if 'isobaricInhPa' in ds.coords:
             if 'u' in ds.data_vars:
                 res_u = safe_extract(ds, 'u', 'isobaricInhPa', 850)
@@ -388,11 +430,19 @@ def safe_smooth(data, sigma, threshold, use_abs=False):
         return np.where(np.abs(smoothed) < threshold, np.nan, smoothed)
     return np.where(smoothed < threshold, np.nan, smoothed)
 
-# Base Fields
+# Base Fields (F00)
 pwat_smooth = safe_smooth(pwat, 1.0, 0.25)
 sbcape_smooth = safe_smooth(sbcape, 1.5, 100)
 mlcape_smooth = safe_smooth(mlcape, 1.5, 100)
 mucape_smooth = safe_smooth(mucape, 1.5, 100)
+trans_850_smooth = safe_smooth(trans_850, 1.5, 50)
+
+# Forecast Fields (F03)
+pwat_f03_smooth = safe_smooth(pwat_f03, 1.0, 0.25)
+sbcape_f03_smooth = safe_smooth(sbcape_f03, 1.5, 100)
+mlcape_f03_smooth = safe_smooth(mlcape_f03, 1.5, 100)
+mucape_f03_smooth = safe_smooth(mucape_f03, 1.5, 100)
+trans_850_f03_smooth = safe_smooth(trans_850_f03, 1.5, 50)
 
 # Difference Fields (Safely handles missing T-3 data)
 pwat_diff_smooth = safe_smooth(pwat_diff, 1.5, 0.1, use_abs=True)
@@ -403,7 +453,6 @@ trans_850_diff_smooth = safe_smooth(trans_850_diff, 1.5, 25, use_abs=True)
 
 # Remaining Fields
 mfc_smooth = safe_smooth(mfc, 2.0, 1.0, use_abs=True)
-trans_850_smooth = safe_smooth(trans_850, 1.5, 50)
 trans_700_smooth = safe_smooth(trans_700, 1.5, 50)
 vort_500_smooth = safe_smooth(vort_500, 1.5, 4)
 div_250_smooth = safe_smooth(div_250, 1.5, 2)
@@ -516,14 +565,14 @@ def save_legend_png(cmap, vmin, vmax, title, filename, contour_levels=None):
     cb.ax.tick_params(colors='white', labelsize=8)
     cb.outline.set_edgecolor('white')
     
-    # Added pad_inches to create a physical bumper around the entire image text
     plt.savefig(f'static/{filename}', format='png', transparent=True, bbox_inches='tight', pad_inches=0.15)
     plt.close()
 
 print("Saving maps directly to static/ folder...")
 
+# Calculate the unified CAPE maximum across both current and F03 fields
 max_cape = 5000
-for cape_arr in [sbcape_smooth, mlcape_smooth, mucape_smooth]:
+for cape_arr in [sbcape_smooth, mlcape_smooth, mucape_smooth, sbcape_f03_smooth, mlcape_f03_smooth, mucape_f03_smooth]:
     if cape_arr is not None: max_cape = max(max_cape, np.nanmax(cape_arr))
 max_cape = int(np.ceil(max_cape / 1000) * 1000)
 
@@ -532,8 +581,16 @@ save_map_png(pwat_smooth, 'nipy_spectral', 0.25, 2.75, 'rap_pwat.png')
 save_map_png(sbcape_smooth, 'hot_r', 100, max_cape, 'rap_sbcape.png')
 save_map_png(mlcape_smooth, 'hot_r', 100, max_cape, 'rap_mlcape.png')
 save_map_png(mucape_smooth, 'hot_r', 100, max_cape, 'rap_mucape.png')
+save_barb_map_png(trans_850_smooth, u_850, v_850, 'YlGnBu', 50, 400, 'rap_trans850.png')
 
-# New Difference Fields (Centered on 0 using Divergent Colormaps)
+# +3 Hour Forecast Fields
+save_map_png(pwat_f03_smooth, 'nipy_spectral', 0.25, 2.75, 'rap_pwat_f03.png')
+save_map_png(sbcape_f03_smooth, 'hot_r', 100, max_cape, 'rap_sbcape_f03.png')
+save_map_png(mlcape_f03_smooth, 'hot_r', 100, max_cape, 'rap_mlcape_f03.png')
+save_map_png(mucape_f03_smooth, 'hot_r', 100, max_cape, 'rap_mucape_f03.png')
+save_barb_map_png(trans_850_f03_smooth, u_850_f03, v_850_f03, 'YlGnBu', 50, 400, 'rap_trans850_f03.png')
+
+# Difference Fields
 save_map_png(pwat_diff_smooth, 'BrBG', -1.0, 1.0, 'rap_pwat_diff.png')
 save_map_png(sbcape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_sbcape_diff.png')
 save_map_png(mlcape_diff_smooth, 'RdBu_r', -2000, 2000, 'rap_mlcape_diff.png')
@@ -548,7 +605,6 @@ save_map_png(f_925_850_smooth, 'gnuplot2_r', 1, 10, 'rap_f925_850.png')
 save_map_png(f_850_700_smooth, 'gnuplot2_r', 1, 10, 'rap_f850_700.png')
 save_map_png(scp_smooth, 'YlOrRd', 1, 20, 'rap_scp.png')
 
-save_barb_map_png(trans_850_smooth, u_850, v_850, 'YlGnBu', 50, 400, 'rap_trans850.png')
 save_barb_map_png(trans_700_smooth, u_700, v_700, 'YlGnBu', 50, 400, 'rap_trans700.png')
 save_barb_map_png(vort_500_smooth, u_500, v_500, 'YlOrRd', 4, 30, 'rap_vort500.png')
 save_barb_map_png(div_250_smooth, u_250, v_250, 'PuRd', 2, 10, 'rap_div250.png')
@@ -576,7 +632,7 @@ save_legend_png('Purples', 25, 80, "Effective Bulk Wind Shear (knots)", 'leg_eff
 save_legend_png('PuBu', 10, 60, "Corfidi Upwind Vector Magnitude (knots)", 'leg_corfidi_up.png', contour_levels=np.arange(10, 70, 10))
 save_legend_png('OrRd', 20, 80, "Corfidi Downwind Vector Magnitude (knots)", 'leg_corfidi_down.png', contour_levels=np.arange(20, 90, 10))
 
-# New Difference Legends split evenly onto two lines with \n
+# Difference Legends
 save_legend_png('BrBG', -1.0, 1.0, "3-Hour PWAT Change (inches)", 'leg_pwat_diff.png')
 save_legend_png('RdBu_r', -2000, 2000, "3-Hour CAPE Change (J/kg)", 'leg_cape_diff.png')
 save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture\nTransport Change (g/kg * kts)", 'leg_trans_diff.png')
@@ -590,6 +646,7 @@ bounds = [
 with open("static/rap_metadata.json", "w") as f:
     json.dump({
         "valid_time": valid_time_str,
+        "valid_time_f03": valid_time_f03_str,
         "bounds": bounds
     }, f)
 
