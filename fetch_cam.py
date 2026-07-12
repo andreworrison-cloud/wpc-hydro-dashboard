@@ -149,26 +149,29 @@ class EnsembleNowcastEngine:
         coords = {"HREF": [None, None], "REFS": [None, None]}
         
         tasks = []
-        active_fxx = []
-        for w in self.windows: active_fxx.extend(range(w[0], w[1] + 1))
         
-        for fxx in active_fxx:
-            h_base = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/href.{h_date}/ensprod"
-            r_base = f"https://noaa-rrfs-pds.s3.amazonaws.com/rrfs_public/refs.{r_date}/{r_cyc:02d}/enspost"
-            
-            for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
-                tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"H_Q_{t_in}_{fxx}.grib2"))
-                tasks.append((f"{r_base}/refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2", f"{r_base}/refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"R_Q_{t_in}_{fxx}.grib2"))
+        h_base = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/href.{h_date}/ensprod"
+        r_base = f"https://noaa-rrfs-pds.s3.amazonaws.com/rrfs_public/refs.{r_date}/{r_cyc:02d}/enspost"
+        
+        for w in self.windows:
+            window_start = w[0] - 1  # e.g., for w=(4,9), start is 3.
+            for fxx in range(w[0], w[1] + 1):
+                # 1. Queue QPF (1-hour durations strictly inside the window)
+                for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
+                    tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"H_Q_{t_in}_{fxx}.grib2"))
+                    tasks.append((f"{r_base}/refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2", f"{r_base}/refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"R_Q_{t_in}_{fxx}.grib2"))
                 
-            for d in self.ffg_durations:
-                if fxx - d >= 0:
-                    tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2.idx", "FFG", d, fxx, self.grib_dir/f"H_F_{d}_{fxx}.grib2"))
-                    tasks.append((f"{r_base}/refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2", f"{r_base}/refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2.idx", "FFG", d, fxx, self.grib_dir/f"R_F_{d}_{fxx}.grib2"))
+                # 2. Queue FFG (STRICTLY CONFINED TO WINDOW)
+                for d in self.ffg_durations:
+                    if fxx - d >= window_start:
+                        tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2.idx", "FFG", d, fxx, self.grib_dir/f"H_F_{d}_{fxx}.grib2"))
+                        tasks.append((f"{r_base}/refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2", f"{r_base}/refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2.idx", "FFG", d, fxx, self.grib_dir/f"R_F_{d}_{fxx}.grib2"))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             list(executor.map(self._fetch_grib, tasks))
 
         for w in self.windows:
+            window_start = w[0] - 1
             for fxx in range(w[0], w[1] + 1):
                 for t_in in self.qpf_thresh_in:
                     for model, prefix in [("HREF", "H"), ("REFS", "R")]:
@@ -179,12 +182,13 @@ class EnsembleNowcastEngine:
                             except: pass
                 
                 for d in self.ffg_durations:
-                    for model, prefix in [("HREF", "H"), ("REFS", "R")]:
-                        file = self.grib_dir/f"{prefix}_F_{d}_{fxx}.grib2"
-                        if file.exists():
-                            data_store[w]["FFG_MAX"][model], coords[model][0], coords[model][1], _ = self._extract_max(file, data_store[w]["FFG_MAX"][model], coords[model][0], coords[model][1])
-                            try: file.unlink()
-                            except: pass
+                    if fxx - d >= window_start: # STRICT BOUNDARY CHECK
+                        for model, prefix in [("HREF", "H"), ("REFS", "R")]:
+                            file = self.grib_dir/f"{prefix}_F_{d}_{fxx}.grib2"
+                            if file.exists():
+                                data_store[w]["FFG_MAX"][model], coords[model][0], coords[model][1], _ = self._extract_max(file, data_store[w]["FFG_MAX"][model], coords[model][0], coords[model][1])
+                                try: file.unlink()
+                                except: pass
 
         dashboard_payload = {
             "metadata": {
