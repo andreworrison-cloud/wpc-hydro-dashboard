@@ -473,6 +473,16 @@ const camTempBounds = [[20, -130], [50, -60]];
     });
 });
 
+// --- NEW DAY 1 ERO CAM LAYERS ---
+const eroCamLayers = {};
+['href', 'refs', 'super'].forEach(m => {
+    eroCamLayers[`ffg_${m}`] = L.imageOverlay(`static/ero_ffg_${m}.png`, camTempBounds, {zIndex: 11});
+    ['0.5_inch', '1_inch', '2_inch', '3_inch'].forEach(q => {
+        eroCamLayers[`qpf_${q}_${m}`] = L.imageOverlay(`static/ero_qpf_${q}_${m}.png`, camTempBounds, {zIndex: 11});
+    });
+});
+
+
 // --- TIME AND LEGEND UI CONTROLS ---
 const timeControl = L.control({position: 'bottomright'});
 timeControl.onAdd = function() {
@@ -541,7 +551,7 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
     .then(r => r.json())
     .then(data => {
         rapValidTime = data.valid_time || "Unknown";
-        rapValidTimeF03 = data.valid_time_f03 || "Unknown"; // We will add this to Python next
+        rapValidTimeF03 = data.valid_time_f03 || "Unknown"; 
 
         const timeBox = document.getElementById('rap-time-box');
         timeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
@@ -577,6 +587,19 @@ fetch('static/cam_metadata.json?t=' + new Date().getTime())
         }
     })
     .catch(err => console.log("CAM metadata not found yet."));
+
+// --- ERO CAM METADATA FETCH ---
+let eroValidRangeStr = "Unknown";
+fetch('static/ero_cam_metadata.json?t=' + new Date().getTime())
+    .then(r => r.json())
+    .then(data => {
+        if (data.ero_window_str) eroValidRangeStr = data.ero_window_str;
+        if (data.bounds) {
+            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+            Object.values(eroCamLayers).forEach(layer => layer.setBounds(exactBounds));
+        }
+    })
+    .catch(err => console.log("ERO CAM metadata not found yet."));
 
 function formatUTC(date) {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -686,7 +709,6 @@ map.on('overlayadd', function(eventLayer) {
         legendImg.style.display = 'block';
         legendImg.src = rapLegendMapping[eventLayer.name];
 
-        // Shift the RAP timebox string if it is a +3h forecast
         if (eventLayer.name.includes('+3h Forecast')) {
             rapTimeBox.innerHTML = `<strong>${rapValidTimeF03}</strong>`;
         } else {
@@ -714,7 +736,7 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.style.display = 'block';
     }
 
-    // CAM HTML Legend Handler
+    // CAM HTML Legend Handler (Nowcasts & ERO)
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'transparent'; 
@@ -724,21 +746,13 @@ map.on('overlayadd', function(eventLayer) {
         // Dynamically insert the exact "Max" wording
         legendHtml.innerHTML = eventLayer.name.includes('Max FFG Exceedance') ? camLegendFFG : camLegendQPF;
         
-        // Figure out which exact window the forecaster just clicked on
-        let currentWindow = "+3h to +9h"; // Fallback default
-        let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
-        if (matchedKey) {
-            currentWindow = matchedKey.includes('3h_to_9h') ? '+3h to +9h' : '+9h to +15h';
-        }
-        
-        // Dynamically adjust the Time Box cycle display and calculate the Valid Time
+        // Dynamically adjust the Time Box cycle display
         let titleText = "";
-        let cycleText = "";
-        let targetCycleForMath = camCycles.href; // Default to HREF for the math
+        let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
+        let targetCycleForMath = camCycles.href; 
         
         if (eventLayer.name.includes('SuperEnsemble')) {
             titleText = "SuperEnsemble Blend";
-            cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
         } else if (eventLayer.name.includes('HREF')) {
             titleText = "HREF Only";
             cycleText = `Latest Run: ${camCycles.href}Z`;
@@ -749,8 +763,20 @@ map.on('overlayadd', function(eventLayer) {
             targetCycleForMath = camCycles.refs;
         }
 
-        // Run the dynamic UTC date calculator
-        let validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
+        let validRangeStr = "";
+
+        // Determine if this is an ERO CAM or a Short-Term Nowcast CAM
+        if (eventLayer.name.includes('[ERO]')) {
+            titleText = titleText + " (Day 1 ERO)";
+            validRangeStr = eroValidRangeStr;
+        } else {
+            let currentWindow = "+3h to +9h";
+            let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
+            if (matchedKey) {
+                currentWindow = matchedKey.includes('3h_to_9h') ? '+3h to +9h' : '+9h to +15h';
+            }
+            validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
+        }
 
         camTimeBox.innerHTML = `
             <strong>${titleText}</strong><br>
@@ -774,7 +800,7 @@ map.on('overlayremove', function(eventLayer) {
         legendContainer.style.display = 'none';
         mrmsTimeBox.style.display = 'none';
     }
-    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
+    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
         legendContainer.style.display = 'none';
         camTimeBox.style.display = 'none';
     }
@@ -840,6 +866,23 @@ const groupedOverlays = {
         "<b>SuperEnsemble</b>: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_super'],
         "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_href'],
         "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_refs']
+    },
+    "Day 1 ERO CAMs (12Z-12Z)": {
+        "<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance": eroCamLayers['ffg_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max FFG Exceedance": eroCamLayers['ffg_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max FFG Exceedance": eroCamLayers['ffg_refs'],
+        "<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5\"/hr": eroCamLayers['qpf_0.5_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 0.5\"/hr": eroCamLayers['qpf_0.5_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 0.5\"/hr": eroCamLayers['qpf_0.5_inch_refs'],
+        "<b>SuperEnsemble [ERO]</b>: Max Prob > 1.0\"/hr": eroCamLayers['qpf_1_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 1.0\"/hr": eroCamLayers['qpf_1_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 1.0\"/hr": eroCamLayers['qpf_1_inch_refs'],
+        "<b>SuperEnsemble [ERO]</b>: Max Prob > 2.0\"/hr": eroCamLayers['qpf_2_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 2.0\"/hr": eroCamLayers['qpf_2_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 2.0\"/hr": eroCamLayers['qpf_2_inch_refs'],
+        "<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_refs']
     },
     "RAP Mesoanalysis (Real-Time)": {
         "Precipitable Water (PWAT)": pwatLayer,
