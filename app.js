@@ -423,14 +423,28 @@ fetchWPCData();
 // --- RAP MESOANALYSIS LAYERS ---
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
 
+// Base Fields
 const pwatLayer = L.imageOverlay('static/rap_pwat.png', rapBounds, {zIndex: 10});
-const pwatDiffLayer = L.imageOverlay('static/rap_pwat_diff.png', rapBounds, {zIndex: 10});
 const sbcapeLayer = L.imageOverlay('static/rap_sbcape.png', rapBounds, {zIndex: 10});
-const sbcapeDiffLayer = L.imageOverlay('static/rap_sbcape_diff.png', rapBounds, {zIndex: 10});
 const mlcapeLayer = L.imageOverlay('static/rap_mlcape.png', rapBounds, {zIndex: 10});
-const mlcapeDiffLayer = L.imageOverlay('static/rap_mlcape_diff.png', rapBounds, {zIndex: 10});
 const mucapeLayer = L.imageOverlay('static/rap_mucape.png', rapBounds, {zIndex: 10});
+const trans850Layer = L.imageOverlay('static/rap_trans850.png', rapBounds, {zIndex: 10});
+
+// 3-Hour Change Fields
+const pwatDiffLayer = L.imageOverlay('static/rap_pwat_diff.png', rapBounds, {zIndex: 10});
+const sbcapeDiffLayer = L.imageOverlay('static/rap_sbcape_diff.png', rapBounds, {zIndex: 10});
+const mlcapeDiffLayer = L.imageOverlay('static/rap_mlcape_diff.png', rapBounds, {zIndex: 10});
 const mucapeDiffLayer = L.imageOverlay('static/rap_mucape_diff.png', rapBounds, {zIndex: 10});
+const trans850DiffLayer = L.imageOverlay('static/rap_trans850_diff.png', rapBounds, {zIndex: 10});
+
+// +3 Hour Forecast Fields
+const pwatF03Layer = L.imageOverlay('static/rap_pwat_f03.png', rapBounds, {zIndex: 10});
+const sbcapeF03Layer = L.imageOverlay('static/rap_sbcape_f03.png', rapBounds, {zIndex: 10});
+const mlcapeF03Layer = L.imageOverlay('static/rap_mlcape_f03.png', rapBounds, {zIndex: 10});
+const mucapeF03Layer = L.imageOverlay('static/rap_mucape_f03.png', rapBounds, {zIndex: 10});
+const trans850F03Layer = L.imageOverlay('static/rap_trans850_f03.png', rapBounds, {zIndex: 10});
+
+// Remaining Fields
 const lrsfc3Layer = L.imageOverlay('static/rap_lr_sfc3.png', rapBounds, {zIndex: 10});
 const lr75Layer = L.imageOverlay('static/rap_lr_75.png', rapBounds, {zIndex: 10});
 const scpLayer = L.imageOverlay('static/rap_scp.png', rapBounds, {zIndex: 10});
@@ -440,8 +454,6 @@ const f850Layer = L.imageOverlay('static/rap_f850_700.png', rapBounds, {zIndex: 
 const effShearLayer = L.imageOverlay('static/rap_eff_shear.png', rapBounds, {zIndex: 10});
 const corfidiUpLayer = L.imageOverlay('static/rap_corfidi_up.png', rapBounds, {zIndex: 10});
 const corfidiDownLayer = L.imageOverlay('static/rap_corfidi_down.png', rapBounds, {zIndex: 10});
-const trans850Layer = L.imageOverlay('static/rap_trans850.png', rapBounds, {zIndex: 10});
-const trans850DiffLayer = L.imageOverlay('static/rap_trans850_diff.png', rapBounds, {zIndex: 10});
 const trans700Layer = L.imageOverlay('static/rap_trans700.png', rapBounds, {zIndex: 10});
 const meanWindLayer = L.imageOverlay('static/rap_mean_wind.png', rapBounds, {zIndex: 10});
 const vort500Layer = L.imageOverlay('static/rap_vort500.png', rapBounds, {zIndex: 10});
@@ -522,19 +534,26 @@ legendControl.onAdd = function () {
 legendControl.addTo(map);
 
 // --- RAP METADATA FETCH ---
+let rapValidTime = "Unknown";
+let rapValidTimeF03 = "Unknown";
+
 fetch('static/rap_metadata.json?t=' + new Date().getTime())
     .then(r => r.json())
     .then(data => {
+        rapValidTime = data.valid_time || "Unknown";
+        rapValidTimeF03 = data.valid_time_f03 || "Unknown"; // We will add this to Python next
+
         const timeBox = document.getElementById('rap-time-box');
-        timeBox.innerHTML = `<strong>${data.valid_time}</strong>`;
+        timeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
         timeBox.style.display = 'block';
 
         if (data.bounds) {
             const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-            [pwatLayer, pwatDiffLayer, sbcapeLayer, sbcapeDiffLayer, mlcapeLayer, mlcapeDiffLayer, 
-             mucapeLayer, mucapeDiffLayer, lrsfc3Layer, lr75Layer, scpLayer, mfcLayer, 
-             f925Layer, f850Layer, effShearLayer, corfidiUpLayer, corfidiDownLayer, 
-             trans850Layer, trans850DiffLayer, trans700Layer, meanWindLayer, vort500Layer, diffAdvLayer, div250Layer].forEach(layer => layer.setBounds(exactBounds));
+            [pwatLayer, pwatDiffLayer, pwatF03Layer, sbcapeLayer, sbcapeDiffLayer, sbcapeF03Layer, 
+             mlcapeLayer, mlcapeDiffLayer, mlcapeF03Layer, mucapeLayer, mucapeDiffLayer, mucapeF03Layer, 
+             lrsfc3Layer, lr75Layer, scpLayer, mfcLayer, f925Layer, f850Layer, effShearLayer, 
+             corfidiUpLayer, corfidiDownLayer, trans850Layer, trans850DiffLayer, trans850F03Layer, 
+             trans700Layer, meanWindLayer, vort500Layer, diffAdvLayer, div250Layer].forEach(layer => layer.setBounds(exactBounds));
         }
     })
     .catch(err => console.log("RAP metadata not found yet."));
@@ -546,10 +565,9 @@ fetch('static/cam_metadata.json?t=' + new Date().getTime())
     .then(r => r.json())
     .then(data => {
         if (data.valid_time) {
-            // Parses the Python string "Ensemble Nowcast (HREF 18Z | REFS 18Z)"
             const match = data.valid_time.match(/HREF (\d{2})Z \| REFS (\d{2})Z/);
             if (match) {
-                camCycles.href = match[1]; // Grabs just the numbers
+                camCycles.href = match[1]; 
                 camCycles.refs = match[2];
             }
         }
@@ -576,19 +594,15 @@ function getValidTimeRange(cycleStr, windowStr) {
     let cycleHour = parseInt(cycleStr);
     let now = new Date();
     
-    // Create base UTC date anchored to the cycle hour
     let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
     
-    // If the current UTC hour is less than the cycle hour, the cycle must have initialized yesterday!
     if (now.getUTCHours() < cycleHour) {
         baseDate.setUTCDate(baseDate.getUTCDate() - 1);
     }
     
-    // Parse start and end offsets based on the selected group window
     let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
     let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
     
-    // Add the offsets to the base cycle date
     let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
     let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
     
@@ -599,12 +613,16 @@ function getValidTimeRange(cycleStr, windowStr) {
 const rapLegendMapping = {
     "Precipitable Water (PWAT)": "static/leg_pwat.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": "static/leg_pwat_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": "static/leg_pwat.png",
     "Surface Based CAPE": "static/leg_cape.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": "static/leg_cape_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": "static/leg_cape.png",
     "Mixed Layer CAPE (90mb)": "static/leg_cape.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": "static/leg_cape_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": "static/leg_cape.png",
     "Most Unstable CAPE (255mb)": "static/leg_cape.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": "static/leg_cape_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": "static/leg_cape.png",
     "Sfc-3km Low-Level Lapse Rate": "static/leg_lrsfc3.png",
     "700-500mb Mid-Level Lapse Rate": "static/leg_lr75.png",
     "Supercell Composite Parameter": "static/leg_scp.png",
@@ -616,6 +634,7 @@ const rapLegendMapping = {
     "Corfidi Downwind (Forward) Vectors": "static/leg_corfidi_down.png",
     "850mb Moisture Transport": "static/leg_trans.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": "static/leg_trans_diff.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": "static/leg_trans.png",
     "700mb Moisture Transport": "static/leg_trans.png",
     "850-300mb Mean Layer Wind": "static/leg_mean_wind.png",
     "500mb Absolute Vorticity": "static/leg_vort.png",
@@ -655,6 +674,7 @@ map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
     const legendImg = document.getElementById('legend-img');
     const legendHtml = document.getElementById('legend-html');
+    const rapTimeBox = document.getElementById('rap-time-box');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
     
@@ -665,6 +685,13 @@ map.on('overlayadd', function(eventLayer) {
         legendHtml.style.display = 'none';
         legendImg.style.display = 'block';
         legendImg.src = rapLegendMapping[eventLayer.name];
+
+        // Shift the RAP timebox string if it is a +3h forecast
+        if (eventLayer.name.includes('+3h Forecast')) {
+            rapTimeBox.innerHTML = `<strong>${rapValidTimeF03}</strong>`;
+        } else {
+            rapTimeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
+        }
     }
     
     // MRMS HTML Legend Handler
@@ -817,12 +844,16 @@ const groupedOverlays = {
     "RAP Mesoanalysis (Real-Time)": {
         "Precipitable Water (PWAT)": pwatLayer,
         "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": pwatF03Layer,
         "Surface Based CAPE": sbcapeLayer,
         "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": sbcapeF03Layer,
         "Mixed Layer CAPE (90mb)": mlcapeLayer,
         "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": mlcapeF03Layer,
         "Most Unstable CAPE (255mb)": mucapeLayer,
         "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": mucapeF03Layer,
         "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
         "700-500mb Mid-Level Lapse Rate": lr75Layer,
         "Supercell Composite Parameter": scpLayer,
@@ -834,6 +865,7 @@ const groupedOverlays = {
         "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
         "850mb Moisture Transport": trans850Layer,
         "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": trans850F03Layer,
         "700mb Moisture Transport": trans700Layer,
         "850-300mb Mean Layer Wind": meanWindLayer,
         "500mb Absolute Vorticity": vort500Layer,
