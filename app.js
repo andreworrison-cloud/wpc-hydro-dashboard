@@ -540,12 +540,18 @@ fetch('static/rap_metadata.json?t=' + new Date().getTime())
     .catch(err => console.log("RAP metadata not found yet."));
 
 // --- CAM METADATA FETCH ---
+let camCycles = { href: "Unknown", refs: "Unknown" };
+
 fetch('static/cam_metadata.json?t=' + new Date().getTime())
     .then(r => r.json())
     .then(data => {
-        const timeBox = document.getElementById('cam-time-box');
         if (data.valid_time) {
-            timeBox.innerHTML = `<strong>${data.valid_time}</strong>`;
+            // Parses the Python string "Ensemble Nowcast (HREF 18Z | REFS 18Z)"
+            const match = data.valid_time.match(/HREF (\d{2}Z) \| REFS (\d{2}Z)/);
+            if (match) {
+                camCycles.href = match[1];
+                camCycles.refs = match[2];
+            }
         }
         if (data.bounds) {
             const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
@@ -594,7 +600,7 @@ const rapLegendMapping = {
 // --- CAM HTML LEGENDS ---
 const camLegendQPF = `
     <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
-        <strong>QPF Probability (%)</strong><br>
+        <strong>Max Hourly QPF Probability (%)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
             <div style="background: #ffffcc; flex: 1; padding: 2px 5px;">10</div>
             <div style="background: #a1dab4; flex: 1; padding: 2px 5px;">30</div>
@@ -607,7 +613,7 @@ const camLegendQPF = `
 
 const camLegendFFG = `
     <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
-        <strong>FFG Exceedance Prob (%)</strong><br>
+        <strong>Max FFG Exceedance Probability (%)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
             <div style="background: #ffffb2; flex: 1; padding: 2px 5px;">10</div>
             <div style="background: #fecc5c; flex: 1; padding: 2px 5px;">30</div>
@@ -661,8 +667,26 @@ map.on('overlayadd', function(eventLayer) {
         legendContainer.style.background = 'transparent'; 
         legendImg.style.display = 'none';
         legendHtml.style.display = 'block';
-        legendHtml.innerHTML = eventLayer.name.includes('Flash Flood Guidance') ? camLegendFFG : camLegendQPF;
         
+        // Dynamically insert the exact "Max" wording
+        legendHtml.innerHTML = eventLayer.name.includes('Max FFG Exceedance') ? camLegendFFG : camLegendQPF;
+        
+        // Dynamically adjust the Time Box cycle display
+        let titleText = "";
+        let cycleText = "";
+        
+        if (eventLayer.name.includes('SuperEnsemble')) {
+            titleText = "SuperEnsemble Blend";
+            cycleText = `HREF: ${camCycles.href} &nbsp;|&nbsp; REFS: ${camCycles.refs}`;
+        } else if (eventLayer.name.includes('HREF')) {
+            titleText = "HREF Only";
+            cycleText = `Latest Run: ${camCycles.href}`;
+        } else if (eventLayer.name.includes('REFS')) {
+            titleText = "REFS Only";
+            cycleText = `Latest Run: ${camCycles.refs}`;
+        }
+
+        camTimeBox.innerHTML = `<strong>${titleText}</strong><br><span style="font-size: 0.9em;">${cycleText}</span>`;
         camTimeBox.style.display = 'block';
     }
 });
@@ -713,38 +737,38 @@ const groupedOverlays = {
         "GOES-West: Clean IR (Ch. 13)": goesWestIR
     },
     "CAM Nowcasts (+3h to +9h)": {
-        "<b>SuperEnsemble</b>: Flash Flood Guidance": camLayers['ffg_3h_to_9h_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Flash Flood Guidance": camLayers['ffg_3h_to_9h_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Flash Flood Guidance": camLayers['ffg_3h_to_9h_refs'],
-        "<b>SuperEnsemble</b>: Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_refs'],
-        "<b>SuperEnsemble</b>: Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_refs'],
-        "<b>SuperEnsemble</b>: Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_refs'],
-        "<b>SuperEnsemble</b>: Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_refs']
+        "<b>SuperEnsemble</b>: Max FFG Exceedance": camLayers['ffg_3h_to_9h_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance": camLayers['ffg_3h_to_9h_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance": camLayers['ffg_3h_to_9h_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_refs']
     },
     "CAM Nowcasts (+9h to +15h)": {
-        "<b>SuperEnsemble</b>: Flash Flood Guidance": camLayers['ffg_9h_to_15h_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Flash Flood Guidance": camLayers['ffg_9h_to_15h_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Flash Flood Guidance": camLayers['ffg_9h_to_15h_refs'],
-        "<b>SuperEnsemble</b>: Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_refs'],
-        "<b>SuperEnsemble</b>: Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_refs'],
-        "<b>SuperEnsemble</b>: Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_refs'],
-        "<b>SuperEnsemble</b>: Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_refs']
+        "<b>SuperEnsemble</b>: Max FFG Exceedance": camLayers['ffg_9h_to_15h_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance": camLayers['ffg_9h_to_15h_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance": camLayers['ffg_9h_to_15h_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_refs'],
+        "<b>SuperEnsemble</b>: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_super'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_href'],
+        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_refs']
     },
     "RAP Mesoanalysis (Real-Time)": {
         "Precipitable Water (PWAT)": pwatLayer,
