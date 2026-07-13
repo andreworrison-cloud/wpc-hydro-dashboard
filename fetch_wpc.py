@@ -120,6 +120,7 @@ def fetch_and_process_mpds():
             continue
             
         zip_filename = f"MPD_{mpd_num:04d}_final.zip"
+        
         zip_url = f"{MPD_FTP_URL}{zip_filename}?t={int(time.time())}"
             
         z_resp = requests.get(zip_url, headers=NO_CACHE_HEADERS, timeout=30)
@@ -136,16 +137,8 @@ def fetch_and_process_mpds():
                 gdf = gpd.read_file(shp_files[0])
                 gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
                 if gdf.empty: continue
-                
                 if gdf.crs is None: gdf = gdf.set_crs("EPSG:4326", allow_override=True)
                 else: gdf = gdf.to_crs("EPSG:4326")
-                
-                # --- THE GEOMETRY SPAGHETTI FIX ---
-                # 1. buffer(0) snips microscopic zero-width connecting lines from N-AWIPS
-                # 2. explode() separates forced MultiPolygons into independent Polygons
-                gdf.geometry = gdf.geometry.buffer(0)
-                gdf = gdf.explode(index_parts=False)
-                # ----------------------------------
                 
                 col_map = {c.strip().upper(): c for c in gdf.columns}
                 tag_col = next((col_map[c] for c in ["TAG", "SUBJECT", "PROB"] if c in col_map), None)
