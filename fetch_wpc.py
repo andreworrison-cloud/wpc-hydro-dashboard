@@ -87,7 +87,8 @@ def fetch_mpd_times_from_text(mpd_num):
     
     for yr in [now.year, now.year - 1]:
         try:
-            r = requests.get(f"{MPD_TEXT_URL}?md={mpd_num:04d}&yr={yr}", headers=NO_CACHE_HEADERS, timeout=15)
+            # --- Added cache-buster text parameter here ---
+            r = requests.get(f"{MPD_TEXT_URL}?md={mpd_num:04d}&yr={yr}&t={int(time.time())}", headers=NO_CACHE_HEADERS, timeout=15)
             if r.status_code != 200: continue
             
             match = re.search(r'VALID\s+(\d{6})Z?\s*[-–]\s*(\d{6})Z?', r.text, re.IGNORECASE)
@@ -115,14 +116,14 @@ def fetch_and_process_mpds():
             print(f" -> Could not parse official times for {mpd_num:04d} from text. Skipping.")
             continue
             
-        # --- THE TIME-GATE FIX ---
-        # If the current time has passed the expiration time, skip it entirely!
         if utc_now() > expire_dt:
             print(f" -> MPD {mpd_num:04d} has expired (Expired at {expire_dt.strftime('%H%MZ %b %d %Y')}). Purging from data feed.")
             continue
             
         zip_filename = f"MPD_{mpd_num:04d}_final.zip"
-        zip_url = f"{MPD_FTP_URL}{zip_filename}"
+        
+        # --- THE FIX: Added cache-buster timestamp parameter to the ZIP URL ---
+        zip_url = f"{MPD_FTP_URL}{zip_filename}?t={int(time.time())}"
             
         z_resp = requests.get(zip_url, headers=NO_CACHE_HEADERS, timeout=30)
         if z_resp.status_code != 200:
