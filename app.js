@@ -414,11 +414,18 @@ async function fetchWPCData() {
             return getRank(a) - getRank(b); 
         });
         
+        // --- Clear existing polygons before drawing the updated ones ---
+        eroLayer.clearLayers();
+        mpdLayer.clearLayers();
+        
         if (eroFeatures.length > 0) eroLayer.addData(eroFeatures);
         if (mpdFeatures.length > 0) mpdLayer.addData(mpdFeatures);
     } catch (error) { console.error("Error fetching WPC GeoJSON:", error); }
 }
+
+// Fetch immediately on load, then auto-refresh every 5 minutes
 fetchWPCData();
+setInterval(fetchWPCData, 5 * 60 * 1000);
 
 // --- RAP MESOANALYSIS LAYERS ---
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
