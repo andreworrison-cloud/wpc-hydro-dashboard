@@ -518,83 +518,6 @@ const eroCamLayers = {};
     });
 });
 
-
-// --- TIME AND LEGEND UI CONTROLS ---
-const timeControl = L.control({position: 'bottomright'});
-timeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'rap-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-timeControl.addTo(map);
-
-const mrmsTimeControl = L.control({position: 'bottomright'});
-mrmsTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'mrms-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-mrmsTimeControl.addTo(map);
-
-// New Time Box for CAM Models
-const camTimeControl = L.control({position: 'bottomright'});
-camTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'cam-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-camTimeControl.addTo(map);
-
-// NEW: Time Box for Radar / Satellite Looping
-const radarTimeControl = L.control({position: 'bottomright'});
-radarTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'radar-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-radarTimeControl.addTo(map);
-
-const legendControl = L.control({position: 'bottomright'});
-legendControl.onAdd = function () {
-    const div = L.DomUtil.create('div', 'legend-box');
-    div.id = 'legend-container';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.padding = '10px';
-    div.style.borderRadius = '6px';
-    div.style.display = 'none'; 
-    div.innerHTML = `<img id="legend-img" src="" style="max-width: 300px; display: none;"><div id="legend-html" style="display: none;"></div>`;
-    return div;
-};
-legendControl.addTo(map);
-
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
@@ -608,9 +531,8 @@ function fetchRAPMetadata() {
             rapValidTime = data.valid_time || "Unknown";
             rapValidTimeF03 = data.valid_time_f03 || "Unknown"; 
 
-            // Update Timebox if currently visible
             const timeBox = document.getElementById('rap-time-box');
-            if (timeBox.style.display === 'block') {
+            if (timeBox && timeBox.style.display === 'block') {
                 let isF03 = false;
                 [pwatF03Layer, sbcapeF03Layer, mlcapeF03Layer, mucapeF03Layer, trans850F03Layer].forEach(l => {
                     if(map.hasLayer(l)) isF03 = true;
@@ -691,20 +613,6 @@ function formatUTC(date) {
     return `${m} ${d}, ${h}${min}Z`;
 }
 
-// Update loop timestamps dynamically as player plays
-map.timeDimension.on('timeload', function() {
-    const radarTimeBox = document.getElementById('radar-time-box');
-    if (radarTimeBox && radarTimeBox.style.display === 'block') {
-        if (map.hasLayer(radarTimeLayer)) {
-            const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
-            radarTimeBox.innerHTML = `
-                <strong>NEXRAD Radar Loop</strong><br>
-                <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
-            `;
-        }
-    }
-});
-
 // --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
 function getValidTimeRange(cycleStr, windowStr) {
     if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
@@ -727,7 +635,98 @@ function getValidTimeRange(cycleStr, windowStr) {
     return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
 }
 
-// --- RAP LEGEND MAPPING DICTIONARY ---
+// --- NEW STACKABLE LEGENDS & TIME BOX UI ---
+
+// Create Leaflet Controls for Time Boxes
+const rapTimeControl = L.control({position: 'bottomright'});
+rapTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'rap-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+rapTimeControl.addTo(map);
+
+const mrmsTimeControl = L.control({position: 'bottomright'});
+mrmsTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'mrms-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+mrmsTimeControl.addTo(map);
+
+const camTimeControl = L.control({position: 'bottomright'});
+camTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'cam-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+camTimeControl.addTo(map);
+
+const radarTimeControl = L.control({position: 'bottomright'});
+radarTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'radar-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+radarTimeControl.addTo(map);
+
+// The newly architected invisible stacked legend container
+const legendControl = L.control({position: 'bottomright'});
+legendControl.onAdd = function () {
+    const div = L.DomUtil.create('div', 'legend-container');
+    div.id = 'legend-container';
+    div.style.background = 'transparent';
+    div.style.padding = '0px';
+    div.style.boxShadow = 'none';
+    div.style.display = 'none'; 
+    return div;
+};
+legendControl.addTo(map);
+
+// Update radar loop timestamps dynamically as player plays
+map.timeDimension.on('timeload', function() {
+    const radarTimeBox = document.getElementById('radar-time-box');
+    if (radarTimeBox && radarTimeBox.style.display === 'block') {
+        const hasRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar'));
+        if (hasRadar) {
+            const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
+            radarTimeBox.innerHTML = `
+                <strong>NEXRAD Radar Loop</strong><br>
+                <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
+            `;
+        }
+    }
+});
+
+// --- LEGEND DICTIONARIES AND HTML BLOCKS ---
 const rapLegendMapping = {
     "Precipitable Water (PWAT)": "static/leg_pwat.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": "static/leg_pwat_diff.png",
@@ -760,9 +759,8 @@ const rapLegendMapping = {
     "250mb Divergence": "static/leg_div.png"
 };
 
-// --- HTML LEGEND BLOCKS ---
 const camLegendQPF = `
-    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px; max-width: 250px;">
         <strong>Max Hourly QPF Probability (%)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
             <div style="background: #ffffcc; flex: 1; padding: 2px 5px;">10</div>
@@ -775,7 +773,7 @@ const camLegendQPF = `
 `;
 
 const camLegendFFG = `
-    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px; max-width: 250px;">
         <strong>Max FFG Exceedance Probability (%)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
             <div style="background: #ffffb2; flex: 1; padding: 2px 5px;">10</div>
@@ -852,7 +850,7 @@ const eroLegendHTML = `
 `;
 
 const ffdLegendHTML = `
-    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 210px; text-align: left;">
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 200px; text-align: left;">
         <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">FFD Inferred Impacts</strong>
         <div style="display: flex; align-items: center; margin-bottom: 3px;">
             <div style="width: 15px; height: 15px; background: #00ff00; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
@@ -877,48 +875,75 @@ const ffdLegendHTML = `
     </div>
 `;
 
-const mrmsLegendQPE = `
-    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 12px; min-width: 240px;">
-        <strong>MRMS QPE Rainfall (inches)</strong><br>
-        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 15px;">
-            <div style="background: #7fff00; flex: 1;" title="0.1 inches"></div>
-            <div style="background: #00cd00; flex: 1;" title="0.5 inches"></div>
-            <div style="background: #0000ff; flex: 1;" title="1.0 inches"></div>
-            <div style="background: #ffff00; flex: 1;" title="2.0 inches"></div>
-            <div style="background: #ff7f00; flex: 1;" title="3.0 inches"></div>
-            <div style="background: #ff0000; flex: 1;" title="5.0 inches"></div>
-            <div style="background: #ff00ff; flex: 1;" title="10.0+ inches"></div>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
-            <span>0.1"</span>
-            <span>0.5"</span>
-            <span>1.0"</span>
-            <span>2.0"</span>
-            <span>3.0"</span>
-            <span>5.0"</span>
-            <span>10"+</span>
-        </div>
-    </div>
-`;
+// Global tracker for currently active layers
+let activeLayerNames = new Set();
 
-// Map overlay handling
-map.on('overlayadd', function(eventLayer) {
+function updateLegends() {
     const legendContainer = document.getElementById('legend-container');
-    const legendImg = document.getElementById('legend-img');
-    const legendHtml = document.getElementById('legend-html');
+    legendContainer.innerHTML = '';
+    let hasLegend = false;
+
+    // Helper function to dynamically stack the legends
+    const addLegendBlock = (htmlContent) => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '5px'; 
+        div.innerHTML = htmlContent;
+        legendContainer.appendChild(div);
+        hasLegend = true;
+    };
+
+    // Strict top-to-bottom hierarchy based on your menu layout
+    if (activeLayerNames.has('Active Hydro Warnings & Advisories')) addLegendBlock(hazardLegendHTML);
+    if (activeLayerNames.has('Active Hydro Watches')) addLegendBlock(watchLegendHTML);
+    if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
+    if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
+    if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
+    
+    // MRMS Legend: Fetched dynamically from Iowa State to match WMS background perfectly
+    const hasMRMS = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE'));
+    if (hasMRMS) {
+        addLegendBlock(`
+            <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; max-width: 250px;">
+                <strong style="font-size: 13px;">MRMS QPE (inches)</strong><br>
+                <img src="https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi?VER=1.3.0&SERVICE=WMS&REQUEST=GetLegendGraphic&LAYER=mrms_p24h&FORMAT=image/png" style="max-width: 100%; margin-top: 5px; border: 1px solid #ccc;">
+            </div>
+        `);
+    }
+
+    const activeCAM = Array.from(activeLayerNames).find(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
+    if (activeCAM) {
+        if (activeCAM.includes('Max FFG Exceedance')) {
+            addLegendBlock(camLegendFFG);
+        } else {
+            addLegendBlock(camLegendQPF);
+        }
+    }
+
+    const activeRAP = Array.from(activeLayerNames).find(name => rapLegendMapping[name]);
+    if (activeRAP) {
+        addLegendBlock(`
+            <div style="background: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px;">
+                <img src="${rapLegendMapping[activeRAP]}" style="max-width: 300px; display: block;">
+            </div>
+        `);
+    }
+
+    // Toggle container visibility
+    legendContainer.style.display = hasLegend ? 'block' : 'none';
+}
+
+// Map overlay handling dynamically updates Sets and GUI
+map.on('overlayadd', function(eventLayer) {
+    activeLayerNames.add(eventLayer.name);
+    updateLegends();
+
     const rapTimeBox = document.getElementById('rap-time-box');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
-    
+
     // 1. RAP Legend Handler
     if (rapLegendMapping[eventLayer.name]) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'rgba(0, 0, 0, 0.7)';
-        legendHtml.style.display = 'none';
-        legendImg.style.display = 'block';
-        legendImg.src = rapLegendMapping[eventLayer.name];
-
         if (eventLayer.name.includes('+3h Forecast')) {
             rapTimeBox.innerHTML = `<strong>${rapValidTimeF03}</strong>`;
         } else {
@@ -927,14 +952,8 @@ map.on('overlayadd', function(eventLayer) {
         rapTimeBox.style.display = 'block';
     }
     
-    // 2. MRMS QPE Handler (With Custom Rain Scale HTML Legend)
+    // 2. MRMS Handler
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent'; 
-        legendImg.style.display = 'none';
-        legendHtml.style.display = 'block';
-        legendHtml.innerHTML = mrmsLegendQPE;
-        
         let hours = 1;
         if (eventLayer.name.includes('24-Hour')) hours = 24;
         if (eventLayer.name.includes('48-Hour')) hours = 48;
@@ -946,17 +965,9 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.style.display = 'block';
     }
 
-    // 3. CAM HTML Legend Handler (Nowcasts & ERO)
+    // 3. CAM Handler
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
-        // Double check we are on a raster CAM layer and not the Day 1 ERO vector layer
         if (!eventLayer.name.includes('Real-Time')) {
-            legendContainer.style.display = 'block';
-            legendContainer.style.background = 'transparent'; 
-            legendImg.style.display = 'none';
-            legendHtml.style.display = 'block';
-            
-            legendHtml.innerHTML = eventLayer.name.includes('Max FFG Exceedance') ? camLegendFFG : camLegendQPF;
-            
             let titleText = "";
             let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
             let targetCycleForMath = camCycles.href; 
@@ -974,15 +985,15 @@ map.on('overlayadd', function(eventLayer) {
             }
 
             let validRangeStr = "";
-
             if (eventLayer.name.includes('[ERO]')) {
                 titleText = titleText + " (Day 1 ERO)";
                 validRangeStr = eroValidRangeStr;
             } else {
                 let currentWindow = "+3h to +9h";
+                if (eventLayer.name.includes('+9h to +15h')) currentWindow = "+9h to +15h";
                 let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
-                if (matchedKey) {
-                    currentWindow = matchedKey.includes('3h_to_9h') ? '+3h to +9h' : '+9h to +15h';
+                if (matchedKey && matchedKey.includes('9h_to_15h')) {
+                    currentWindow = '+9h to +15h';
                 }
                 validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
             }
@@ -1003,52 +1014,7 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
-    // 4. Hydro Warnings/Advisories Legend Handler
-    if (eventLayer.name.includes('Active Hydro Warnings')) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent';
-        legendImg.style.display = 'none';
-        legendHtml.style.display = 'block';
-        legendHtml.innerHTML = hazardLegendHTML;
-    }
-
-    // 5. Hydro Watches Legend Handler
-    if (eventLayer.name.includes('Active Hydro Watches')) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent';
-        legendImg.style.display = 'none';
-        legendHtml.style.display = 'block';
-        legendHtml.innerHTML = watchLegendHTML;
-    }
-
-    // 6. MPDs Legend Handler
-    if (eventLayer.name.includes('WPC Active MPDs')) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent';
-        legendImg.style.display = 'none';
-        legendHtml.style.display = 'block';
-        legendHtml.innerHTML = mpdLegendHTML;
-    }
-
-    // 7. Day 1 ERO Vector Legend Handler
-    if (eventLayer.name.includes('Day 1 ERO (Real-Time)')) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent';
-        legendImg.style.display = 'none';
-        legendHtml.style.display = 'block';
-        legendHtml.innerHTML = eroLegendHTML;
-    }
-
-    // 8. FFD Contours Legend Handler
-    if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
-        legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent';
-        legendImg.style.display = 'none';
-        legendHtml.style.display = 'block';
-        legendHtml.innerHTML = ffdLegendHTML;
-    }
-
-    // 9. NEXRAD Radar Timestamp Overlay Handler
+    // 4. NEXRAD Radar Timestamp
     if (eventLayer.name.includes('NEXRAD Radar')) {
         radarTimeBox.style.display = 'block';
         const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
@@ -1058,7 +1024,7 @@ map.on('overlayadd', function(eventLayer) {
         `;
     }
 
-    // 10. GOES Satellite Timestamp Overlay Handler
+    // 5. GOES Satellite Timestamp
     if (eventLayer.name.includes('GOES-')) {
         radarTimeBox.style.display = 'block';
         radarTimeBox.innerHTML = `
@@ -1070,37 +1036,32 @@ map.on('overlayadd', function(eventLayer) {
 });
 
 map.on('overlayremove', function(eventLayer) {
-    const legendContainer = document.getElementById('legend-container');
+    activeLayerNames.delete(eventLayer.name);
+    updateLegends();
+
     const rapTimeBox = document.getElementById('rap-time-box');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
-        legendContainer.style.display = 'none';
-        rapTimeBox.style.display = 'none';
-    }
-    if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
-        legendContainer.style.display = 'none';
-        mrmsTimeBox.style.display = 'none';
-    }
-    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
-        legendContainer.style.display = 'none';
-        camTimeBox.style.display = 'none';
+        const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
+        if (!hasRAP) rapTimeBox.style.display = 'none';
     }
     
-    // Handle Active Alert / MPD / ERO / FFD Legend Removals
-    if (eventLayer.name.includes('Active Hydro Warnings') || 
-        eventLayer.name.includes('Active Hydro Watches') || 
-        eventLayer.name.includes('WPC Active MPDs') || 
-        eventLayer.name.includes('Day 1 ERO (Real-Time)') ||
-        eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
-        legendContainer.style.display = 'none';
+    if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
+        const hasMRMS = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE'));
+        if (!hasMRMS) mrmsTimeBox.style.display = 'none';
     }
-
-    // Handle Radar/Satellite Timebox Removals
+    
+    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
+        const hasCAM = Array.from(activeLayerNames).some(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
+        if (!hasCAM) camTimeBox.style.display = 'none';
+    }
+    
     if (eventLayer.name.includes('NEXRAD Radar') || eventLayer.name.includes('GOES-')) {
-        radarTimeBox.style.display = 'none';
+        const hasSatRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar') || name.includes('GOES-'));
+        if (!hasSatRadar) radarTimeBox.style.display = 'none';
     }
 });
 
