@@ -148,14 +148,13 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 radarTimeLayer.addTo(map);
 
-// --- MRMS QPE LAYERS ---
+// --- MRMS & SATELLITE QPE LAYERS ---
 const mrmsOptions = { format: 'image/png', transparent: true, opacity: 0.65, attribution: "Data © IEM / NCEP" };
 const mrms1hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p1h' });
 const mrms24hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p24h' });
 const mrms48hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p48h' });
 const mrms72hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p72h' });
 
-// --- STATIC SATELLITE LAYERS ---
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
@@ -163,6 +162,15 @@ const goesEastIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wm
 const goesWestVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesWestWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch09' });
 const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_west.cgi", { ...satOptions, layers: 'conus_ch13' });
+
+// --- AUTO-REFRESH WMS LAYERS ---
+function refreshWMSLayers() {
+    const wmsLayersToUpdate = [mrms1hr, mrms24hr, mrms48hr, mrms72hr, goesEastVis, goesEastWV, goesEastIR, goesWestVis, goesWestWV, goesWestIR];
+    wmsLayersToUpdate.forEach(layer => {
+        layer.setParams({_t: new Date().getTime()}, false); // false prevents layer completely disappearing while loading
+    });
+}
+setInterval(refreshWMSLayers, 5 * 60 * 1000); // 5 Minutes
 
 // --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
@@ -236,6 +244,10 @@ async function fetchNWSAlerts() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
+        // --- Clear existing alerts before adding fresh ones ---
+        warningsLayer.clearLayers();
+        watchesLayer.clearLayers();
+        
         if (data && data.features) {
             const warningFeatures = data.features.filter(f => f.properties && f.properties.prod_type && !f.properties.prod_type.includes("Watch"));
             const watchFeatures = data.features.filter(f => f.properties && f.properties.prod_type && f.properties.prod_type.includes("Watch"));
@@ -245,6 +257,7 @@ async function fetchNWSAlerts() {
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
+setInterval(fetchNWSAlerts, 5 * 60 * 1000); // 5 Minutes
 
 // --- MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
 const ffdLayer = L.layerGroup();
@@ -414,7 +427,6 @@ async function fetchWPCData() {
             return getRank(a) - getRank(b); 
         });
         
-        // --- Clear existing polygons before drawing the updated ones ---
         eroLayer.clearLayers();
         mpdLayer.clearLayers();
         
@@ -423,9 +435,8 @@ async function fetchWPCData() {
     } catch (error) { console.error("Error fetching WPC GeoJSON:", error); }
 }
 
-// Fetch immediately on load, then auto-refresh every 5 minutes
 fetchWPCData();
-setInterval(fetchWPCData, 5 * 60 * 1000);
+setInterval(fetchWPCData, 5 * 60 * 1000); // 5 Minutes
 
 // --- RAP MESOANALYSIS LAYERS ---
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
@@ -466,6 +477,14 @@ const meanWindLayer = L.imageOverlay('static/rap_mean_wind.png', rapBounds, {zIn
 const vort500Layer = L.imageOverlay('static/rap_vort500.png', rapBounds, {zIndex: 10});
 const diffAdvLayer = L.imageOverlay('static/rap_diff_adv.png', rapBounds, {zIndex: 10});
 const div250Layer = L.imageOverlay('static/rap_div250.png', rapBounds, {zIndex: 10});
+
+const allRapLayers = [
+    pwatLayer, sbcapeLayer, mlcapeLayer, mucapeLayer, trans850Layer,
+    pwatDiffLayer, sbcapeDiffLayer, mlcapeDiffLayer, mucapeDiffLayer, trans850DiffLayer,
+    pwatF03Layer, sbcapeF03Layer, mlcapeF03Layer, mucapeF03Layer, trans850F03Layer,
+    lrsfc3Layer, lr75Layer, scpLayer, mfcLayer, f925Layer, f850Layer, effShearLayer,
+    corfidiUpLayer, corfidiDownLayer, trans700Layer, meanWindLayer, vort500Layer, diffAdvLayer, div250Layer
+];
 
 // --- NEW CAM NOWCAST ENSEMBLE LAYERS ---
 const camLayers = {};
@@ -550,63 +569,92 @@ legendControl.onAdd = function () {
 };
 legendControl.addTo(map);
 
-// --- RAP METADATA FETCH ---
+// --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
-
-fetch('static/rap_metadata.json?t=' + new Date().getTime())
-    .then(r => r.json())
-    .then(data => {
-        rapValidTime = data.valid_time || "Unknown";
-        rapValidTimeF03 = data.valid_time_f03 || "Unknown"; 
-
-        const timeBox = document.getElementById('rap-time-box');
-        timeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
-        timeBox.style.display = 'block';
-
-        if (data.bounds) {
-            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-            [pwatLayer, pwatDiffLayer, pwatF03Layer, sbcapeLayer, sbcapeDiffLayer, sbcapeF03Layer, 
-             mlcapeLayer, mlcapeDiffLayer, mlcapeF03Layer, mucapeLayer, mucapeDiffLayer, mucapeF03Layer, 
-             lrsfc3Layer, lr75Layer, scpLayer, mfcLayer, f925Layer, f850Layer, effShearLayer, 
-             corfidiUpLayer, corfidiDownLayer, trans850Layer, trans850DiffLayer, trans850F03Layer, 
-             trans700Layer, meanWindLayer, vort500Layer, diffAdvLayer, div250Layer].forEach(layer => layer.setBounds(exactBounds));
-        }
-    })
-    .catch(err => console.log("RAP metadata not found yet."));
-
-// --- CAM METADATA FETCH ---
 let camCycles = { href: "Unknown", refs: "Unknown" };
-
-fetch('static/cam_metadata.json?t=' + new Date().getTime())
-    .then(r => r.json())
-    .then(data => {
-        if (data.valid_time) {
-            const match = data.valid_time.match(/HREF (\d{2})Z \| REFS (\d{2})Z/);
-            if (match) {
-                camCycles.href = match[1]; 
-                camCycles.refs = match[2];
-            }
-        }
-        if (data.bounds) {
-            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-            Object.values(camLayers).forEach(layer => layer.setBounds(exactBounds));
-        }
-    })
-    .catch(err => console.log("CAM metadata not found yet."));
-
-// --- ERO CAM METADATA FETCH ---
 let eroValidRangeStr = "Unknown";
-fetch('static/ero_cam_metadata.json?t=' + new Date().getTime())
-    .then(r => r.json())
-    .then(data => {
-        if (data.ero_window_str) eroValidRangeStr = data.ero_window_str;
-        if (data.bounds) {
-            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-            Object.values(eroCamLayers).forEach(layer => layer.setBounds(exactBounds));
-        }
-    })
-    .catch(err => console.log("ERO CAM metadata not found yet."));
+
+function fetchRAPMetadata() {
+    fetch('static/rap_metadata.json?t=' + new Date().getTime())
+        .then(r => r.json())
+        .then(data => {
+            rapValidTime = data.valid_time || "Unknown";
+            rapValidTimeF03 = data.valid_time_f03 || "Unknown"; 
+
+            // Update Timebox if currently visible
+            const timeBox = document.getElementById('rap-time-box');
+            if (timeBox.style.display === 'block') {
+                let isF03 = false;
+                [pwatF03Layer, sbcapeF03Layer, mlcapeF03Layer, mucapeF03Layer, trans850F03Layer].forEach(l => {
+                    if(map.hasLayer(l)) isF03 = true;
+                });
+                timeBox.innerHTML = `<strong>${isF03 ? rapValidTimeF03 : rapValidTime}</strong>`;
+            }
+
+            if (data.bounds) {
+                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+                allRapLayers.forEach(layer => {
+                    layer.setBounds(exactBounds);
+                    const base = layer._url.split('?')[0]; // Strip old query param
+                    layer.setUrl(base + '?t=' + new Date().getTime()); // Force PNG refresh
+                });
+            }
+        })
+        .catch(err => console.log("RAP metadata not found yet."));
+}
+
+function fetchCAMMetadata() {
+    fetch('static/cam_metadata.json?t=' + new Date().getTime())
+        .then(r => r.json())
+        .then(data => {
+            if (data.valid_time) {
+                const match = data.valid_time.match(/HREF (\d{2})Z \| REFS (\d{2})Z/);
+                if (match) {
+                    camCycles.href = match[1]; 
+                    camCycles.refs = match[2];
+                }
+            }
+            if (data.bounds) {
+                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+                Object.values(camLayers).forEach(layer => {
+                    layer.setBounds(exactBounds);
+                    const base = layer._url.split('?')[0];
+                    layer.setUrl(base + '?t=' + new Date().getTime());
+                });
+            }
+        })
+        .catch(err => console.log("CAM metadata not found yet."));
+}
+
+function fetchEROCAMMetadata() {
+    fetch('static/ero_cam_metadata.json?t=' + new Date().getTime())
+        .then(r => r.json())
+        .then(data => {
+            if (data.ero_window_str) eroValidRangeStr = data.ero_window_str;
+            if (data.bounds) {
+                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+                Object.values(eroCamLayers).forEach(layer => {
+                    layer.setBounds(exactBounds);
+                    const base = layer._url.split('?')[0];
+                    layer.setUrl(base + '?t=' + new Date().getTime());
+                });
+            }
+        })
+        .catch(err => console.log("ERO CAM metadata not found yet."));
+}
+
+// Initial fetch on load
+fetchRAPMetadata();
+fetchCAMMetadata();
+fetchEROCAMMetadata();
+
+// Auto-Refresh generated PNGs every 15 minutes
+setInterval(() => {
+    fetchRAPMetadata();
+    fetchCAMMetadata();
+    fetchEROCAMMetadata();
+}, 15 * 60 * 1000); 
 
 function formatUTC(date) {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -785,10 +833,9 @@ map.on('overlayadd', function(eventLayer) {
             validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
         }
 
-        // --- NEW: DYNAMIC PRODUCT NAME EXTRACTOR ---
+        // --- DYNAMIC PRODUCT NAME EXTRACTOR ---
         let productName = "Probabilistic Guidance";
         if (eventLayer.name.includes(':')) {
-            // This grabs everything after the colon in the layer menu name
             productName = eventLayer.name.split(':')[1].trim(); 
         }
 
