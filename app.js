@@ -120,19 +120,9 @@ map.on('baselayerchange', function(e) {
     }
 });
 
-// --- TIME LOOP LOGIC ---
-const endTime = new Date();
-endTime.setMinutes(Math.floor(endTime.getMinutes() / 10) * 10);
-endTime.setSeconds(0);
-endTime.setMilliseconds(0);
-
-const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000);
-const timeRange = startTime.toISOString() + "/" + endTime.toISOString();
-
+// --- TIME LOOP LOGIC (NOW AUTO-UPDATING) ---
 map.timeDimension = L.timeDimension({
-    timeInterval: timeRange,
-    period: "PT10M", 
-    currentTime: endTime.getTime()
+    period: "PT10M"
 });
 
 L.control.timeDimension({
@@ -140,6 +130,28 @@ L.control.timeDimension({
     autoPlay: true,
     playerOptions: { transitionTime: 500, loop: true }
 }).addTo(map);
+
+function updateTimeDimension() {
+    const endTime = new Date();
+    endTime.setMinutes(Math.floor(endTime.getMinutes() / 10) * 10);
+    endTime.setSeconds(0);
+    endTime.setMilliseconds(0);
+
+    const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000);
+    
+    let newTimes = [];
+    let curr = new Date(startTime);
+    while (curr <= endTime) {
+        newTimes.push(curr.getTime());
+        curr = new Date(curr.getTime() + 10 * 60 * 1000); 
+    }
+    
+    // Pushes the dynamically sliding 2-hour window to the player
+    map.timeDimension.setAvailableTimes(newTimes, 'replace');
+}
+
+updateTimeDimension();
+setInterval(updateTimeDimension, 10 * 60 * 1000); // Re-calculates and shifts time limits every 10 minutes
 
 // --- LOOPING RADAR LAYER ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
@@ -165,7 +177,8 @@ const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wm
 
 // --- AUTO-REFRESH WMS LAYERS ---
 function refreshWMSLayers() {
-    const wmsLayersToUpdate = [mrms1hr, mrms24hr, mrms48hr, mrms72hr, goesEastVis, goesEastWV, goesEastIR, goesWestVis, goesWestWV, goesWestIR];
+    // Added radarWMS so base radar tiles flush correctly
+    const wmsLayersToUpdate = [radarWMS, mrms1hr, mrms24hr, mrms48hr, mrms72hr, goesEastVis, goesEastWV, goesEastIR, goesWestVis, goesWestWV, goesWestIR];
     wmsLayersToUpdate.forEach(layer => {
         layer.setParams({_t: new Date().getTime()}, false); 
     });
@@ -239,7 +252,8 @@ watchesLayer.addTo(map);
 async function fetchNWSAlerts() {
     try {
         const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
-        const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson`;
+        // Added cache-busting timestamp parameter to force NOAA API to fetch fresh data
+        const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson&t=${new Date().getTime()}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
@@ -769,7 +783,6 @@ map.on('overlayadd', function(eventLayer) {
             rapTimeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
         }
         
-        // --- NEW: Reveal the time box when layer is toggled ---
         rapTimeBox.style.display = 'block';
     }
     
@@ -860,8 +873,6 @@ map.on('overlayremove', function(eventLayer) {
     
     if (rapLegendMapping[eventLayer.name]) {
         legendContainer.style.display = 'none';
-        
-        // --- NEW: Hide the time box when layer is untoggled ---
         rapTimeBox.style.display = 'none';
     }
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
