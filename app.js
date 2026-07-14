@@ -167,7 +167,7 @@ const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wm
 function refreshWMSLayers() {
     const wmsLayersToUpdate = [mrms1hr, mrms24hr, mrms48hr, mrms72hr, goesEastVis, goesEastWV, goesEastIR, goesWestVis, goesWestWV, goesWestIR];
     wmsLayersToUpdate.forEach(layer => {
-        layer.setParams({_t: new Date().getTime()}, false); // false prevents layer completely disappearing while loading
+        layer.setParams({_t: new Date().getTime()}, false); 
     });
 }
 setInterval(refreshWMSLayers, 5 * 60 * 1000); // 5 Minutes
@@ -244,7 +244,6 @@ async function fetchNWSAlerts() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
-        // --- Clear existing alerts before adding fresh ones ---
         warningsLayer.clearLayers();
         watchesLayer.clearLayers();
         
@@ -596,8 +595,8 @@ function fetchRAPMetadata() {
                 const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
                 allRapLayers.forEach(layer => {
                     layer.setBounds(exactBounds);
-                    const base = layer._url.split('?')[0]; // Strip old query param
-                    layer.setUrl(base + '?t=' + new Date().getTime()); // Force PNG refresh
+                    const base = layer._url.split('?')[0]; 
+                    layer.setUrl(base + '?t=' + new Date().getTime()); 
                 });
             }
         })
@@ -769,6 +768,9 @@ map.on('overlayadd', function(eventLayer) {
         } else {
             rapTimeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
         }
+        
+        // --- NEW: Reveal the time box when layer is toggled ---
+        rapTimeBox.style.display = 'block';
     }
     
     // MRMS HTML Legend Handler
@@ -852,11 +854,15 @@ map.on('overlayadd', function(eventLayer) {
 
 map.on('overlayremove', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
+    const rapTimeBox = document.getElementById('rap-time-box');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         legendContainer.style.display = 'none';
+        
+        // --- NEW: Hide the time box when layer is untoggled ---
+        rapTimeBox.style.display = 'none';
     }
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         legendContainer.style.display = 'none';
