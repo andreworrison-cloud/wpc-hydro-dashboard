@@ -146,7 +146,6 @@ function updateTimeDimension() {
         curr = new Date(curr.getTime() + 10 * 60 * 1000); 
     }
     
-    // Pushes the dynamically sliding 2-hour window to the player
     map.timeDimension.setAvailableTimes(newTimes, 'replace');
 }
 
@@ -177,7 +176,6 @@ const goesWestIR = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wm
 
 // --- AUTO-REFRESH WMS LAYERS ---
 function refreshWMSLayers() {
-    // Added radarWMS so base radar tiles flush correctly
     const wmsLayersToUpdate = [radarWMS, mrms1hr, mrms24hr, mrms48hr, mrms72hr, goesEastVis, goesEastWV, goesEastIR, goesWestVis, goesWestWV, goesWestIR];
     wmsLayersToUpdate.forEach(layer => {
         layer.setParams({_t: new Date().getTime()}, false); 
@@ -252,7 +250,6 @@ watchesLayer.addTo(map);
 async function fetchNWSAlerts() {
     try {
         const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
-        // Added cache-busting timestamp parameter to force NOAA API to fetch fresh data
         const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson&t=${new Date().getTime()}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -569,6 +566,22 @@ camTimeControl.onAdd = function() {
 };
 camTimeControl.addTo(map);
 
+// NEW: Time Box for Radar / Satellite Looping
+const radarTimeControl = L.control({position: 'bottomright'});
+radarTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'radar-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+radarTimeControl.addTo(map);
+
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend-box');
@@ -678,6 +691,20 @@ function formatUTC(date) {
     return `${m} ${d}, ${h}${min}Z`;
 }
 
+// Update loop timestamps dynamically as player plays
+map.timeDimension.on('timeload', function() {
+    const radarTimeBox = document.getElementById('radar-time-box');
+    if (radarTimeBox && radarTimeBox.style.display === 'block') {
+        if (map.hasLayer(radarTimeLayer)) {
+            const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
+            radarTimeBox.innerHTML = `
+                <strong>NEXRAD Radar Loop</strong><br>
+                <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
+            `;
+        }
+    }
+});
+
 // --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
 function getValidTimeRange(cycleStr, windowStr) {
     if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
@@ -700,7 +727,7 @@ function getValidTimeRange(cycleStr, windowStr) {
     return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
 }
 
-// --- NEW CLEAN RAP LEGEND MAPPING DICTIONARY ---
+// --- RAP LEGEND MAPPING DICTIONARY ---
 const rapLegendMapping = {
     "Precipitable Water (PWAT)": "static/leg_pwat.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": "static/leg_pwat_diff.png",
@@ -733,7 +760,7 @@ const rapLegendMapping = {
     "250mb Divergence": "static/leg_div.png"
 };
 
-// --- CAM HTML LEGENDS ---
+// --- HTML LEGEND BLOCKS ---
 const camLegendQPF = `
     <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px;">
         <strong>Max Hourly QPF Probability (%)</strong><br>
@@ -760,6 +787,120 @@ const camLegendFFG = `
     </div>
 `;
 
+const hazardLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 200px; text-align: left;">
+        <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">Hydro Warnings & Advisories</strong>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: red; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Flash Flood Warning</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: green; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Flood Warning</span>
+        </div>
+        <div style="display: flex; align-items: center;">
+            <div style="width: 15px; height: 15px; background: lightgreen; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Flood Advisory</span>
+        </div>
+    </div>
+`;
+
+const watchLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 200px; text-align: left;">
+        <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">Hydro Watches</strong>
+        <div style="display: flex; align-items: center;">
+            <div style="width: 15px; height: 15px; background: seagreen; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Flood / Flash Flood Watch</span>
+        </div>
+    </div>
+`;
+
+const mpdLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 200px; text-align: left;">
+        <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">WPC Active MPDs</strong>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 20px; height: 3px; background: transparent; border-top: 3px dashed #800080; margin-right: 8px;"></div>
+            <span>Flash Flood Likely</span>
+        </div>
+        <div style="display: flex; align-items: center;">
+            <div style="width: 20px; height: 3px; background: transparent; border-top: 3px dashed #0000FF; margin-right: 8px;"></div>
+            <span>Flash Flood Possible</span>
+        </div>
+    </div>
+`;
+
+const eroLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 200px; text-align: left;">
+        <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">Day 1 ERO Risks</strong>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #00ff00; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Marginal Risk (MRGL)</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ffff00; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Slight Risk (SLGT)</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ff0000; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Moderate Risk (MDT)</span>
+        </div>
+        <div style="display: flex; align-items: center;">
+            <div style="width: 15px; height: 15px; background: #ff00ff; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>High Risk (HIGH)</span>
+        </div>
+    </div>
+`;
+
+const ffdLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 210px; text-align: left;">
+        <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">FFD Inferred Impacts</strong>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #00ff00; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Monitor</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ffff00; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Advisory</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ffaa00; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Base FFW</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ff0000; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Considerable FFW</span>
+        </div>
+        <div style="display: flex; align-items: center;">
+            <div style="width: 15px; height: 15px; background: #ff00ff; margin-right: 8px; border: 1px solid #333; opacity: 0.6;"></div>
+            <span>Catastrophic FFW</span>
+        </div>
+    </div>
+`;
+
+const mrmsLegendQPE = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 12px; min-width: 240px;">
+        <strong>MRMS QPE Rainfall (inches)</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 15px;">
+            <div style="background: #7fff00; flex: 1;" title="0.1 inches"></div>
+            <div style="background: #00cd00; flex: 1;" title="0.5 inches"></div>
+            <div style="background: #0000ff; flex: 1;" title="1.0 inches"></div>
+            <div style="background: #ffff00; flex: 1;" title="2.0 inches"></div>
+            <div style="background: #ff7f00; flex: 1;" title="3.0 inches"></div>
+            <div style="background: #ff0000; flex: 1;" title="5.0 inches"></div>
+            <div style="background: #ff00ff; flex: 1;" title="10.0+ inches"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
+            <span>0.1"</span>
+            <span>0.5"</span>
+            <span>1.0"</span>
+            <span>2.0"</span>
+            <span>3.0"</span>
+            <span>5.0"</span>
+            <span>10"+</span>
+        </div>
+    </div>
+`;
+
 // Map overlay handling
 map.on('overlayadd', function(eventLayer) {
     const legendContainer = document.getElementById('legend-container');
@@ -768,8 +909,9 @@ map.on('overlayadd', function(eventLayer) {
     const rapTimeBox = document.getElementById('rap-time-box');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
+    const radarTimeBox = document.getElementById('radar-time-box');
     
-    // RAP Legend Handler
+    // 1. RAP Legend Handler
     if (rapLegendMapping[eventLayer.name]) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'rgba(0, 0, 0, 0.7)';
@@ -782,23 +924,21 @@ map.on('overlayadd', function(eventLayer) {
         } else {
             rapTimeBox.innerHTML = `<strong>${rapValidTime}</strong>`;
         }
-        
         rapTimeBox.style.display = 'block';
     }
     
-    // MRMS HTML Legend Handler
+    // 2. MRMS QPE Handler (With Custom Rain Scale HTML Legend)
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         legendContainer.style.display = 'block';
         legendContainer.style.background = 'transparent'; 
         legendImg.style.display = 'none';
         legendHtml.style.display = 'block';
+        legendHtml.innerHTML = mrmsLegendQPE;
         
         let hours = 1;
         if (eventLayer.name.includes('24-Hour')) hours = 24;
         if (eventLayer.name.includes('48-Hour')) hours = 48;
         if (eventLayer.name.includes('72-Hour')) hours = 72;
-
-        legendHtml.innerHTML = `<div style="background: white; padding: 10px; border-radius: 5px; font-weight: bold; color: black; font-family: sans-serif; font-size: 14px; text-align: center;">Precip Scale Active<br>(${hours}-Hour)</div>`;
         
         const now = new Date();
         const start = new Date(now.getTime() - (hours * 60 * 60 * 1000));
@@ -806,62 +946,126 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.style.display = 'block';
     }
 
-    // CAM HTML Legend Handler (Nowcasts & ERO)
+    // 3. CAM HTML Legend Handler (Nowcasts & ERO)
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
+        // Double check we are on a raster CAM layer and not the Day 1 ERO vector layer
+        if (!eventLayer.name.includes('Real-Time')) {
+            legendContainer.style.display = 'block';
+            legendContainer.style.background = 'transparent'; 
+            legendImg.style.display = 'none';
+            legendHtml.style.display = 'block';
+            
+            legendHtml.innerHTML = eventLayer.name.includes('Max FFG Exceedance') ? camLegendFFG : camLegendQPF;
+            
+            let titleText = "";
+            let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
+            let targetCycleForMath = camCycles.href; 
+            
+            if (eventLayer.name.includes('SuperEnsemble')) {
+                titleText = "SuperEnsemble Blend";
+            } else if (eventLayer.name.includes('HREF')) {
+                titleText = "HREF Only";
+                cycleText = `Latest Run: ${camCycles.href}Z`;
+                targetCycleForMath = camCycles.href;
+            } else if (eventLayer.name.includes('REFS')) {
+                titleText = "REFS Only";
+                cycleText = `Latest Run: ${camCycles.refs}Z`;
+                targetCycleForMath = camCycles.refs;
+            }
+
+            let validRangeStr = "";
+
+            if (eventLayer.name.includes('[ERO]')) {
+                titleText = titleText + " (Day 1 ERO)";
+                validRangeStr = eroValidRangeStr;
+            } else {
+                let currentWindow = "+3h to +9h";
+                let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
+                if (matchedKey) {
+                    currentWindow = matchedKey.includes('3h_to_9h') ? '+3h to +9h' : '+9h to +15h';
+                }
+                validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
+            }
+
+            let productName = "Probabilistic Guidance";
+            if (eventLayer.name.includes(':')) {
+                productName = eventLayer.name.split(':')[1].trim(); 
+            }
+
+            camTimeBox.innerHTML = `
+                <strong>${titleText}</strong><br>
+                <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">${productName}</span><br>
+                <span style="font-size: 0.9em;">${cycleText}</span>
+                <hr style="margin: 5px 0; border-color: #555;">
+                <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
+            `;
+            camTimeBox.style.display = 'block';
+        }
+    }
+
+    // 4. Hydro Warnings/Advisories Legend Handler
+    if (eventLayer.name.includes('Active Hydro Warnings')) {
         legendContainer.style.display = 'block';
-        legendContainer.style.background = 'transparent'; 
+        legendContainer.style.background = 'transparent';
         legendImg.style.display = 'none';
         legendHtml.style.display = 'block';
-        
-        // Dynamically insert the exact "Max" wording
-        legendHtml.innerHTML = eventLayer.name.includes('Max FFG Exceedance') ? camLegendFFG : camLegendQPF;
-        
-        // Dynamically adjust the Time Box cycle display
-        let titleText = "";
-        let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
-        let targetCycleForMath = camCycles.href; 
-        
-        if (eventLayer.name.includes('SuperEnsemble')) {
-            titleText = "SuperEnsemble Blend";
-        } else if (eventLayer.name.includes('HREF')) {
-            titleText = "HREF Only";
-            cycleText = `Latest Run: ${camCycles.href}Z`;
-            targetCycleForMath = camCycles.href;
-        } else if (eventLayer.name.includes('REFS')) {
-            titleText = "REFS Only";
-            cycleText = `Latest Run: ${camCycles.refs}Z`;
-            targetCycleForMath = camCycles.refs;
-        }
+        legendHtml.innerHTML = hazardLegendHTML;
+    }
 
-        let validRangeStr = "";
+    // 5. Hydro Watches Legend Handler
+    if (eventLayer.name.includes('Active Hydro Watches')) {
+        legendContainer.style.display = 'block';
+        legendContainer.style.background = 'transparent';
+        legendImg.style.display = 'none';
+        legendHtml.style.display = 'block';
+        legendHtml.innerHTML = watchLegendHTML;
+    }
 
-        // Determine if this is an ERO CAM or a Short-Term Nowcast CAM
-        if (eventLayer.name.includes('[ERO]')) {
-            titleText = titleText + " (Day 1 ERO)";
-            validRangeStr = eroValidRangeStr;
-        } else {
-            let currentWindow = "+3h to +9h";
-            let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
-            if (matchedKey) {
-                currentWindow = matchedKey.includes('3h_to_9h') ? '+3h to +9h' : '+9h to +15h';
-            }
-            validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
-        }
+    // 6. MPDs Legend Handler
+    if (eventLayer.name.includes('WPC Active MPDs')) {
+        legendContainer.style.display = 'block';
+        legendContainer.style.background = 'transparent';
+        legendImg.style.display = 'none';
+        legendHtml.style.display = 'block';
+        legendHtml.innerHTML = mpdLegendHTML;
+    }
 
-        // --- DYNAMIC PRODUCT NAME EXTRACTOR ---
-        let productName = "Probabilistic Guidance";
-        if (eventLayer.name.includes(':')) {
-            productName = eventLayer.name.split(':')[1].trim(); 
-        }
+    // 7. Day 1 ERO Vector Legend Handler
+    if (eventLayer.name.includes('Day 1 ERO (Real-Time)')) {
+        legendContainer.style.display = 'block';
+        legendContainer.style.background = 'transparent';
+        legendImg.style.display = 'none';
+        legendHtml.style.display = 'block';
+        legendHtml.innerHTML = eroLegendHTML;
+    }
 
-        camTimeBox.innerHTML = `
-            <strong>${titleText}</strong><br>
-            <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">${productName}</span><br>
-            <span style="font-size: 0.9em;">${cycleText}</span>
-            <hr style="margin: 5px 0; border-color: #555;">
-            <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
+    // 8. FFD Contours Legend Handler
+    if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
+        legendContainer.style.display = 'block';
+        legendContainer.style.background = 'transparent';
+        legendImg.style.display = 'none';
+        legendHtml.style.display = 'block';
+        legendHtml.innerHTML = ffdLegendHTML;
+    }
+
+    // 9. NEXRAD Radar Timestamp Overlay Handler
+    if (eventLayer.name.includes('NEXRAD Radar')) {
+        radarTimeBox.style.display = 'block';
+        const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
+        radarTimeBox.innerHTML = `
+            <strong>NEXRAD Radar Loop</strong><br>
+            <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
         `;
-        camTimeBox.style.display = 'block';
+    }
+
+    // 10. GOES Satellite Timestamp Overlay Handler
+    if (eventLayer.name.includes('GOES-')) {
+        radarTimeBox.style.display = 'block';
+        radarTimeBox.innerHTML = `
+            <strong>${eventLayer.name}</strong><br>
+            <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">Real-Time Feed</span><br>
+            <span style="font-size: 0.85em; color: #ffeb3b;">Last Checked: ${formatUTC(new Date())}</span>
+        `;
     }
 });
 
@@ -870,6 +1074,7 @@ map.on('overlayremove', function(eventLayer) {
     const rapTimeBox = document.getElementById('rap-time-box');
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
+    const radarTimeBox = document.getElementById('radar-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         legendContainer.style.display = 'none';
@@ -882,6 +1087,20 @@ map.on('overlayremove', function(eventLayer) {
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
         legendContainer.style.display = 'none';
         camTimeBox.style.display = 'none';
+    }
+    
+    // Handle Active Alert / MPD / ERO / FFD Legend Removals
+    if (eventLayer.name.includes('Active Hydro Warnings') || 
+        eventLayer.name.includes('Active Hydro Watches') || 
+        eventLayer.name.includes('WPC Active MPDs') || 
+        eventLayer.name.includes('Day 1 ERO (Real-Time)') ||
+        eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
+        legendContainer.style.display = 'none';
+    }
+
+    // Handle Radar/Satellite Timebox Removals
+    if (eventLayer.name.includes('NEXRAD Radar') || eventLayer.name.includes('GOES-')) {
+        radarTimeBox.style.display = 'none';
     }
 });
 
