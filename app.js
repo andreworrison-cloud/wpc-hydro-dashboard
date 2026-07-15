@@ -562,11 +562,30 @@ const eroCamLayers = {};
 });
 
 // --- SOIL LAYERS (NWM & SPoRT) ---
-const nwmBounds = [[21.0, -130.0], [55.0, -65.0]];
-const nwmLayer = L.imageOverlay('static/nwm_soil_saturation.png', nwmBounds, {zIndex: 10});
+// Leaflet's default map CRS is EPSG:3857. The Python scripts therefore
+// pre-warp both PNGs to EPSG:3857 and publish WGS84 corner bounds in JSON.
+//
+// Start these overlays invisible. They are made visible only after valid
+// metadata has been loaded, which prevents a stale or hard-coded rectangle
+// from appearing before the exact bounds are known.
+const NWM_IMAGE_URL = 'static/nwm_soil_saturation.png';
+const SPORT_IMAGE_URL = 'static/sport_soil_percentile.png';
+const soilPlaceholderBounds = [[24.0, -125.0], [50.0, -66.0]];
 
-const sportBounds = [[24.0, -125.0], [50.0, -66.0]];
-const sportLayer = L.imageOverlay('static/sport_soil_percentile.png', sportBounds, {zIndex: 10});
+const nwmLayer = L.imageOverlay(
+    NWM_IMAGE_URL,
+    soilPlaceholderBounds,
+    {zIndex: 10, opacity: 0, interactive: false}
+);
+
+const sportLayer = L.imageOverlay(
+    SPORT_IMAGE_URL,
+    soilPlaceholderBounds,
+    {zIndex: 10, opacity: 0, interactive: false}
+);
+
+let nwmLayerReady = false;
+let sportLayerReady = false;
 
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
@@ -645,42 +664,173 @@ function fetchEROCAMMetadata() {
         .catch(err => console.log("ERO CAM metadata not found yet."));
 }
 
-function fetchNWMMetadata() {
-    fetch('static/nwm_metadata.json?t=' + new Date().getTime())
-        .then(r => r.json())
-        .then(data => {
-            nwmValidTime = data.valid_time || "Unknown";
-            const timeBox = document.getElementById('nwm-time-box');
-            if (timeBox && timeBox.style.display === 'block') {
-                timeBox.innerHTML = `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`;
-            }
-            if (data.bounds) {
-                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-                nwmLayer.setBounds(exactBounds);
-                const base = nwmLayer._url.split('?')[0];
-                nwmLayer.setUrl(base + '?t=' + new Date().getTime());
-            }
-        })
-        .catch(err => console.log("NWM metadata not found yet."));
+function validateRasterBounds(bounds, productName) {
+    if (
+        !Array.isArray(bounds) ||
+        bounds.length !== 2 ||
+        !Array.isArray(bounds[0]) ||
+        !Array.isArray(bounds[1]) ||
+        bounds[0].length !== 2 ||
+        bounds[1].length !== 2
+    ) {
+        throw new Error(`${productName}: invalid bounds structure`);
+    }
+
+    const south = Number(bounds[0][0]);
+    const west = Number(bounds[0][1]);
+    const north = Number(bounds[1][0]);
+    const east = Number(bounds[1][1]);
+
+    if (![south, west, north, east].every(Number.isFinite)) {
+        throw new Error(`${productName}: non-numeric bounds`);
+    }
+
+    if (south >= north || west >= east) {
+        throw new Error(`${productName}: reversed or zero-area bounds`);
+    }
+
+    if (
+        south < -85.0512 ||
+        north > 85.0512 ||
+        west < -180 ||
+        east > 180
+    ) {
+        throw new Error(`${productName}: bounds outside Web Mercator limits`);
+    }
+
+    return L.latLngBounds(
+        [south, west],
+        [north, east]
+    );
 }
 
-function fetchSPoRTMetadata() {
-    fetch('static/sport_metadata.json?t=' + new Date().getTime())
-        .then(r => r.json())
-        .then(data => {
-            sportValidTime = data.valid_time || "Unknown";
-            const timeBox = document.getElementById('sport-time-box');
-            if (timeBox && timeBox.style.display === 'block') {
-                timeBox.innerHTML = `<strong>SPoRT-LIS 0-100cm Percentile</strong><br><span style="color: #ffeb3b;">${sportValidTime}</span>`;
-            }
-            if (data.bounds) {
-                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-                sportLayer.setBounds(exactBounds);
-                const base = sportLayer._url.split('?')[0];
-                sportLayer.setUrl(base + '?t=' + new Date().getTime());
-            }
-        })
-        .catch(err => console.log("SPoRT metadata not found yet."));
+function cacheBustedRasterUrl(baseUrl, metadata) {
+    const version = (
+        metadata.valid_time_iso ||
+        metadata.retrieved_time ||
+        Date.now()
+    );
+
+    return `${baseUrl}?v=${encodeURIComponent(version)}`;
+}
+
+function applySoilRasterMetadata({
+    metadata,
+    layer,
+    baseUrl,
+    productName,
+    opacity = 1.0
+}) {
+    // ImageOverlay linearly places the image in the map's projected
+    // coordinate space. The PNG itself must therefore be EPSG:3857.
+    const imageCrs = String(
+        metadata.image_crs ||
+        metadata.crs ||
+        ""
+    ).toUpperCase();
+
+    if (imageCrs !== "EPSG:3857") {
+        throw new Error(
+            `${productName}: expected an EPSG:3857 PNG, found ` +
+            `${imageCrs || "no image CRS"}`
+        );
+    }
+
+    const exactBounds = validateRasterBounds(
+        metadata.bounds,
+        productName
+    );
+
+    layer.setBounds(exactBounds);
+    layer.setUrl(
+        cacheBustedRasterUrl(baseUrl, metadata)
+    );
+    layer.setOpacity(opacity);
+
+    console.info(
+        `${productName} raster updated`,
+        {
+            bounds: metadata.bounds,
+            validTime: metadata.valid_time_iso,
+            imageCrs
+        }
+    );
+}
+
+async function fetchNWMMetadata() {
+    try {
+        const response = await fetch(
+            'static/nwm_metadata.json?t=' + Date.now(),
+            {cache: 'no-store'}
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        applySoilRasterMetadata({
+            metadata: data,
+            layer: nwmLayer,
+            baseUrl: NWM_IMAGE_URL,
+            productName: "NWM soil saturation",
+            opacity: 1.0
+        });
+
+        nwmLayerReady = true;
+        nwmValidTime = data.valid_time || "Unknown";
+
+        const timeBox = document.getElementById('nwm-time-box');
+        if (timeBox && timeBox.style.display === 'block') {
+            timeBox.innerHTML = `
+                <strong>NWM 0-40cm Soil Saturation</strong><br>
+                <span style="color: #ffeb3b;">${nwmValidTime}</span>
+            `;
+        }
+    } catch (error) {
+        nwmLayerReady = false;
+        nwmLayer.setOpacity(0);
+        console.error("NWM raster metadata update failed:", error);
+    }
+}
+
+async function fetchSPoRTMetadata() {
+    try {
+        const response = await fetch(
+            'static/sport_metadata.json?t=' + Date.now(),
+            {cache: 'no-store'}
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        applySoilRasterMetadata({
+            metadata: data,
+            layer: sportLayer,
+            baseUrl: SPORT_IMAGE_URL,
+            productName: "SPoRT-LIS soil moisture percentile",
+            opacity: 1.0
+        });
+
+        sportLayerReady = true;
+        sportValidTime = data.valid_time || "Unknown";
+
+        const timeBox = document.getElementById('sport-time-box');
+        if (timeBox && timeBox.style.display === 'block') {
+            timeBox.innerHTML = `
+                <strong>SPoRT-LIS 0-100cm Percentile</strong><br>
+                <span style="color: #ffeb3b;">${sportValidTime}</span>
+            `;
+        }
+    } catch (error) {
+        sportLayerReady = false;
+        sportLayer.setOpacity(0);
+        console.error("SPoRT raster metadata update failed:", error);
+    }
 }
 
 // Initial fetch on load
@@ -1179,15 +1329,23 @@ map.on('overlayadd', function(eventLayer) {
     }
 
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
+        fetchNWMMetadata();
+
         if (nwmTimeBox) {
-            nwmTimeBox.innerHTML = `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`;
+            nwmTimeBox.innerHTML = nwmLayerReady
+                ? `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`
+                : `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">Loading latest raster...</span>`;
             nwmTimeBox.style.display = 'block';
         }
     }
 
     if (eventLayer.name === 'SPoRT-LIS Soil Moisture Percentile (0-100cm)') {
+        fetchSPoRTMetadata();
+
         if (sportTimeBox) {
-            sportTimeBox.innerHTML = `<strong>SPoRT-LIS 0-100cm Percentile</strong><br><span style="color: #ffeb3b;">${sportValidTime}</span>`;
+            sportTimeBox.innerHTML = sportLayerReady
+                ? `<strong>SPoRT-LIS 0-100cm Percentile</strong><br><span style="color: #ffeb3b;">${sportValidTime}</span>`
+                : `<strong>SPoRT-LIS 0-100cm Percentile</strong><br><span style="color: #ffeb3b;">Loading latest raster...</span>`;
             sportTimeBox.style.display = 'block';
         }
     }
