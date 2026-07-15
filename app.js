@@ -287,7 +287,7 @@ async function fetchFFDData() {
         let currentTooltipHTML = '<strong>Monitor</strong>';
         let isDrawing = false;
         let currentCoords = [];
-        let latestFFDTime = null; // Variable to store extracted timestamp
+        let latestFFDTime = null; 
         
         lines.forEach(line => {
             const cleanLine = line.trim();
@@ -318,7 +318,7 @@ async function fetchFFDData() {
                     const parts = rawLabel.split(' ');
                     if (parts.length > 0 && /Z$/i.test(parts[0])) {
                         const timeStamp = parts[0];
-                        latestFFDTime = timeStamp; // Updates to the most recent chronological time found
+                        latestFFDTime = timeStamp; 
                         let impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
                         if (impactTag.length > 0) impactTag = impactTag.charAt(0).toUpperCase() + impactTag.slice(1);
                         currentTooltipHTML = `<span style="font-size: 0.9em;">${timeStamp}</span><br><span style="font-size: 1.1em;"><strong>${impactTag}</strong></span>`;
@@ -351,7 +351,7 @@ async function fetchFFDData() {
             }
         });
 
-        // --- THE FIX: Dynamic FFD Timestamp GUI Update ---
+        // --- THE FIX: Make sure the populated FFD Time Box visibly unhides if the layer is active! ---
         if (latestFFDTime) {
             const ffdTimeBox = document.getElementById('ffd-time-box');
             if (ffdTimeBox) {
@@ -359,6 +359,9 @@ async function fetchFFDData() {
                     <strong>Flash Flood Detector</strong><br>
                     <span style="color: #4fc3f7; font-weight: bold; font-size: 1.05em;">Latest Run: ${latestFFDTime}</span>
                 `;
+                if (map.hasLayer(ffdLayer)) {
+                    ffdTimeBox.style.display = 'block';
+                }
             }
         }
     } catch (error) { console.log("Waiting for FFD Contours..."); }
@@ -710,7 +713,6 @@ radarTimeControl.onAdd = function() {
 };
 radarTimeControl.addTo(map);
 
-// --- THE FIX: FFD Auto-Updating GUI Timebox ---
 const ffdTimeControl = L.control({position: 'bottomright'});
 ffdTimeControl.onAdd = function() {
     const div = L.DomUtil.create('div', 'time-box');
@@ -902,7 +904,6 @@ const ffdLegendHTML = `
     </div>
 `;
 
-// THE FIX: Added a custom Capped 1-Hour Legend stopping at 8.0+ inches
 const mrmsLegendQPE1hr = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 280px; max-width: 320px;">
         <strong style="font-size: 13px;">MRMS 1-Hour QPE (inches)</strong><br>
@@ -926,7 +927,6 @@ const mrmsLegendQPE1hr = `
     </div>
 `;
 
-// Standard Full Legend for 24, 48, and 72-Hour QPE
 const mrmsLegendQPEMulti = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 280px; max-width: 320px;">
         <strong style="font-size: 13px;">MRMS Multi-Hour QPE (inches)</strong><br>
@@ -975,7 +975,6 @@ function updateLegends() {
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
     
-    // --- THE FIX: Conditional Deploy for Capped vs. Full MRMS Legends ---
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
     
@@ -1249,5 +1248,11 @@ setTimeout(() => {
             <strong>NEXRAD Radar Loop</strong><br>
             <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
         `;
+    }
+    
+    // --- THE FIX: Force the FFD Timebox to display if active on load ---
+    const ffdTimeBox = document.getElementById('ffd-time-box');
+    if (ffdTimeBox && map.hasLayer(ffdLayer)) {
+        ffdTimeBox.style.display = 'block';
     }
 }, 1500);
