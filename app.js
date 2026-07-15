@@ -287,6 +287,7 @@ async function fetchFFDData() {
         let currentTooltipHTML = '<strong>Monitor</strong>';
         let isDrawing = false;
         let currentCoords = [];
+        let latestFFDTime = null; // Variable to store extracted timestamp
         
         lines.forEach(line => {
             const cleanLine = line.trim();
@@ -317,6 +318,7 @@ async function fetchFFDData() {
                     const parts = rawLabel.split(' ');
                     if (parts.length > 0 && /Z$/i.test(parts[0])) {
                         const timeStamp = parts[0];
+                        latestFFDTime = timeStamp; // Updates to the most recent chronological time found
                         let impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
                         if (impactTag.length > 0) impactTag = impactTag.charAt(0).toUpperCase() + impactTag.slice(1);
                         currentTooltipHTML = `<span style="font-size: 0.9em;">${timeStamp}</span><br><span style="font-size: 1.1em;"><strong>${impactTag}</strong></span>`;
@@ -348,6 +350,17 @@ async function fetchFFDData() {
                 }
             }
         });
+
+        // --- THE FIX: Dynamic FFD Timestamp GUI Update ---
+        if (latestFFDTime) {
+            const ffdTimeBox = document.getElementById('ffd-time-box');
+            if (ffdTimeBox) {
+                ffdTimeBox.innerHTML = `
+                    <strong>Flash Flood Detector</strong><br>
+                    <span style="color: #4fc3f7; font-weight: bold; font-size: 1.05em;">Latest Run: ${latestFFDTime}</span>
+                `;
+            }
+        }
     } catch (error) { console.log("Waiting for FFD Contours..."); }
 }
 fetchFFDData();
@@ -697,6 +710,22 @@ radarTimeControl.onAdd = function() {
 };
 radarTimeControl.addTo(map);
 
+// --- THE FIX: FFD Auto-Updating GUI Timebox ---
+const ffdTimeControl = L.control({position: 'bottomright'});
+ffdTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'ffd-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+ffdTimeControl.addTo(map);
+
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend-container');
@@ -873,10 +902,34 @@ const ffdLegendHTML = `
     </div>
 `;
 
-// THE FIX: Reversed Blue Scale to accurately map NWS MRMS standard colors
-const mrmsLegendQPE = `
+// THE FIX: Added a custom Capped 1-Hour Legend stopping at 8.0+ inches
+const mrmsLegendQPE1hr = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 280px; max-width: 320px;">
-        <strong style="font-size: 13px;">MRMS QPE (inches)</strong><br>
+        <strong style="font-size: 13px;">MRMS 1-Hour QPE (inches)</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
+            <div style="background: #000080; flex: 1;" title="0.01 - 0.1"></div>
+            <div style="background: #0000FF; flex: 1;" title="0.1 - 0.25"></div>
+            <div style="background: #0080FF; flex: 1;" title="0.25 - 0.5"></div>
+            <div style="background: #00FFFF; flex: 1;" title="0.5 - 1.0"></div>
+            <div style="background: #00FF00; flex: 1;" title="1.0 - 1.5"></div>
+            <div style="background: #00C800; flex: 1;" title="1.5 - 2.0"></div>
+            <div style="background: #008000; flex: 1;" title="2.0 - 3.0"></div>
+            <div style="background: #FFFF00; flex: 1;" title="3.0 - 4.0"></div>
+            <div style="background: #FFC800; flex: 1;" title="4.0 - 5.0"></div>
+            <div style="background: #FF9000; flex: 1;" title="5.0 - 6.0"></div>
+            <div style="background: #FF0000; flex: 1;" title="6.0 - 8.0"></div>
+            <div style="background: #C00000; flex: 1;" title="8.0+"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
+            <span>.01</span><span>.1</span><span>.25</span><span>.5</span><span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>8+</span>
+        </div>
+    </div>
+`;
+
+// Standard Full Legend for 24, 48, and 72-Hour QPE
+const mrmsLegendQPEMulti = `
+    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 280px; max-width: 320px;">
+        <strong style="font-size: 13px;">MRMS Multi-Hour QPE (inches)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
             <div style="background: #000080; flex: 1;" title="0.01 - 0.1"></div>
             <div style="background: #0000FF; flex: 1;" title="0.1 - 0.25"></div>
@@ -895,7 +948,7 @@ const mrmsLegendQPE = `
             <div style="background: #FFFFFF; flex: 1;" title="20.0+"></div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
-            <span>.01</span><span>.1</span><span>.25</span><span>.5</span><span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>8</span><span>10</span><span>15</span><span>20</span>
+            <span>.01</span><span>.1</span><span>.25</span><span>.5</span><span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>8</span><span>10</span><span>15</span><span>20+</span>
         </div>
     </div>
 `;
@@ -922,9 +975,14 @@ function updateLegends() {
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
     
-    const hasMRMS = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE'));
-    if (hasMRMS) {
-        addLegendBlock(mrmsLegendQPE);
+    // --- THE FIX: Conditional Deploy for Capped vs. Full MRMS Legends ---
+    const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
+    const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
+    
+    if (hasMRMS1hr) {
+        addLegendBlock(mrmsLegendQPE1hr);
+    } else if (hasMRMSMulti) {
+        addLegendBlock(mrmsLegendQPEMulti);
     }
 
     const activeCAM = Array.from(activeLayerNames).find(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
@@ -957,6 +1015,7 @@ map.on('overlayadd', function(eventLayer) {
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
+    const ffdTimeBox = document.getElementById('ffd-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         if (eventLayer.name.includes('+3h Forecast')) {
@@ -977,6 +1036,10 @@ map.on('overlayadd', function(eventLayer) {
         const start = new Date(now.getTime() - (hours * 60 * 60 * 1000));
         mrmsTimeBox.innerHTML = `<strong>MRMS ${hours}-Hour Accumulation</strong><br>${formatUTC(start)} &mdash; ${formatUTC(now)}`;
         mrmsTimeBox.style.display = 'block';
+    }
+    
+    if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
+        if (ffdTimeBox) ffdTimeBox.style.display = 'block';
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
@@ -1051,6 +1114,7 @@ map.on('overlayremove', function(eventLayer) {
     const mrmsTimeBox = document.getElementById('mrms-time-box');
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
+    const ffdTimeBox = document.getElementById('ffd-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -1060,6 +1124,10 @@ map.on('overlayremove', function(eventLayer) {
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         const hasMRMS = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE'));
         if (!hasMRMS) mrmsTimeBox.style.display = 'none';
+    }
+    
+    if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
+        if (ffdTimeBox) ffdTimeBox.style.display = 'none';
     }
     
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -1150,37 +1218,6 @@ const groupedOverlays = {
         "<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_super'],
         "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_href'],
         "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_refs']
-    },
-    "RAP Mesoanalysis (Real-Time)": {
-        "Precipitable Water (PWAT)": pwatLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": pwatF03Layer,
-        "Surface Based CAPE": sbcapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": sbcapeF03Layer,
-        "Mixed Layer CAPE (90mb)": mlcapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": mlcapeF03Layer,
-        "Most Unstable CAPE (255mb)": mucapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": mucapeF03Layer,
-        "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
-        "700-500mb Mid-Level Lapse Rate": lr75Layer,
-        "Supercell Composite Parameter": scpLayer,
-        "Mean BL Moisture Convergence": mfcLayer,
-        "925/850mb Frontogenesis": f925Layer,
-        "850/700mb Frontogenesis": f850Layer,
-        "Effective Bulk Shear": effShearLayer,
-        "Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
-        "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
-        "850mb Moisture Transport": trans850Layer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": trans850F03Layer,
-        "700mb Moisture Transport": trans700Layer,
-        "850-300mb Mean Layer Wind": meanWindLayer,
-        "500mb Absolute Vorticity": vort500Layer,
-        "700-400mb Diff Vorticity Advection": diffAdvLayer,
-        "250mb Divergence": div250Layer
     }
 };
 
@@ -1191,7 +1228,7 @@ const layerControl = L.control.groupedLayers(baseMaps, groupedOverlays, {
 L.DomEvent.disableClickPropagation(layerControl.getContainer());
 L.DomEvent.disableScrollPropagation(layerControl.getContainer());
 
-// --- THE FIX: INITIALIZE DEFAULT DASHBOARD STATE ---
+// --- INITIALIZE DEFAULT DASHBOARD STATE ---
 setTimeout(() => {
     if (map.hasLayer(warningsLayer)) activeLayerNames.add("Active Hydro Warnings & Advisories");
     if (map.hasLayer(watchesLayer)) activeLayerNames.add("Active Hydro Watches");
