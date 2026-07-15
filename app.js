@@ -613,6 +613,28 @@ function formatUTC(date) {
     return `${m} ${d}, ${h}${min}Z`;
 }
 
+// --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
+function getValidTimeRange(cycleStr, windowStr) {
+    if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
+    
+    let cycleHour = parseInt(cycleStr);
+    let now = new Date();
+    
+    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
+    
+    if (now.getUTCHours() < cycleHour) {
+        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
+    }
+    
+    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
+    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
+    
+    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
+    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
+    
+    return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
+}
+
 // --- NEW STACKABLE LEGENDS & TIME BOX UI ---
 
 const rapTimeControl = L.control({position: 'bottomright'});
@@ -851,24 +873,29 @@ const ffdLegendHTML = `
     </div>
 `;
 
-// THE FIX: Accurate NWS QPE custom HTML legend to bypass Iowa State's broken WMS image link
+// THE FIX: Accurate NWS QPE (Rainbow) custom HTML legend mapped directly to IEM tiles
 const mrmsLegendQPE = `
-    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; max-width: 250px;">
+    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 280px; max-width: 320px;">
         <strong style="font-size: 13px;">MRMS QPE (inches)</strong><br>
-        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 15px;">
-            <div style="background: #00ff00; flex: 1;" title="0.1"></div>
-            <div style="background: #008b00; flex: 1;" title="0.25"></div>
-            <div style="background: #104e8b; flex: 1;" title="0.5"></div>
-            <div style="background: #1e90ff; flex: 1;" title="1.0"></div>
-            <div style="background: #00ffff; flex: 1;" title="1.5"></div>
-            <div style="background: #ffff00; flex: 1;" title="2.0"></div>
-            <div style="background: #ff8c00; flex: 1;" title="3.0"></div>
-            <div style="background: #ff0000; flex: 1;" title="4.0"></div>
-            <div style="background: #8b0000; flex: 1;" title="5.0"></div>
-            <div style="background: #ff00ff; flex: 1;" title="6.0+"></div>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
+            <div style="background: #00ECEB; flex: 1;" title="0.01 - 0.1"></div>
+            <div style="background: #01A0F6; flex: 1;" title="0.1 - 0.25"></div>
+            <div style="background: #0000F6; flex: 1;" title="0.25 - 0.5"></div>
+            <div style="background: #00FF00; flex: 1;" title="0.5 - 1.0"></div>
+            <div style="background: #00C800; flex: 1;" title="1.0 - 1.5"></div>
+            <div style="background: #008F00; flex: 1;" title="1.5 - 2.0"></div>
+            <div style="background: #FFFF00; flex: 1;" title="2.0 - 3.0"></div>
+            <div style="background: #FFC800; flex: 1;" title="3.0 - 4.0"></div>
+            <div style="background: #FF9000; flex: 1;" title="4.0 - 5.0"></div>
+            <div style="background: #FF0000; flex: 1;" title="5.0 - 6.0"></div>
+            <div style="background: #DF0000; flex: 1;" title="6.0 - 8.0"></div>
+            <div style="background: #C00000; flex: 1;" title="8.0 - 10.0"></div>
+            <div style="background: #FF00FF; flex: 1;" title="10.0 - 15.0"></div>
+            <div style="background: #9955C9; flex: 1;" title="15.0 - 20.0"></div>
+            <div style="background: #FFFFFF; flex: 1;" title="20.0+"></div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
-            <span>.1</span><span>.25</span><span>.5</span><span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6+</span>
+            <span>.01</span><span>.1</span><span>.25</span><span>.5</span><span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>8</span><span>10</span><span>15</span><span>20</span>
         </div>
     </div>
 `;
@@ -953,51 +980,48 @@ map.on('overlayadd', function(eventLayer) {
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
-        if (!eventLayer.name.includes('Real-Time')) {
-            let titleText = "";
-            let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
-            let targetCycleForMath = camCycles.href; 
-            
-            if (eventLayer.name.includes('SuperEnsemble')) {
-                titleText = "SuperEnsemble Blend";
-            } else if (eventLayer.name.includes('HREF')) {
-                titleText = "HREF Only";
-                cycleText = `Latest Run: ${camCycles.href}Z`;
-                targetCycleForMath = camCycles.href;
-            } else if (eventLayer.name.includes('REFS')) {
-                titleText = "REFS Only";
-                cycleText = `Latest Run: ${camCycles.refs}Z`;
-                targetCycleForMath = camCycles.refs;
-            }
-
-            let validRangeStr = "";
-            if (eventLayer.name.includes('[ERO]')) {
-                titleText = titleText + " (Day 1 ERO)";
-                validRangeStr = eroValidRangeStr;
-            } else {
-                let currentWindow = "+3h to +9h";
-                if (eventLayer.name.includes('+9h to +15h')) currentWindow = "+9h to +15h";
-                let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
-                if (matchedKey && matchedKey.includes('9h_to_15h')) {
-                    currentWindow = '+9h to +15h';
-                }
-                validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
-            }
-
-            let productName = "Probabilistic Guidance";
-            if (eventLayer.name.includes(':')) {
-                productName = eventLayer.name.split(':')[1].trim(); 
-            }
-
-            camTimeBox.innerHTML = `
-                <strong>${titleText}</strong><br>
-                <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">${productName}</span><br>
-                <span style="font-size: 0.9em;">${cycleText}</span>
-                <hr style="margin: 5px 0; border-color: #555;">
-                <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
-            `;
-            camTimeBox.style.display = 'block';
+        let titleText = "";
+        let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
+        let targetCycleForMath = camCycles.href; 
+        
+        if (eventLayer.name.includes('SuperEnsemble')) {
+            titleText = "SuperEnsemble Blend";
+        } else if (eventLayer.name.includes('HREF')) {
+            titleText = "HREF Only";
+            cycleText = `Latest Run: ${camCycles.href}Z`;
+            targetCycleForMath = camCycles.href;
+        } else if (eventLayer.name.includes('REFS')) {
+            titleText = "REFS Only";
+            cycleText = `Latest Run: ${camCycles.refs}Z`;
+            targetCycleForMath = camCycles.refs;
         }
+
+        let validRangeStr = "Valid Time Unknown";
+        if (eventLayer.name.includes('[ERO]')) {
+            titleText = titleText + " (Day 1 ERO)";
+            validRangeStr = eroValidRangeStr;
+        } else {
+            let currentWindow = "+3h to +9h";
+            let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
+            if (matchedKey && matchedKey.includes('9h_to_15h')) {
+                currentWindow = "+9h to +15h";
+            }
+            validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
+        }
+
+        let productName = "Probabilistic Guidance";
+        if (eventLayer.name.includes(':')) {
+            productName = eventLayer.name.split(':')[1].trim(); 
+        }
+
+        camTimeBox.innerHTML = `
+            <strong>${titleText}</strong><br>
+            <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">${productName}</span><br>
+            <span style="font-size: 0.9em;">${cycleText}</span>
+            <hr style="margin: 5px 0; border-color: #555;">
+            <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
+        `;
+        camTimeBox.style.display = 'block';
     }
 
     if (eventLayer.name.includes('NEXRAD Radar')) {
@@ -1167,17 +1191,28 @@ const layerControl = L.control.groupedLayers(baseMaps, groupedOverlays, {
 L.DomEvent.disableClickPropagation(layerControl.getContainer());
 L.DomEvent.disableScrollPropagation(layerControl.getContainer());
 
-// --- INITIALIZE DEFAULT DASHBOARD STATE ---
-// This safely triggers the legends and timeboxes for layers automatically added on load
+// --- THE FIX: INITIALIZE DEFAULT DASHBOARD STATE ---
+// We use a safe timeout to ensure Leaflet has physically drawn the layers before reading them
 setTimeout(() => {
-    activeLayerNames.add("Active Hydro Warnings & Advisories");
-    activeLayerNames.add("Active Hydro Watches");
-    activeLayerNames.add("WPC Active MPDs");
-    activeLayerNames.add("Day 1 ERO (Real-Time)");
-    activeLayerNames.add("NEXRAD Radar (2-Hour Loop)");
+    if (map.hasLayer(warningsLayer)) activeLayerNames.add("Active Hydro Warnings & Advisories");
+    if (map.hasLayer(watchesLayer)) activeLayerNames.add("Active Hydro Watches");
+    if (map.hasLayer(mpdLayer)) activeLayerNames.add("WPC Active MPDs");
+    if (map.hasLayer(eroLayer)) activeLayerNames.add("Day 1 ERO (Real-Time)");
+    if (map.hasLayer(radarTimeLayer)) activeLayerNames.add("NEXRAD Radar (2-Hour Loop)");
     
+    // Explicitly handle additional layers if you want them on by default later
+    if (map.hasLayer(ffdLayer)) activeLayerNames.add("MRMS DVD Flash Flood Detector");
+    if (map.hasLayer(mrms1hr)) activeLayerNames.add("MRMS 1-Hour QPE");
+
     updateLegends();
     
     const radarTimeBox = document.getElementById('radar-time-box');
-    if (radarTimeBox) radarTimeBox.style.display = 'block';
-}, 500);
+    if (radarTimeBox && map.hasLayer(radarTimeLayer)) {
+        radarTimeBox.style.display = 'block';
+        const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
+        radarTimeBox.innerHTML = `
+            <strong>NEXRAD Radar Loop</strong><br>
+            <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
+        `;
+    }
+}, 1500);
