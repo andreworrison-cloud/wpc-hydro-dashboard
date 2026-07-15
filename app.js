@@ -561,16 +561,16 @@ const eroCamLayers = {};
     });
 });
 
-// --- NEW: NLDAS-2 SOIL MOISTURE LAYER ---
-const nldasBounds = [[25.0, -125.0], [53.0, -67.0]];
-const nldasLayer = L.imageOverlay('static/nldas_soil_moisture.png', nldasBounds, {zIndex: 10});
+// --- NEW: NWM SOIL SATURATION LAYER ---
+const nwmBounds = [[21.0, -130.0], [55.0, -65.0]];
+const nwmLayer = L.imageOverlay('static/nwm_soil_saturation.png', nwmBounds, {zIndex: 10});
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
 let camCycles = { href: "Unknown", refs: "Unknown" };
 let eroValidRangeStr = "Unknown";
-let nldasValidTime = "Unknown";
+let nwmValidTime = "Unknown";
 
 function fetchRAPMetadata() {
     fetch('static/rap_metadata.json?t=' + new Date().getTime())
@@ -640,37 +640,37 @@ function fetchEROCAMMetadata() {
         .catch(err => console.log("ERO CAM metadata not found yet."));
 }
 
-function fetchNLDASMetadata() {
-    fetch('static/nldas_metadata.json?t=' + new Date().getTime())
+function fetchNWMMetadata() {
+    fetch('static/nwm_metadata.json?t=' + new Date().getTime())
         .then(r => r.json())
         .then(data => {
-            nldasValidTime = data.valid_time || "Unknown";
-            const timeBox = document.getElementById('nldas-time-box');
+            nwmValidTime = data.valid_time || "Unknown";
+            const timeBox = document.getElementById('nwm-time-box');
             if (timeBox && timeBox.style.display === 'block') {
-                timeBox.innerHTML = `<strong>Top 10cm Soil Moisture</strong><br><span style="color: #ffeb3b;">${nldasValidTime}</span>`;
+                timeBox.innerHTML = `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`;
             }
             if (data.bounds) {
                 const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-                nldasLayer.setBounds(exactBounds);
-                const base = nldasLayer._url.split('?')[0];
-                nldasLayer.setUrl(base + '?t=' + new Date().getTime());
+                nwmLayer.setBounds(exactBounds);
+                const base = nwmLayer._url.split('?')[0];
+                nwmLayer.setUrl(base + '?t=' + new Date().getTime());
             }
         })
-        .catch(err => console.log("NLDAS metadata not found yet."));
+        .catch(err => console.log("NWM metadata not found yet."));
 }
 
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
 fetchEROCAMMetadata();
-fetchNLDASMetadata();
+fetchNWMMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
     fetchRAPMetadata();
     fetchCAMMetadata();
     fetchEROCAMMetadata();
-    fetchNLDASMetadata();
+    fetchNWMMetadata();
 }, 15 * 60 * 1000); 
 
 function getValidTimeRange(cycleStr, windowStr) {
@@ -771,10 +771,10 @@ ffdTimeControl.onAdd = function() {
 };
 ffdTimeControl.addTo(map);
 
-const nldasTimeControl = L.control({position: 'bottomright'});
-nldasTimeControl.onAdd = function() {
+const nwmTimeControl = L.control({position: 'bottomright'});
+nwmTimeControl.onAdd = function() {
     const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'nldas-time-box';
+    div.id = 'nwm-time-box';
     div.style.background = 'rgba(0, 0, 0, 0.7)';
     div.style.color = '#ffffff';
     div.style.padding = '8px 12px';
@@ -784,7 +784,7 @@ nldasTimeControl.onAdd = function() {
     div.style.display = 'none'; 
     return div;
 };
-nldasTimeControl.addTo(map);
+nwmTimeControl.addTo(map);
 
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
@@ -1011,21 +1011,20 @@ const mrmsLegendQPEMulti = `
     </div>
 `;
 
-const nldasLegendHTML = `
+const nwmLegendHTML = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 250px;">
-        <strong style="font-size: 13px;">Top 10cm Volumetric Soil Moisture</strong><br>
+        <strong style="font-size: 13px;">NWM 0-40cm Soil Saturation (%)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
-            <div style="background: #8b5a2b; flex: 1;" title="Dry"></div>
-            <div style="background: #d2b48c; flex: 1;"></div>
-            <div style="background: #e0eee0; flex: 1;"></div>
-            <div style="background: #90ee90; flex: 1;"></div>
-            <div style="background: #3cb371; flex: 1;"></div>
-            <div style="background: #00ced1; flex: 1;"></div>
-            <div style="background: #1e90ff; flex: 1;"></div>
-            <div style="background: #00008b; flex: 1;" title="Saturated"></div>
+            <div style="background: #d2b48c; flex: 2;" title="0-40%"></div>
+            <div style="background: #e0eee0; flex: 1;" title="40-60%"></div>
+            <div style="background: #90ee90; flex: 0.5;" title="60-70%"></div>
+            <div style="background: #3cb371; flex: 0.5;" title="70-80%"></div>
+            <div style="background: #00ced1; flex: 0.5;" title="80-90%"></div>
+            <div style="background: #1e90ff; flex: 0.25;" title="90-95%"></div>
+            <div style="background: #00008b; flex: 0.25;" title="95-100%"></div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
-            <span>Dry (0.05)</span><span>Saturated (0.45+)</span>
+            <span>0</span><span>40</span><span>60</span><span>70</span><span>80</span><span>90</span><span>100</span>
         </div>
     </div>
 `;
@@ -1051,7 +1050,7 @@ function updateLegends() {
     if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
-    if (activeLayerNames.has('NLDAS-2 Soil Moisture (Top 10cm)')) addLegendBlock(nldasLegendHTML);
+    if (activeLayerNames.has('NWM Soil Saturation (0-40cm)')) addLegendBlock(nwmLegendHTML);
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -1093,7 +1092,7 @@ map.on('overlayadd', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
-    const nldasTimeBox = document.getElementById('nldas-time-box');
+    const nwmTimeBox = document.getElementById('nwm-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         if (eventLayer.name.includes('+3h Forecast')) {
@@ -1120,10 +1119,10 @@ map.on('overlayadd', function(eventLayer) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'block';
     }
 
-    if (eventLayer.name === 'NLDAS-2 Soil Moisture (Top 10cm)') {
-        if (nldasTimeBox) {
-            nldasTimeBox.innerHTML = `<strong>Top 10cm Soil Moisture</strong><br><span style="color: #ffeb3b;">${nldasValidTime}</span>`;
-            nldasTimeBox.style.display = 'block';
+    if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
+        if (nwmTimeBox) {
+            nwmTimeBox.innerHTML = `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`;
+            nwmTimeBox.style.display = 'block';
         }
     }
 
@@ -1200,7 +1199,7 @@ map.on('overlayremove', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
-    const nldasTimeBox = document.getElementById('nldas-time-box');
+    const nwmTimeBox = document.getElementById('nwm-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -1216,8 +1215,8 @@ map.on('overlayremove', function(eventLayer) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'none';
     }
 
-    if (eventLayer.name === 'NLDAS-2 Soil Moisture (Top 10cm)') {
-        if (nldasTimeBox) nldasTimeBox.style.display = 'none';
+    if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
+        if (nwmTimeBox) nwmTimeBox.style.display = 'none';
     }
     
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -1247,7 +1246,7 @@ const groupedOverlays = {
         "Day 1 ERO (Real-Time)": eroLayer
     },
     "Antecedent Hydrologic Conditions": {
-        "NLDAS-2 Soil Moisture (Top 10cm)": nldasLayer
+        "NWM Soil Saturation (0-40cm)": nwmLayer
     },
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
