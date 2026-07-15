@@ -31,6 +31,7 @@ OUTPUT_JSON = Path("static/sport_metadata.json")
 
 LOOKBACK_DAYS = 10
 MAX_OUTPUT_DIMENSION = 3000
+RENDER_REVISION = "sport-wet-tail-v4"
 
 HEADERS = {
     "User-Agent": (
@@ -51,6 +52,7 @@ def build_session():
         allowed_methods=frozenset({"GET"}),
         raise_on_status=False,
     )
+
     session = requests.Session()
     session.headers.update(HEADERS)
     session.mount("https://", HTTPAdapter(max_retries=retry))
@@ -79,9 +81,12 @@ def download_latest_sport():
         )
         date_string = valid_time.strftime("%Y%m%d")
 
+        # Use the authoritative floating-point percentile file. It is larger
+        # than the byte-scaled file, but avoids manual decoding ambiguity and
+        # remains small enough for a daily GitHub Actions download.
         filename = (
             f"{date_string}_0000_sport_lis_"
-            "vsm0-100cm_percentile_conus3km_byteScaled_wgs84.tif"
+            "vsm0-100cm_percentile_conus3km_float_wgs84.tif"
         )
         url = f"{BASE_URL}/{filename}"
 
@@ -94,7 +99,7 @@ def download_latest_sport():
             with session.get(
                 url,
                 stream=True,
-                timeout=(20, 180),
+                timeout=(20, 240),
             ) as response:
                 if response.status_code == 404:
                     print(" -> Product not posted for this date.")
@@ -141,63 +146,17 @@ def read_and_reproject_geotiff():
         if source.crs is None:
             raise RuntimeError("SPoRT GeoTIFF has no CRS.")
 
-        percentile = source.read(
-            1,
-            masked=True,
-        ).astype(np.float32)
+        source_data = source.read(1).astype(np.float32)
 
-        scale = source.scales[0] if source.scales else 1.0
-        offset = source.offsets[0] if source.offsets else 0.0
-
-        if scale != 1.0 or offset != 0.0:
-            percentile = percentile * scale + offset
-
-        source_data = np.asarray(
-            percentile.filled(np.nan),
-            dtype=np.float32,
-        )
-
-        source_mask = (
-            ~np.ma.getmaskarray(percentile)
-            & np.isfinite(source_data)
-        )
-
-        source_dtype = np.dtype(source.dtypes[0])
-        finite_raw_values = source_data[source_mask]
-
-        if finite_raw_values.size == 0:
-            raise RuntimeError(
-                "SPoRT raster contains no finite unmasked values."
-            )
-
-        raw_min = float(np.nanmin(finite_raw_values))
-        raw_max = float(np.nanmax(finite_raw_values))
-
-        # The byteScaled product stores percentile 0-100 across bytes 0-254;
-        # byte 255 is reserved for missing data. Its GeoTIFF scale metadata is
-        # not necessarily populated, so decode it explicitly when needed.
-        if np.issubdtype(source_dtype, np.integer) and raw_max > 100.0:
-            print(
-                "Decoding SPoRT byte-scaled percentile values "
-                "from 0-254 to 0-100."
-            )
-
-            byte_valid = (
-                source_mask
-                & (source_data >= 0.0)
-                & (source_data <= 254.0)
-            )
-
-            source_data[~byte_valid] = np.nan
-            source_data[byte_valid] *= 100.0 / 254.0
-            source_mask = byte_valid
-
+        # The float files use 9999 for missing data but do not always declare
+        # it as GeoTIFF nodata. Percentiles outside 0-100 are therefore masked.
         source_valid = (
-            source_mask
-            & np.isfinite(source_data)
+            np.isfinite(source_data)
             & (source_data >= 0.0)
             & (source_data <= 100.0)
-        ).astype(np.uint8)
+        )
+
+        source_data[~source_valid] = np.nan
 
         (
             destination_transform,
@@ -247,7 +206,8 @@ def read_and_reproject_geotiff():
             dtype=np.uint8,
         )
 
-        # Nearest-neighbor preserves the percentile thresholds.
+        # Percentile is a continuous field. Bilinear reprojection makes the
+        # display substantially cleaner than nearest-neighbor block sampling.
         reproject(
             source=source_data,
             destination=destination_data,
@@ -257,13 +217,15 @@ def read_and_reproject_geotiff():
             dst_transform=destination_transform,
             dst_crs=destination_crs,
             dst_nodata=np.nan,
-            resampling=Resampling.nearest,
+            resampling=Resampling.bilinear,
             init_dest_nodata=True,
             num_threads=2,
         )
 
+        # Reproject the source validity mask separately so interpolation does
+        # not spread values into lakes, oceans, or outside-domain pixels.
         reproject(
-            source=source_valid,
+            source=source_valid.astype(np.uint8),
             destination=destination_valid,
             src_transform=source.transform,
             src_crs=source.crs,
@@ -300,13 +262,13 @@ def read_and_reproject_geotiff():
         [float(north), float(east)],
     ]
 
-    print(f"SPoRT output shape: {destination_data.shape}")
-    print("SPoRT image CRS: EPSG:3857")
-    print(f"SPoRT Leaflet bounds: {leaflet_bounds}")
-
     valid_values = destination_data[
         np.isfinite(destination_data)
     ]
+
+    print(f"SPoRT output shape: {destination_data.shape}")
+    print("SPoRT image CRS: EPSG:3857")
+    print(f"SPoRT Leaflet bounds: {leaflet_bounds}")
 
     if valid_values.size:
         print(
@@ -314,19 +276,25 @@ def read_and_reproject_geotiff():
             f"{float(np.nanmin(valid_values)):.1f} to "
             f"{float(np.nanmax(valid_values)):.1f}"
         )
+        print(
+            "SPoRT fraction at or above 70th percentile: "
+            f"{100.0 * np.mean(valid_values >= 70.0):.1f}%"
+        )
 
     return destination_data, leaflet_bounds
 
 
 def create_rgba_image(data):
+    # Wet-tail palette. Lower wet percentiles are deliberately translucent,
+    # allowing basemap geography and state lines to remain readable.
     palette = np.array(
         [
-            [0, 0, 0, 0],
-            [255, 255, 0, 255],
-            [255, 204, 0, 255],
-            [255, 102, 0, 255],
-            [255, 0, 0, 255],
-            [204, 0, 204, 255],
+            [0, 0, 0, 0],          # below 70: transparent
+            [170, 220, 255, 90],   # 70-80: very light blue
+            [80, 170, 255, 150],   # 80-90: medium blue
+            [20, 110, 235, 200],   # 90-95: strong blue
+            [0, 45, 180, 235],     # 95-98: dark blue
+            [120, 0, 180, 255],    # 98-100: purple
         ],
         dtype=np.uint8,
     )
@@ -346,6 +314,30 @@ def create_rgba_image(data):
 
     rgba[valid] = palette[class_index[valid]]
     return rgba
+
+
+def compatible_previous_output_exists():
+    if not OUTPUT_PNG.exists() or not OUTPUT_JSON.exists():
+        return False
+
+    try:
+        previous_metadata = json.loads(
+            OUTPUT_JSON.read_text(encoding="utf-8")
+        )
+
+        return (
+            str(
+                previous_metadata.get(
+                    "image_crs",
+                    previous_metadata.get("crs", ""),
+                )
+            ).upper()
+            == "EPSG:3857"
+            and previous_metadata.get("render_revision")
+            == RENDER_REVISION
+        )
+    except Exception:
+        return False
 
 
 def main():
@@ -386,12 +378,14 @@ def main():
             "crs": "EPSG:3857",
             "image_crs": "EPSG:3857",
             "bounds_crs": "EPSG:4326",
+            "render_revision": RENDER_REVISION,
             "product": (
                 "NASA SPoRT-LIS 0-100 cm "
                 "Soil Moisture Percentile"
             ),
             "depth": "0-100 cm",
             "units": "percentile",
+            "display": "wet percentiles at or above 70",
             "source_url": source_url,
         }
 
@@ -416,35 +410,16 @@ def main():
     except Exception as error:
         print(f"WARNING: SPoRT-LIS update failed: {error}")
 
-        compatible_previous_output = False
-
-        if OUTPUT_PNG.exists() and OUTPUT_JSON.exists():
-            try:
-                previous_metadata = json.loads(
-                    OUTPUT_JSON.read_text(encoding="utf-8")
-                )
-                compatible_previous_output = (
-                    str(
-                        previous_metadata.get(
-                            "image_crs",
-                            previous_metadata.get("crs", ""),
-                        )
-                    ).upper()
-                    == "EPSG:3857"
-                )
-            except Exception:
-                compatible_previous_output = False
-
-        if compatible_previous_output:
+        if compatible_previous_output_exists():
             print(
-                "Keeping the previous EPSG:3857-compatible "
+                "Keeping the previous revision-compatible "
                 "SPoRT-LIS dashboard layer."
             )
             return 0
 
         print(
             "No compatible previous SPoRT-LIS output exists; "
-            "the workflow must fail instead of publishing stale metadata."
+            "the workflow must fail."
         )
         return 1
 
