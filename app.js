@@ -78,20 +78,36 @@ map.getPane('ffd').style.zIndex = 440;
 map.createPane('warnings');
 map.getPane('warnings').style.zIndex = 450;
 
-// Dark Base
+// --- BASEMAPS ---
+
+// Esri Dark Gray
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 16,
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
-esriDarkBase.addTo(map); 
 
-// Daytime / White Base (OpenStreetMap)
+// OpenStreetMap
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© OpenStreetMap contributors'
 });
 
-// The floating borders and labels
+// NEW: Esri World Imagery (Satellite)
+const esriWorldImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+});
+
+// NEW: Esri World Topographic
+const esriWorldTopo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community'
+});
+
+// Add default basemap
+esriDarkBase.addTo(map); 
+
+// The floating text labels for the Dark Base
 const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels',
     maxZoom: 16
@@ -118,14 +134,20 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
 
 whiteBorders.addTo(map); 
 
+// DYNAMIC BASEMAP TOGGLE LOGIC
 map.on('baselayerchange', function(e) {
-    if (e.name === "OpenStreetMap") {
-        if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); 
-        if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
+    // Clear out old boundary/label layers
+    if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); 
+    if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
+    if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
+
+    // Apply the correct contrast borders based on the selected map
+    if (e.name === "Esri Dark Gray") {
+        esriDarkLabels.addTo(map);
+        whiteBorders.addTo(map);
+    } else if (e.name === "OpenStreetMap" || e.name === "Esri World Topographic") {
         blackBorders.addTo(map);
-    } else {
-        if (!map.hasLayer(esriDarkLabels)) esriDarkLabels.addTo(map); 
-        if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
+    } else if (e.name === "Esri World Imagery (Satellite)") {
         whiteBorders.addTo(map);
     }
 });
@@ -279,7 +301,7 @@ async function fetchNWSAlerts() {
 fetchNWSAlerts();
 setInterval(fetchNWSAlerts, 5 * 60 * 1000); 
 
-// --- BULLETPROOF MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
+// --- MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
 const ffdLayer = L.layerGroup();
 
 async function fetchFFDData() {
@@ -288,7 +310,6 @@ async function fetchFFDData() {
         const response = await fetch(targetUrl);
         if (!response.ok) throw new Error("Could not fetch local FFD placefile.");
         
-        // THE FIX: We bypass fragile text-parsing entirely and grab the exact creation time of the file
         const lastModified = response.headers.get('Last-Modified');
         let latestFFDTime = lastModified ? formatUTC(new Date(lastModified)) : formatUTC(new Date()); 
         
@@ -363,7 +384,6 @@ async function fetchFFDData() {
             }
         });
 
-        // Force the GUI to update with the reliable header timestamp
         const ffdTimeBox = document.getElementById('ffd-time-box');
         if (ffdTimeBox) {
             ffdTimeBox.innerHTML = `
@@ -629,28 +649,6 @@ setInterval(() => {
     fetchCAMMetadata();
     fetchEROCAMMetadata();
 }, 15 * 60 * 1000); 
-
-// --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
-function getValidTimeRange(cycleStr, windowStr) {
-    if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
-    
-    let cycleHour = parseInt(cycleStr);
-    let now = new Date();
-    
-    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
-    
-    if (now.getUTCHours() < cycleHour) {
-        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
-    }
-    
-    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
-    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
-    
-    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
-    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
-    
-    return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
-}
 
 // --- STACKABLE LEGENDS & TIME BOX UI ---
 
@@ -1037,8 +1035,7 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.innerHTML = `<strong>MRMS ${hours}-Hour Accumulation</strong><br>${formatUTC(start)} &mdash; ${formatUTC(now)}`;
         mrmsTimeBox.style.display = 'block';
     }
-
-    // THE FIX: Always show the FFD timebox if it was toggled on from the menu
+    
     if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'block';
     }
@@ -1145,7 +1142,9 @@ map.on('overlayremove', function(eventLayer) {
 // --- MENU CONTROLS ---
 const baseMaps = {
     "Esri Dark Gray": esriDarkBase,
-    "OpenStreetMap": osmLayer
+    "OpenStreetMap": osmLayer,
+    "Esri World Imagery (Satellite)": esriWorldImagery,
+    "Esri World Topographic": esriWorldTopo
 };
 
 const groupedOverlays = {
