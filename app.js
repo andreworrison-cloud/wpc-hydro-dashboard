@@ -150,7 +150,7 @@ function updateTimeDimension() {
 }
 
 updateTimeDimension();
-setInterval(updateTimeDimension, 10 * 60 * 1000); // Re-calculates and shifts time limits every 10 minutes
+setInterval(updateTimeDimension, 10 * 60 * 1000); 
 
 // --- LOOPING RADAR LAYER ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
@@ -181,7 +181,7 @@ function refreshWMSLayers() {
         layer.setParams({_t: new Date().getTime()}, false); 
     });
 }
-setInterval(refreshWMSLayers, 5 * 60 * 1000); // 5 Minutes
+setInterval(refreshWMSLayers, 5 * 60 * 1000); 
 
 // --- NWS ACTIVE HYDRO WARNINGS & WATCHES ---
 function getAlertColor(event) {
@@ -267,7 +267,7 @@ async function fetchNWSAlerts() {
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
 }
 fetchNWSAlerts();
-setInterval(fetchNWSAlerts, 5 * 60 * 1000); // 5 Minutes
+setInterval(fetchNWSAlerts, 5 * 60 * 1000); 
 
 // --- MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
 const ffdLayer = L.layerGroup();
@@ -446,7 +446,7 @@ async function fetchWPCData() {
 }
 
 fetchWPCData();
-setInterval(fetchWPCData, 5 * 60 * 1000); // 5 Minutes
+setInterval(fetchWPCData, 5 * 60 * 1000); 
 
 // --- RAP MESOANALYSIS LAYERS ---
 const rapBounds = [[16.281, -139.856], [55.481, -57.373]]; 
@@ -613,31 +613,8 @@ function formatUTC(date) {
     return `${m} ${d}, ${h}${min}Z`;
 }
 
-// --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
-function getValidTimeRange(cycleStr, windowStr) {
-    if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
-    
-    let cycleHour = parseInt(cycleStr);
-    let now = new Date();
-    
-    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
-    
-    if (now.getUTCHours() < cycleHour) {
-        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
-    }
-    
-    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
-    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
-    
-    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
-    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
-    
-    return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
-}
-
 // --- NEW STACKABLE LEGENDS & TIME BOX UI ---
 
-// Create Leaflet Controls for Time Boxes
 const rapTimeControl = L.control({position: 'bottomright'});
 rapTimeControl.onAdd = function() {
     const div = L.DomUtil.create('div', 'time-box');
@@ -698,7 +675,6 @@ radarTimeControl.onAdd = function() {
 };
 radarTimeControl.addTo(map);
 
-// The newly architected invisible stacked legend container
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
     const div = L.DomUtil.create('div', 'legend-container');
@@ -875,6 +851,28 @@ const ffdLegendHTML = `
     </div>
 `;
 
+// THE FIX: Accurate NWS QPE custom HTML legend to bypass Iowa State's broken WMS image link
+const mrmsLegendQPE = `
+    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; max-width: 250px;">
+        <strong style="font-size: 13px;">MRMS QPE (inches)</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 15px;">
+            <div style="background: #00ff00; flex: 1;" title="0.1"></div>
+            <div style="background: #008b00; flex: 1;" title="0.25"></div>
+            <div style="background: #104e8b; flex: 1;" title="0.5"></div>
+            <div style="background: #1e90ff; flex: 1;" title="1.0"></div>
+            <div style="background: #00ffff; flex: 1;" title="1.5"></div>
+            <div style="background: #ffff00; flex: 1;" title="2.0"></div>
+            <div style="background: #ff8c00; flex: 1;" title="3.0"></div>
+            <div style="background: #ff0000; flex: 1;" title="4.0"></div>
+            <div style="background: #8b0000; flex: 1;" title="5.0"></div>
+            <div style="background: #ff00ff; flex: 1;" title="6.0+"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
+            <span>.1</span><span>.25</span><span>.5</span><span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6+</span>
+        </div>
+    </div>
+`;
+
 // Global tracker for currently active layers
 let activeLayerNames = new Set();
 
@@ -883,7 +881,6 @@ function updateLegends() {
     legendContainer.innerHTML = '';
     let hasLegend = false;
 
-    // Helper function to dynamically stack the legends
     const addLegendBlock = (htmlContent) => {
         const div = document.createElement('div');
         div.style.marginBottom = '5px'; 
@@ -892,22 +889,15 @@ function updateLegends() {
         hasLegend = true;
     };
 
-    // Strict top-to-bottom hierarchy based on your menu layout
     if (activeLayerNames.has('Active Hydro Warnings & Advisories')) addLegendBlock(hazardLegendHTML);
     if (activeLayerNames.has('Active Hydro Watches')) addLegendBlock(watchLegendHTML);
     if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
     
-    // MRMS Legend: Fetched dynamically from Iowa State to match WMS background perfectly
     const hasMRMS = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE'));
     if (hasMRMS) {
-        addLegendBlock(`
-            <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; max-width: 250px;">
-                <strong style="font-size: 13px;">MRMS QPE (inches)</strong><br>
-                <img src="https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi?VER=1.3.0&SERVICE=WMS&REQUEST=GetLegendGraphic&LAYER=mrms_p24h&FORMAT=image/png" style="max-width: 100%; margin-top: 5px; border: 1px solid #ccc;">
-            </div>
-        `);
+        addLegendBlock(mrmsLegendQPE);
     }
 
     const activeCAM = Array.from(activeLayerNames).find(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
@@ -928,7 +918,6 @@ function updateLegends() {
         `);
     }
 
-    // Toggle container visibility
     legendContainer.style.display = hasLegend ? 'block' : 'none';
 }
 
@@ -942,7 +931,6 @@ map.on('overlayadd', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
 
-    // 1. RAP Legend Handler
     if (rapLegendMapping[eventLayer.name]) {
         if (eventLayer.name.includes('+3h Forecast')) {
             rapTimeBox.innerHTML = `<strong>${rapValidTimeF03}</strong>`;
@@ -952,7 +940,6 @@ map.on('overlayadd', function(eventLayer) {
         rapTimeBox.style.display = 'block';
     }
     
-    // 2. MRMS Handler
     if (eventLayer.name.includes('MRMS') && eventLayer.name.includes('QPE')) {
         let hours = 1;
         if (eventLayer.name.includes('24-Hour')) hours = 24;
@@ -965,7 +952,6 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.style.display = 'block';
     }
 
-    // 3. CAM Handler
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
         if (!eventLayer.name.includes('Real-Time')) {
             let titleText = "";
@@ -1014,7 +1000,6 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
-    // 4. NEXRAD Radar Timestamp
     if (eventLayer.name.includes('NEXRAD Radar')) {
         radarTimeBox.style.display = 'block';
         const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
@@ -1024,7 +1009,6 @@ map.on('overlayadd', function(eventLayer) {
         `;
     }
 
-    // 5. GOES Satellite Timestamp
     if (eventLayer.name.includes('GOES-')) {
         radarTimeBox.style.display = 'block';
         radarTimeBox.innerHTML = `
@@ -1182,3 +1166,18 @@ const layerControl = L.control.groupedLayers(baseMaps, groupedOverlays, {
 
 L.DomEvent.disableClickPropagation(layerControl.getContainer());
 L.DomEvent.disableScrollPropagation(layerControl.getContainer());
+
+// --- INITIALIZE DEFAULT DASHBOARD STATE ---
+// This safely triggers the legends and timeboxes for layers automatically added on load
+setTimeout(() => {
+    activeLayerNames.add("Active Hydro Warnings & Advisories");
+    activeLayerNames.add("Active Hydro Watches");
+    activeLayerNames.add("WPC Active MPDs");
+    activeLayerNames.add("Day 1 ERO (Real-Time)");
+    activeLayerNames.add("NEXRAD Radar (2-Hour Loop)");
+    
+    updateLegends();
+    
+    const radarTimeBox = document.getElementById('radar-time-box');
+    if (radarTimeBox) radarTimeBox.style.display = 'block';
+}, 500);
