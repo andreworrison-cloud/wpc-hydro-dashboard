@@ -6,14 +6,20 @@ from pathlib import Path
 import numpy as np
 import rasterio
 import requests
+from affine import Affine
 from PIL import Image
+from rasterio.crs import CRS
+from rasterio.transform import array_bounds
+from rasterio.warp import (
+    Resampling,
+    calculate_default_transform,
+    reproject,
+    transform_bounds,
+)
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 
-# -----------------------------------------------------------------------------
-# 1. CONFIGURATION
-# -----------------------------------------------------------------------------
 BASE_URL = (
     "https://nssrgeo.ndc.nasa.gov/"
     "SPoRT/modeling/lis/conus3km/geotiff/vsm_percentiles"
@@ -24,6 +30,7 @@ OUTPUT_PNG = Path("static/sport_soil_percentile.png")
 OUTPUT_JSON = Path("static/sport_metadata.json")
 
 LOOKBACK_DAYS = 10
+MAX_OUTPUT_DIMENSION = 3000
 
 HEADERS = {
     "User-Agent": (
@@ -34,9 +41,6 @@ HEADERS = {
 }
 
 
-# -----------------------------------------------------------------------------
-# 2. HTTP SESSION
-# -----------------------------------------------------------------------------
 def build_session():
     retry = Retry(
         total=4,
@@ -47,7 +51,6 @@ def build_session():
         allowed_methods=frozenset({"GET"}),
         raise_on_status=False,
     )
-
     session = requests.Session()
     session.headers.update(HEADERS)
     session.mount("https://", HTTPAdapter(max_retries=retry))
@@ -58,18 +61,11 @@ def is_tiff(path):
     try:
         with path.open("rb") as file:
             magic = file.read(4)
-
-        return magic in (
-            b"II*\x00",  # Little-endian TIFF
-            b"MM\x00*",  # Big-endian TIFF
-        )
+        return magic in (b"II*\x00", b"MM\x00*")
     except OSError:
         return False
 
 
-# -----------------------------------------------------------------------------
-# 3. DOWNLOAD
-# -----------------------------------------------------------------------------
 def download_latest_sport():
     session = build_session()
     now = datetime.now(timezone.utc)
@@ -138,27 +134,17 @@ def download_latest_sport():
     )
 
 
-# -----------------------------------------------------------------------------
-# 4. PROCESS THE NORTH-UP WGS84 GEOTIFF
-# -----------------------------------------------------------------------------
-def process_geotiff():
+def read_and_reproject_geotiff():
+    destination_crs = CRS.from_epsg(3857)
+
     with rasterio.open(SPORT_FILE) as source:
         if source.crs is None:
             raise RuntimeError("SPoRT GeoTIFF has no CRS.")
 
-        if source.crs.to_epsg() != 4326:
-            raise RuntimeError(
-                f"Expected WGS84/EPSG:4326 SPoRT file, found {source.crs}."
-            )
-
-        # A north-up raster normally has a negative Y pixel size.
-        if source.transform.e >= 0:
-            raise RuntimeError(
-                "SPoRT GeoTIFF is not north-up as expected; "
-                "do not apply an unverified manual flip."
-            )
-
-        percentile = source.read(1, masked=True).astype(np.float32)
+        percentile = source.read(
+            1,
+            masked=True,
+        ).astype(np.float32)
 
         scale = source.scales[0] if source.scales else 1.0
         offset = source.offsets[0] if source.offsets else 0.0
@@ -166,57 +152,146 @@ def process_geotiff():
         if scale != 1.0 or offset != 0.0:
             percentile = percentile * scale + offset
 
-        data = np.asarray(
+        source_data = np.asarray(
             percentile.filled(np.nan),
             dtype=np.float32,
         )
 
-        valid = (
+        source_valid = (
             ~np.ma.getmaskarray(percentile)
-            & np.isfinite(data)
-            & (data >= 0.0)
-            & (data <= 100.0)
+            & np.isfinite(source_data)
+            & (source_data >= 0.0)
+            & (source_data <= 100.0)
+        ).astype(np.uint8)
+
+        (
+            destination_transform,
+            destination_width,
+            destination_height,
+        ) = calculate_default_transform(
+            source.crs,
+            destination_crs,
+            source.width,
+            source.height,
+            *source.bounds,
         )
 
-        bounds = [
-            [
-                float(source.bounds.bottom),
-                float(source.bounds.left),
-            ],
-            [
-                float(source.bounds.top),
-                float(source.bounds.right),
-            ],
-        ]
+        scale_factor = max(
+            destination_width / MAX_OUTPUT_DIMENSION,
+            destination_height / MAX_OUTPUT_DIMENSION,
+            1.0,
+        )
 
-        print(f"SPoRT raster shape: {data.shape}")
-        print(f"SPoRT CRS: {source.crs}")
-        print(f"SPoRT Leaflet bounds: {bounds}")
-
-        if np.any(valid):
-            print(
-                "SPoRT valid percentile range: "
-                f"{float(np.nanmin(data[valid])):.1f} to "
-                f"{float(np.nanmax(data[valid])):.1f}"
+        if scale_factor > 1.0:
+            reduced_width = max(
+                1,
+                int(round(destination_width / scale_factor)),
+            )
+            reduced_height = max(
+                1,
+                int(round(destination_height / scale_factor)),
             )
 
-    return data, valid, bounds
+            destination_transform = (
+                destination_transform
+                * Affine.scale(
+                    destination_width / reduced_width,
+                    destination_height / reduced_height,
+                )
+            )
+            destination_width = reduced_width
+            destination_height = reduced_height
+
+        destination_data = np.full(
+            (destination_height, destination_width),
+            np.nan,
+            dtype=np.float32,
+        )
+        destination_valid = np.zeros(
+            (destination_height, destination_width),
+            dtype=np.uint8,
+        )
+
+        # Nearest-neighbor preserves the percentile thresholds.
+        reproject(
+            source=source_data,
+            destination=destination_data,
+            src_transform=source.transform,
+            src_crs=source.crs,
+            src_nodata=np.nan,
+            dst_transform=destination_transform,
+            dst_crs=destination_crs,
+            dst_nodata=np.nan,
+            resampling=Resampling.nearest,
+            init_dest_nodata=True,
+            num_threads=2,
+        )
+
+        reproject(
+            source=source_valid,
+            destination=destination_valid,
+            src_transform=source.transform,
+            src_crs=source.crs,
+            src_nodata=0,
+            dst_transform=destination_transform,
+            dst_crs=destination_crs,
+            dst_nodata=0,
+            resampling=Resampling.nearest,
+            init_dest_nodata=True,
+            num_threads=2,
+        )
+
+    destination_data[destination_valid == 0] = np.nan
+    destination_data[
+        (destination_data < 0.0)
+        | (destination_data > 100.0)
+    ] = np.nan
+
+    projected_bounds = array_bounds(
+        destination_height,
+        destination_width,
+        destination_transform,
+    )
+
+    west, south, east, north = transform_bounds(
+        destination_crs,
+        CRS.from_epsg(4326),
+        *projected_bounds,
+        densify_pts=21,
+    )
+
+    leaflet_bounds = [
+        [float(south), float(west)],
+        [float(north), float(east)],
+    ]
+
+    print(f"SPoRT output shape: {destination_data.shape}")
+    print("SPoRT image CRS: EPSG:3857")
+    print(f"SPoRT Leaflet bounds: {leaflet_bounds}")
+
+    valid_values = destination_data[
+        np.isfinite(destination_data)
+    ]
+
+    if valid_values.size:
+        print(
+            "SPoRT valid percentile range: "
+            f"{float(np.nanmin(valid_values)):.1f} to "
+            f"{float(np.nanmax(valid_values)):.1f}"
+        )
+
+    return destination_data, leaflet_bounds
 
 
-# -----------------------------------------------------------------------------
-# 5. CREATE TRANSPARENT PNG
-# -----------------------------------------------------------------------------
-def create_rgba_image(data, valid):
-    # Index 0 is intentionally transparent so values below the 70th
-    # percentile are not displayed.
+def create_rgba_image(data):
     palette = np.array(
         [
-            [0, 0, 0, 0],          # <70
-            [255, 255, 0, 255],    # 70-80
-            [255, 204, 0, 255],    # 80-90
-            [255, 102, 0, 255],    # 90-95
-            [255, 0, 0, 255],      # 95-98
-            [204, 0, 204, 255],    # 98-100
+            [0, 0, 0, 0],
+            [255, 255, 0, 255],
+            [255, 204, 0, 255],
+            [255, 102, 0, 255],
+            [255, 0, 0, 255],
+            [204, 0, 204, 255],
         ],
         dtype=np.uint8,
     )
@@ -226,6 +301,8 @@ def create_rgba_image(data, valid):
         dtype=np.uint8,
     )
 
+    valid = np.isfinite(data)
+
     class_index = np.digitize(
         data,
         bins=[70, 80, 90, 95, 98],
@@ -233,16 +310,9 @@ def create_rgba_image(data, valid):
     )
 
     rgba[valid] = palette[class_index[valid]]
-
-    # IMPORTANT:
-    # Do not call np.flipud(). A north-up GeoTIFF and a PNG both store
-    # their northernmost image row first.
     return rgba
 
 
-# -----------------------------------------------------------------------------
-# 6. MAIN
-# -----------------------------------------------------------------------------
 def main():
     OUTPUT_PNG.parent.mkdir(
         parents=True,
@@ -251,10 +321,10 @@ def main():
 
     try:
         valid_time, source_url = download_latest_sport()
-        data, valid, bounds = process_geotiff()
-        rgba = create_rgba_image(data, valid)
+        data, bounds = read_and_reproject_geotiff()
+        rgba = create_rgba_image(data)
 
-        Image.fromarray(rgba, mode="RGBA").save(
+        Image.fromarray(rgba).save(
             OUTPUT_PNG,
             optimize=True,
         )
@@ -278,7 +348,9 @@ def main():
                 1,
             ),
             "bounds": bounds,
-            "crs": "EPSG:4326",
+            "crs": "EPSG:3857",
+            "image_crs": "EPSG:3857",
+            "bounds_crs": "EPSG:4326",
             "product": (
                 "NASA SPoRT-LIS 0-100 cm "
                 "Soil Moisture Percentile"
@@ -302,7 +374,7 @@ def main():
         print(f"Wrote {OUTPUT_JSON}")
         print(
             "SPoRT-LIS data successfully "
-            "processed and exported."
+            "reprojected and exported."
         )
         return 0
 
