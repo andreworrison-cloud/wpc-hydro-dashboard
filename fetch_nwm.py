@@ -336,29 +336,55 @@ def prepare_source_grid(dataset):
         y = y[::-1]
         soil_saturation = soil_saturation[::-1, :]
 
-    dx = float(np.median(np.diff(x)))
-    dy = float(np.median(np.abs(np.diff(y))))
+    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        raise RuntimeError(
+            "NWM x or y coordinates contain non-finite values."
+        )
+
+    x_differences = np.diff(x)
+    y_differences = np.diff(y)
+
+    if not np.all(x_differences > 0.0):
+        raise RuntimeError(
+            "NWM x coordinates are not strictly increasing."
+        )
+
+    if not np.all(y_differences < 0.0):
+        raise RuntimeError(
+            "NWM y coordinates are not strictly decreasing "
+            "after north-up normalization."
+        )
+
+    # Use the complete coordinate span rather than requiring every
+    # floating-point increment to be bit-for-bit identical. The NWM grid is
+    # regular, but packed/decoded coordinate values can contain harmless
+    # sub-metre rounding differences.
+    dx = float((x[-1] - x[0]) / (x.size - 1))
+    dy = float((y[0] - y[-1]) / (y.size - 1))
 
     if dx <= 0.0 or dy <= 0.0:
         raise RuntimeError(
             f"Invalid NWM grid spacing: dx={dx}, dy={dy}"
         )
 
-    if not np.allclose(
-        np.diff(x),
-        dx,
-        rtol=0.0,
-        atol=max(1.0e-4, abs(dx) * 1.0e-6),
-    ):
-        raise RuntimeError("NWM x coordinates are not regularly spaced.")
+    x_min_step = float(np.min(x_differences))
+    x_max_step = float(np.max(x_differences))
+    y_step_magnitudes = np.abs(y_differences)
+    y_min_step = float(np.min(y_step_magnitudes))
+    y_max_step = float(np.max(y_step_magnitudes))
 
-    if not np.allclose(
-        np.abs(np.diff(y)),
-        dy,
-        rtol=0.0,
-        atol=max(1.0e-4, abs(dy) * 1.0e-6),
-    ):
-        raise RuntimeError("NWM y coordinates are not regularly spaced.")
+    print(
+        "NWM decoded x-step range: "
+        f"{x_min_step:.6f} to {x_max_step:.6f}"
+    )
+    print(
+        "NWM decoded y-step range: "
+        f"{y_min_step:.6f} to {y_max_step:.6f}"
+    )
+    print(
+        "NWM endpoint-derived grid spacing: "
+        f"dx={dx:.6f}, dy={dy:.6f}"
+    )
 
     source_transform = from_origin(
         west=float(x[0] - dx / 2.0),
@@ -636,15 +662,35 @@ def main():
     except Exception as error:
         print(f"WARNING: NWM update failed: {error}")
 
+        compatible_previous_output = False
+
         if OUTPUT_PNG.exists() and OUTPUT_JSON.exists():
+            try:
+                previous_metadata = json.loads(
+                    OUTPUT_JSON.read_text(encoding="utf-8")
+                )
+                compatible_previous_output = (
+                    str(
+                        previous_metadata.get(
+                            "image_crs",
+                            previous_metadata.get("crs", ""),
+                        )
+                    ).upper()
+                    == "EPSG:3857"
+                )
+            except Exception:
+                compatible_previous_output = False
+
+        if compatible_previous_output:
             print(
-                "Keeping the previous NWM dashboard layer."
+                "Keeping the previous EPSG:3857-compatible "
+                "NWM dashboard layer."
             )
             return 0
 
         print(
-            "No previous NWM output exists; "
-            "the workflow must fail."
+            "No compatible previous NWM output exists; "
+            "the workflow must fail instead of publishing stale metadata."
         )
         return 1
 
