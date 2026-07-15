@@ -157,8 +157,43 @@ def read_and_reproject_geotiff():
             dtype=np.float32,
         )
 
-        source_valid = (
+        source_mask = (
             ~np.ma.getmaskarray(percentile)
+            & np.isfinite(source_data)
+        )
+
+        source_dtype = np.dtype(source.dtypes[0])
+        finite_raw_values = source_data[source_mask]
+
+        if finite_raw_values.size == 0:
+            raise RuntimeError(
+                "SPoRT raster contains no finite unmasked values."
+            )
+
+        raw_min = float(np.nanmin(finite_raw_values))
+        raw_max = float(np.nanmax(finite_raw_values))
+
+        # The byteScaled product stores percentile 0-100 across bytes 0-254;
+        # byte 255 is reserved for missing data. Its GeoTIFF scale metadata is
+        # not necessarily populated, so decode it explicitly when needed.
+        if np.issubdtype(source_dtype, np.integer) and raw_max > 100.0:
+            print(
+                "Decoding SPoRT byte-scaled percentile values "
+                "from 0-254 to 0-100."
+            )
+
+            byte_valid = (
+                source_mask
+                & (source_data >= 0.0)
+                & (source_data <= 254.0)
+            )
+
+            source_data[~byte_valid] = np.nan
+            source_data[byte_valid] *= 100.0 / 254.0
+            source_mask = byte_valid
+
+        source_valid = (
+            source_mask
             & np.isfinite(source_data)
             & (source_data >= 0.0)
             & (source_data <= 100.0)
@@ -381,16 +416,35 @@ def main():
     except Exception as error:
         print(f"WARNING: SPoRT-LIS update failed: {error}")
 
+        compatible_previous_output = False
+
         if OUTPUT_PNG.exists() and OUTPUT_JSON.exists():
+            try:
+                previous_metadata = json.loads(
+                    OUTPUT_JSON.read_text(encoding="utf-8")
+                )
+                compatible_previous_output = (
+                    str(
+                        previous_metadata.get(
+                            "image_crs",
+                            previous_metadata.get("crs", ""),
+                        )
+                    ).upper()
+                    == "EPSG:3857"
+                )
+            except Exception:
+                compatible_previous_output = False
+
+        if compatible_previous_output:
             print(
-                "Keeping the previous SPoRT-LIS "
-                "dashboard layer."
+                "Keeping the previous EPSG:3857-compatible "
+                "SPoRT-LIS dashboard layer."
             )
             return 0
 
         print(
-            "No previous SPoRT-LIS output exists; "
-            "the workflow must fail."
+            "No compatible previous SPoRT-LIS output exists; "
+            "the workflow must fail instead of publishing stale metadata."
         )
         return 1
 
