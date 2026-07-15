@@ -33,8 +33,8 @@ for lag in range(1, 25):
     date_str = target_time.strftime('%Y%m%d')
     hour_str = target_time.strftime('%H')
     
-    # Standard SPoRT-LIS NetCDF output structure
-    url = f"https://weather.msfc.nasa.gov/pub/sport/lis/conus_hrrr/{date_str}/LIS_HIST_{date_str}{hour_str}00.d01.nc"
+    # Updated to the new NASA NDC server domain
+    url = f"https://weather.ndc.nasa.gov/pub/sport/lis/conus_hrrr/{date_str}/LIS_HIST_{date_str}{hour_str}00.d01.nc"
     
     print(f"Checking NASA SPoRT for: {date_str} {hour_str}Z...")
     
@@ -61,7 +61,6 @@ try:
     ds = xr.open_dataset(SPORT_FILE, engine='h5netcdf')
     
     # Extract the 0-100cm Soil Moisture Percentile
-    # Variable name varies slightly by SPoRT version, commonly 'SoilMoist_Prcntile' or 'smc_prcntile'
     var_name = 'smc_prcntile' if 'smc_prcntile' in ds.data_vars else list(ds.data_vars)[0]
     percentile = ds[var_name].values[0, :, :] 
         
@@ -79,7 +78,6 @@ ax.set_axis_off()
 fig.add_axes(ax)
 
 # Operational breaks: <70 (Transparent), 70-80, 80-90, 90-95, 95-98, >98
-# Colors: Transparent -> Yellow -> Gold -> Orange -> Red -> Purple
 colors = ["#ffffff00", "#ffff00", "#ffcc00", "#ff6600", "#ff0000", "#cc00cc"]
 bounds = [0, 70, 80, 90, 95, 98, 100]
 cmap = ListedColormap(colors)
