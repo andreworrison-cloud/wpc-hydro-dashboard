@@ -82,7 +82,13 @@ lat_min, lat_max = transformed_extents[:, 1].min(), transformed_extents[:, 1].ma
 # Export exact bounds for Leaflet: [[south, west], [north, east]]
 exact_bounds = [[float(lat_min), float(lon_min)], [float(lat_max), float(lon_max)]]
 
-fig = plt.figure(figsize=(16, 10), dpi=150)
+# THE FIX: Match the figure aspect ratio EXACTLY to the geographic extent to eliminate all padding
+width_deg = lon_max - lon_min
+height_deg = lat_max - lat_min
+aspect_ratio = width_deg / height_deg
+
+# Dynamically size the figure so no whitespace is generated
+fig = plt.figure(figsize=(10 * aspect_ratio, 10), dpi=150)
 ax = plt.axes(projection=plate_carree)
 ax.set_axis_off()
 
@@ -95,7 +101,6 @@ masked_data = np.ma.masked_where((soil_sat < 0) | np.isnan(soil_sat), soil_sat)
 
 c = ax.pcolormesh(x, y, masked_data, transform=nwm_crs, cmap=cmap, norm=norm, shading='auto')
 
-# Force axes to the exact calculated bounds
 ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=plate_carree)
 fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
