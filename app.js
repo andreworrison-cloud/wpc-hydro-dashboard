@@ -92,13 +92,13 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     attribution: '© OpenStreetMap contributors'
 });
 
-// NEW: Esri World Imagery (Satellite)
+// Esri World Imagery (Satellite)
 const esriWorldImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
     attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
 });
 
-// NEW: Esri World Topographic
+// Esri World Topographic
 const esriWorldTopo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
     attribution: 'Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community'
@@ -136,12 +136,10 @@ whiteBorders.addTo(map);
 
 // DYNAMIC BASEMAP TOGGLE LOGIC
 map.on('baselayerchange', function(e) {
-    // Clear out old boundary/label layers
     if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); 
     if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
     if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
 
-    // Apply the correct contrast borders based on the selected map
     if (e.name === "Esri Dark Gray") {
         esriDarkLabels.addTo(map);
         whiteBorders.addTo(map);
@@ -301,7 +299,7 @@ async function fetchNWSAlerts() {
 fetchNWSAlerts();
 setInterval(fetchNWSAlerts, 5 * 60 * 1000); 
 
-// --- MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
+// --- BULLETPROOF MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
 const ffdLayer = L.layerGroup();
 
 async function fetchFFDData() {
@@ -350,7 +348,6 @@ async function fetchFFDData() {
                     let rawLabel = titleMatch[1];
                     rawLabel = rawLabel.replace(/\\[nN]/g, ' ').replace(/\/[nN]/g, ' ').replace(/boundary/i, '').replace(/\s+/g, ' ').trim();
                     const parts = rawLabel.split(' ');
-                    // Build tooltip but do not rely on it for the global timestamp
                     if (parts.length > 0) {
                         let impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
                         if (impactTag.length > 0) impactTag = impactTag.charAt(0).toUpperCase() + impactTag.slice(1);
@@ -564,11 +561,16 @@ const eroCamLayers = {};
     });
 });
 
+// --- NEW: NLDAS-2 SOIL MOISTURE LAYER ---
+const nldasBounds = [[25.0, -125.0], [53.0, -67.0]];
+const nldasLayer = L.imageOverlay('static/nldas_soil_moisture.png', nldasBounds, {zIndex: 10});
+
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
 let camCycles = { href: "Unknown", refs: "Unknown" };
 let eroValidRangeStr = "Unknown";
+let nldasValidTime = "Unknown";
 
 function fetchRAPMetadata() {
     fetch('static/rap_metadata.json?t=' + new Date().getTime())
@@ -638,17 +640,59 @@ function fetchEROCAMMetadata() {
         .catch(err => console.log("ERO CAM metadata not found yet."));
 }
 
+function fetchNLDASMetadata() {
+    fetch('static/nldas_metadata.json?t=' + new Date().getTime())
+        .then(r => r.json())
+        .then(data => {
+            nldasValidTime = data.valid_time || "Unknown";
+            const timeBox = document.getElementById('nldas-time-box');
+            if (timeBox && timeBox.style.display === 'block') {
+                timeBox.innerHTML = `<strong>Top 10cm Soil Moisture</strong><br><span style="color: #ffeb3b;">${nldasValidTime}</span>`;
+            }
+            if (data.bounds) {
+                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+                nldasLayer.setBounds(exactBounds);
+                const base = nldasLayer._url.split('?')[0];
+                nldasLayer.setUrl(base + '?t=' + new Date().getTime());
+            }
+        })
+        .catch(err => console.log("NLDAS metadata not found yet."));
+}
+
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
 fetchEROCAMMetadata();
+fetchNLDASMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
     fetchRAPMetadata();
     fetchCAMMetadata();
     fetchEROCAMMetadata();
+    fetchNLDASMetadata();
 }, 15 * 60 * 1000); 
+
+function getValidTimeRange(cycleStr, windowStr) {
+    if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
+    
+    let cycleHour = parseInt(cycleStr);
+    let now = new Date();
+    
+    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
+    
+    if (now.getUTCHours() < cycleHour) {
+        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
+    }
+    
+    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
+    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
+    
+    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
+    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
+    
+    return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
+}
 
 // --- STACKABLE LEGENDS & TIME BOX UI ---
 
@@ -726,6 +770,21 @@ ffdTimeControl.onAdd = function() {
     return div;
 };
 ffdTimeControl.addTo(map);
+
+const nldasTimeControl = L.control({position: 'bottomright'});
+nldasTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'nldas-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+nldasTimeControl.addTo(map);
 
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
@@ -952,6 +1011,25 @@ const mrmsLegendQPEMulti = `
     </div>
 `;
 
+const nldasLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 250px;">
+        <strong style="font-size: 13px;">Top 10cm Volumetric Soil Moisture</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
+            <div style="background: #8b5a2b; flex: 1;" title="Dry"></div>
+            <div style="background: #d2b48c; flex: 1;"></div>
+            <div style="background: #e0eee0; flex: 1;"></div>
+            <div style="background: #90ee90; flex: 1;"></div>
+            <div style="background: #3cb371; flex: 1;"></div>
+            <div style="background: #00ced1; flex: 1;"></div>
+            <div style="background: #1e90ff; flex: 1;"></div>
+            <div style="background: #00008b; flex: 1;" title="Saturated"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
+            <span>Dry (0.05)</span><span>Saturated (0.45+)</span>
+        </div>
+    </div>
+`;
+
 // Global tracker for currently active layers
 let activeLayerNames = new Set();
 
@@ -973,6 +1051,7 @@ function updateLegends() {
     if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
+    if (activeLayerNames.has('NLDAS-2 Soil Moisture (Top 10cm)')) addLegendBlock(nldasLegendHTML);
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -1014,6 +1093,7 @@ map.on('overlayadd', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
+    const nldasTimeBox = document.getElementById('nldas-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         if (eventLayer.name.includes('+3h Forecast')) {
@@ -1035,9 +1115,16 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.innerHTML = `<strong>MRMS ${hours}-Hour Accumulation</strong><br>${formatUTC(start)} &mdash; ${formatUTC(now)}`;
         mrmsTimeBox.style.display = 'block';
     }
-    
+
     if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'block';
+    }
+
+    if (eventLayer.name === 'NLDAS-2 Soil Moisture (Top 10cm)') {
+        if (nldasTimeBox) {
+            nldasTimeBox.innerHTML = `<strong>Top 10cm Soil Moisture</strong><br><span style="color: #ffeb3b;">${nldasValidTime}</span>`;
+            nldasTimeBox.style.display = 'block';
+        }
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
@@ -1113,6 +1200,7 @@ map.on('overlayremove', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
+    const nldasTimeBox = document.getElementById('nldas-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -1126,6 +1214,10 @@ map.on('overlayremove', function(eventLayer) {
     
     if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === 'NLDAS-2 Soil Moisture (Top 10cm)') {
+        if (nldasTimeBox) nldasTimeBox.style.display = 'none';
     }
     
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -1153,6 +1245,9 @@ const groupedOverlays = {
         "Active Hydro Watches": watchesLayer,
         "WPC Active MPDs": mpdLayer,
         "Day 1 ERO (Real-Time)": eroLayer
+    },
+    "Antecedent Hydrologic Conditions": {
+        "NLDAS-2 Soil Moisture (Top 10cm)": nldasLayer
     },
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
