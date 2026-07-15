@@ -48,6 +48,16 @@ mapTitle.style.letterSpacing = '1px';
 mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
 
+// --- GLOBAL UTILITY FUNCTION ---
+function formatUTC(date) {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const m = months[date.getUTCMonth()];
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    const h = String(date.getUTCHours()).padStart(2, '0');
+    const min = String(date.getUTCMinutes()).padStart(2, '0');
+    return `${m} ${d}, ${h}${min}Z`;
+}
+
 // --- CUSTOM MAP PANES FOR STRICT Z-INDEX HAZARD PRIORITY ---
 map.createPane('labels');
 map.getPane('labels').style.zIndex = 600;
@@ -269,7 +279,7 @@ async function fetchNWSAlerts() {
 fetchNWSAlerts();
 setInterval(fetchNWSAlerts, 5 * 60 * 1000); 
 
-// --- MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
+// --- BULLETPROOF MRMS DVD FLASH FLOOD DETECTOR (FFD) ---
 const ffdLayer = L.layerGroup();
 
 async function fetchFFDData() {
@@ -277,6 +287,10 @@ async function fetchFFDData() {
         const targetUrl = `static/ffd_contours.txt?t=${new Date().getTime()}`;
         const response = await fetch(targetUrl);
         if (!response.ok) throw new Error("Could not fetch local FFD placefile.");
+        
+        // THE FIX: We bypass fragile text-parsing entirely and grab the exact creation time of the file
+        const lastModified = response.headers.get('Last-Modified');
+        let latestFFDTime = lastModified ? formatUTC(new Date(lastModified)) : formatUTC(new Date()); 
         
         const text = await response.text();
         ffdLayer.clearLayers(); 
@@ -287,7 +301,6 @@ async function fetchFFDData() {
         let currentTooltipHTML = '<strong>Monitor</strong>';
         let isDrawing = false;
         let currentCoords = [];
-        let latestFFDTime = null; 
         
         lines.forEach(line => {
             const cleanLine = line.trim();
@@ -316,12 +329,11 @@ async function fetchFFDData() {
                     let rawLabel = titleMatch[1];
                     rawLabel = rawLabel.replace(/\\[nN]/g, ' ').replace(/\/[nN]/g, ' ').replace(/boundary/i, '').replace(/\s+/g, ' ').trim();
                     const parts = rawLabel.split(' ');
-                    if (parts.length > 0 && /Z$/i.test(parts[0])) {
-                        const timeStamp = parts[0];
-                        latestFFDTime = timeStamp; 
+                    // Build tooltip but do not rely on it for the global timestamp
+                    if (parts.length > 0) {
                         let impactTag = parts.length > 1 ? parts.slice(1).join(' ') : colorInferredImpact;
                         if (impactTag.length > 0) impactTag = impactTag.charAt(0).toUpperCase() + impactTag.slice(1);
-                        currentTooltipHTML = `<span style="font-size: 0.9em;">${timeStamp}</span><br><span style="font-size: 1.1em;"><strong>${impactTag}</strong></span>`;
+                        currentTooltipHTML = `<strong>${impactTag}</strong>`;
                     } else {
                         currentTooltipHTML = `<strong>${rawLabel}</strong>`;
                     }
@@ -351,16 +363,15 @@ async function fetchFFDData() {
             }
         });
 
-        if (latestFFDTime) {
-            const ffdTimeBox = document.getElementById('ffd-time-box');
-            if (ffdTimeBox) {
-                ffdTimeBox.innerHTML = `
-                    <strong>Flash Flood Detector</strong><br>
-                    <span style="color: #4fc3f7; font-weight: bold; font-size: 1.05em;">Latest Run: ${latestFFDTime}</span>
-                `;
-                if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) {
-                    ffdTimeBox.style.display = 'block';
-                }
+        // Force the GUI to update with the reliable header timestamp
+        const ffdTimeBox = document.getElementById('ffd-time-box');
+        if (ffdTimeBox) {
+            ffdTimeBox.innerHTML = `
+                <strong>Flash Flood Detector</strong><br>
+                <span style="color: #4fc3f7; font-weight: bold; font-size: 1.05em;">Latest Run: ${latestFFDTime}</span>
+            `;
+            if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) {
+                ffdTimeBox.style.display = 'block';
             }
         }
     } catch (error) { console.log("Waiting for FFD Contours..."); }
@@ -619,13 +630,26 @@ setInterval(() => {
     fetchEROCAMMetadata();
 }, 15 * 60 * 1000); 
 
-function formatUTC(date) {
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const m = months[date.getUTCMonth()];
-    const d = String(date.getUTCDate()).padStart(2, '0');
-    const h = String(date.getUTCHours()).padStart(2, '0');
-    const min = String(date.getUTCMinutes()).padStart(2, '0');
-    return `${m} ${d}, ${h}${min}Z`;
+// --- DYNAMIC TIME CALCULATOR FOR CAM WINDOWS ---
+function getValidTimeRange(cycleStr, windowStr) {
+    if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
+    
+    let cycleHour = parseInt(cycleStr);
+    let now = new Date();
+    
+    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
+    
+    if (now.getUTCHours() < cycleHour) {
+        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
+    }
+    
+    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
+    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
+    
+    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
+    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
+    
+    return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
 }
 
 // --- STACKABLE LEGENDS & TIME BOX UI ---
@@ -716,6 +740,21 @@ legendControl.onAdd = function () {
     return div;
 };
 legendControl.addTo(map);
+
+// Update radar loop timestamps dynamically as player plays
+map.timeDimension.on('timeload', function() {
+    const radarTimeBox = document.getElementById('radar-time-box');
+    if (radarTimeBox && radarTimeBox.style.display === 'block') {
+        const hasRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar'));
+        if (hasRadar) {
+            const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
+            radarTimeBox.innerHTML = `
+                <strong>NEXRAD Radar Loop</strong><br>
+                <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
+            `;
+        }
+    }
+});
 
 // --- LEGEND DICTIONARIES AND HTML BLOCKS ---
 const rapLegendMapping = {
@@ -998,7 +1037,8 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.innerHTML = `<strong>MRMS ${hours}-Hour Accumulation</strong><br>${formatUTC(start)} &mdash; ${formatUTC(now)}`;
         mrmsTimeBox.style.display = 'block';
     }
-    
+
+    // THE FIX: Always show the FFD timebox if it was toggled on from the menu
     if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'block';
     }
