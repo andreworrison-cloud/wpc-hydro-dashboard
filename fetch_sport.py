@@ -10,6 +10,7 @@ from PIL import Image
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
 # -----------------------------------------------------------------------------
 # 1. CONFIGURATION
 # -----------------------------------------------------------------------------
@@ -32,6 +33,7 @@ HEADERS = {
     "Accept": "image/tiff,application/octet-stream,*/*",
 }
 
+
 # -----------------------------------------------------------------------------
 # 2. HTTP SESSION
 # -----------------------------------------------------------------------------
@@ -49,8 +51,8 @@ def build_session():
     session = requests.Session()
     session.headers.update(HEADERS)
     session.mount("https://", HTTPAdapter(max_retries=retry))
-
     return session
+
 
 def is_tiff(path):
     try:
@@ -58,11 +60,12 @@ def is_tiff(path):
             magic = file.read(4)
 
         return magic in (
-            b"II*\x00",   
-            b"MM\x00*",   
+            b"II*\x00",  # Little-endian TIFF
+            b"MM\x00*",  # Big-endian TIFF
         )
     except OSError:
         return False
+
 
 # -----------------------------------------------------------------------------
 # 3. DOWNLOAD
@@ -72,31 +75,54 @@ def download_latest_sport():
     now = datetime.now(timezone.utc)
 
     for lag_days in range(LOOKBACK_DAYS + 1):
-        valid_time = (now - timedelta(days=lag_days)).replace(hour=0, minute=0, second=0, microsecond=0)
+        valid_time = (now - timedelta(days=lag_days)).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
         date_string = valid_time.strftime("%Y%m%d")
 
-        filename = f"{date_string}_0000_sport_lis_vsm0-100cm_percentile_conus3km_byteScaled_wgs84.tif"
+        filename = (
+            f"{date_string}_0000_sport_lis_"
+            "vsm0-100cm_percentile_conus3km_byteScaled_wgs84.tif"
+        )
         url = f"{BASE_URL}/{filename}"
 
-        print(f"Checking NASA SPoRT-LIS 0–100 cm percentile for {date_string} 00Z...")
+        print(
+            "Checking NASA SPoRT-LIS 0-100 cm percentile "
+            f"for {date_string} 00Z..."
+        )
 
         try:
-            with session.get(url, stream=True, timeout=(20, 180)) as response:
+            with session.get(
+                url,
+                stream=True,
+                timeout=(20, 180),
+            ) as response:
                 if response.status_code == 404:
                     print(" -> Product not posted for this date.")
                     continue
 
                 if response.status_code != 200:
-                    print(f" -> HTTP {response.status_code}; trying an older date.")
+                    print(
+                        f" -> HTTP {response.status_code}; "
+                        "trying an older date."
+                    )
                     continue
 
                 with SPORT_FILE.open("wb") as file:
-                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    for chunk in response.iter_content(
+                        chunk_size=1024 * 1024
+                    ):
                         if chunk:
                             file.write(chunk)
 
             if not is_tiff(SPORT_FILE):
-                print(" -> Download was not a valid TIFF; trying an older date.")
+                print(
+                    " -> Download was not a valid TIFF; "
+                    "trying an older date."
+                )
                 SPORT_FILE.unlink(missing_ok=True)
                 continue
 
@@ -106,13 +132,32 @@ def download_latest_sport():
         except requests.RequestException as error:
             print(f" -> Connection error: {error}")
 
-    raise RuntimeError(f"No SPoRT-LIS 0–100 cm percentile GeoTIFF was found in the last {LOOKBACK_DAYS} days.")
+    raise RuntimeError(
+        "No SPoRT-LIS 0-100 cm percentile GeoTIFF was found "
+        f"in the last {LOOKBACK_DAYS} days."
+    )
+
 
 # -----------------------------------------------------------------------------
-# 4. PROCESS THE GEOTIFF
+# 4. PROCESS THE NORTH-UP WGS84 GEOTIFF
 # -----------------------------------------------------------------------------
 def process_geotiff():
     with rasterio.open(SPORT_FILE) as source:
+        if source.crs is None:
+            raise RuntimeError("SPoRT GeoTIFF has no CRS.")
+
+        if source.crs.to_epsg() != 4326:
+            raise RuntimeError(
+                f"Expected WGS84/EPSG:4326 SPoRT file, found {source.crs}."
+            )
+
+        # A north-up raster normally has a negative Y pixel size.
+        if source.transform.e >= 0:
+            raise RuntimeError(
+                "SPoRT GeoTIFF is not north-up as expected; "
+                "do not apply an unverified manual flip."
+            )
+
         percentile = source.read(1, masked=True).astype(np.float32)
 
         scale = source.scales[0] if source.scales else 1.0
@@ -121,7 +166,10 @@ def process_geotiff():
         if scale != 1.0 or offset != 0.0:
             percentile = percentile * scale + offset
 
-        data = np.asarray(percentile.filled(np.nan), dtype=np.float32)
+        data = np.asarray(
+            percentile.filled(np.nan),
+            dtype=np.float32,
+        )
 
         valid = (
             ~np.ma.getmaskarray(percentile)
@@ -131,86 +179,152 @@ def process_geotiff():
         )
 
         bounds = [
-            [float(source.bounds.bottom), float(source.bounds.left)],
-            [float(source.bounds.top), float(source.bounds.right)],
+            [
+                float(source.bounds.bottom),
+                float(source.bounds.left),
+            ],
+            [
+                float(source.bounds.top),
+                float(source.bounds.right),
+            ],
         ]
-        crs = source.crs.to_string() if source.crs else "unknown"
 
-    return data, valid, bounds, crs
+        print(f"SPoRT raster shape: {data.shape}")
+        print(f"SPoRT CRS: {source.crs}")
+        print(f"SPoRT Leaflet bounds: {bounds}")
+
+        if np.any(valid):
+            print(
+                "SPoRT valid percentile range: "
+                f"{float(np.nanmin(data[valid])):.1f} to "
+                f"{float(np.nanmax(data[valid])):.1f}"
+            )
+
+    return data, valid, bounds
+
 
 # -----------------------------------------------------------------------------
 # 5. CREATE TRANSPARENT PNG
 # -----------------------------------------------------------------------------
 def create_rgba_image(data, valid):
+    # Index 0 is intentionally transparent so values below the 70th
+    # percentile are not displayed.
     palette = np.array(
         [
-            [0, 0, 0, 0],          
-            [255, 255, 0, 255],    
-            [255, 204, 0, 255],    
-            [255, 102, 0, 255],    
-            [255, 0, 0, 255],      
-            [204, 0, 204, 255],    
+            [0, 0, 0, 0],          # <70
+            [255, 255, 0, 255],    # 70-80
+            [255, 204, 0, 255],    # 80-90
+            [255, 102, 0, 255],    # 90-95
+            [255, 0, 0, 255],      # 95-98
+            [204, 0, 204, 255],    # 98-100
         ],
         dtype=np.uint8,
     )
 
-    rgba = np.zeros((data.shape[0], data.shape[1], 4), dtype=np.uint8)
-    valid_data = data[valid]
-    
-    class_index = np.digitize(valid_data, bins=[70, 80, 90, 95, 98], right=False)
-    rgba[valid] = palette[class_index]
+    rgba = np.zeros(
+        (data.shape[0], data.shape[1], 4),
+        dtype=np.uint8,
+    )
 
-    # THE FIX: Flip the image vertically so North is at the top for Leaflet mapping
-    return np.flipud(rgba)
+    class_index = np.digitize(
+        data,
+        bins=[70, 80, 90, 95, 98],
+        right=False,
+    )
+
+    rgba[valid] = palette[class_index[valid]]
+
+    # IMPORTANT:
+    # Do not call np.flipud(). A north-up GeoTIFF and a PNG both store
+    # their northernmost image row first.
+    return rgba
+
 
 # -----------------------------------------------------------------------------
 # 6. MAIN
 # -----------------------------------------------------------------------------
 def main():
-    OUTPUT_PNG.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PNG.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     try:
         valid_time, source_url = download_latest_sport()
-        data, valid, bounds, crs = process_geotiff()
+        data, valid, bounds = process_geotiff()
         rgba = create_rgba_image(data, valid)
 
-        Image.fromarray(rgba).save(OUTPUT_PNG, optimize=True)
+        Image.fromarray(rgba, mode="RGBA").save(
+            OUTPUT_PNG,
+            optimize=True,
+        )
 
         retrieval_time = datetime.now(timezone.utc)
 
         metadata = {
-            "valid_time": valid_time.strftime("SPoRT-LIS: %b %d, %Y %HZ"),
-            "valid_time_iso": valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "retrieved_time": retrieval_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "data_age_hours": round((retrieval_time - valid_time).total_seconds() / 3600.0, 1),
+            "valid_time": valid_time.strftime(
+                "SPoRT-LIS: %b %d, %Y %HZ"
+            ),
+            "valid_time_iso": valid_time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            "retrieved_time": retrieval_time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            "data_age_hours": round(
+                (
+                    retrieval_time - valid_time
+                ).total_seconds() / 3600.0,
+                1,
+            ),
             "bounds": bounds,
-            "crs": crs,
-            "product": "NASA SPoRT-LIS 0–100 cm Soil Moisture Percentile",
-            "depth": "0–100 cm",
+            "crs": "EPSG:4326",
+            "product": (
+                "NASA SPoRT-LIS 0-100 cm "
+                "Soil Moisture Percentile"
+            ),
+            "depth": "0-100 cm",
             "units": "percentile",
             "source_url": source_url,
         }
 
-        with OUTPUT_JSON.open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, indent=2)
+        with OUTPUT_JSON.open(
+            "w",
+            encoding="utf-8",
+        ) as file:
+            json.dump(
+                metadata,
+                file,
+                indent=2,
+            )
 
         print(f"Wrote {OUTPUT_PNG}")
         print(f"Wrote {OUTPUT_JSON}")
-        print("SPoRT-LIS data successfully processed and exported.")
-
+        print(
+            "SPoRT-LIS data successfully "
+            "processed and exported."
+        )
         return 0
 
     except Exception as error:
         print(f"WARNING: SPoRT-LIS update failed: {error}")
+
         if OUTPUT_PNG.exists() and OUTPUT_JSON.exists():
-            print("Keeping the previous SPoRT-LIS dashboard layer.")
+            print(
+                "Keeping the previous SPoRT-LIS "
+                "dashboard layer."
+            )
             return 0
 
-        print("No previous SPoRT-LIS output exists; the workflow must fail.")
+        print(
+            "No previous SPoRT-LIS output exists; "
+            "the workflow must fail."
+        )
         return 1
 
     finally:
         SPORT_FILE.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     sys.exit(main())
