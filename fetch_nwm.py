@@ -15,22 +15,17 @@ from rasterio.warp import (
     Resampling,
     calculate_default_transform,
     reproject,
+    transform_bounds,
 )
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 
-# -----------------------------------------------------------------------------
-# 1. CONFIGURATION
-# -----------------------------------------------------------------------------
 NWM_FILE = Path("nwm_temp.nc")
 OUTPUT_PNG = Path("static/nwm_soil_saturation.png")
 OUTPUT_JSON = Path("static/nwm_metadata.json")
 
 LOOKBACK_HOURS = 12
-
-# Limit the largest output dimension for reasonable dashboard file size.
-# This does not change the geographic bounds.
 MAX_OUTPUT_DIMENSION = 3000
 
 HEADERS = {
@@ -42,9 +37,6 @@ HEADERS = {
 }
 
 
-# -----------------------------------------------------------------------------
-# 2. HTTP SESSION
-# -----------------------------------------------------------------------------
 def build_session():
     retry = Retry(
         total=4,
@@ -55,7 +47,6 @@ def build_session():
         allowed_methods=frozenset({"GET"}),
         raise_on_status=False,
     )
-
     session = requests.Session()
     session.headers.update(HEADERS)
     session.mount("https://", HTTPAdapter(max_retries=retry))
@@ -76,13 +67,8 @@ def is_netcdf_or_hdf5(path):
         return False
 
 
-# -----------------------------------------------------------------------------
-# 3. DOWNLOAD THE MOST RECENT NWM ANALYSIS FILE
-# -----------------------------------------------------------------------------
 def download_latest_nwm():
     session = build_session()
-
-    # Give the current hourly analysis time to finish posting.
     search_start = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for hour_lag in range(LOOKBACK_HOURS + 1):
@@ -157,9 +143,6 @@ def download_latest_nwm():
     )
 
 
-# -----------------------------------------------------------------------------
-# 4. CRS AND GRID HELPERS
-# -----------------------------------------------------------------------------
 def plain_python(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -184,7 +167,6 @@ def projection_attrs_from_dataset(dataset, data_array):
         ]
     )
 
-    # Add any scalar variable that advertises a CF grid mapping.
     for name, variable in dataset.variables.items():
         if "grid_mapping_name" in variable.attrs:
             candidates.append(name)
@@ -238,8 +220,6 @@ def determine_source_crs(dataset, data_array):
                 f"{error}"
             )
 
-    # Fallback matching the operational NWM CONUS Lambert conformal grid.
-    # The file metadata is preferred whenever it is present.
     print(
         "WARNING: Falling back to the standard NWM CONUS "
         "Lambert conformal definition."
@@ -290,6 +270,27 @@ def prepare_source_grid(dataset):
         dtype=np.float64,
     )
 
+    x_units = str(
+        dataset["x"].attrs.get("units", "")
+    ).strip().lower()
+    y_units = str(
+        dataset["y"].attrs.get("units", "")
+    ).strip().lower()
+
+    kilometer_units = {
+        "km",
+        "kilometer",
+        "kilometers",
+        "kilometre",
+        "kilometres",
+    }
+
+    if x_units in kilometer_units:
+        x *= 1000.0
+
+    if y_units in kilometer_units:
+        y *= 1000.0
+
     if x.ndim != 1 or y.ndim != 1:
         raise RuntimeError(
             "Expected one-dimensional NWM x and y coordinates."
@@ -301,8 +302,6 @@ def prepare_source_grid(dataset):
             f"{soil_saturation.shape} versus {(y.size, x.size)}."
         )
 
-    # NOAA defines SOILSAT_TOP as a fraction. Retain a defensive check
-    # in case a future file is already expressed as percent.
     finite = soil_saturation[np.isfinite(soil_saturation)]
 
     if finite.size == 0:
@@ -329,8 +328,6 @@ def prepare_source_grid(dataset):
         | (soil_saturation > 100.0)
     ] = np.nan
 
-    # Rasterio requires row 0 to represent the northern edge and
-    # columns to run west to east.
     if x[0] > x[-1]:
         x = x[::-1]
         soil_saturation = soil_saturation[:, ::-1]
@@ -392,10 +389,7 @@ def prepare_source_grid(dataset):
     return soil_saturation, source_transform, source_crs
 
 
-# -----------------------------------------------------------------------------
-# 5. REPROJECT THE GRID TO A TRUE EPSG:4326 RASTER
-# -----------------------------------------------------------------------------
-def reproject_to_wgs84(
+def reproject_to_web_mercator(
     source_data,
     source_transform,
     source_crs,
@@ -408,7 +402,7 @@ def reproject_to_wgs84(
         source_transform,
     )
 
-    destination_crs = RasterioCRS.from_epsg(4326)
+    destination_crs = RasterioCRS.from_epsg(3857)
 
     (
         destination_transform,
@@ -475,8 +469,6 @@ def reproject_to_wgs84(
         num_threads=2,
     )
 
-    # Reproject the validity mask separately so interpolation does not
-    # spread saturation values into ocean or outside-domain pixels.
     reproject(
         source=source_valid,
         destination=destination_valid,
@@ -497,10 +489,17 @@ def reproject_to_wgs84(
         | (destination > 100.0)
     ] = np.nan
 
-    west, south, east, north = array_bounds(
+    projected_bounds = array_bounds(
         destination_height,
         destination_width,
         destination_transform,
+    )
+
+    west, south, east, north = transform_bounds(
+        destination_crs,
+        RasterioCRS.from_epsg(4326),
+        *projected_bounds,
+        densify_pts=21,
     )
 
     leaflet_bounds = [
@@ -509,27 +508,25 @@ def reproject_to_wgs84(
     ]
 
     print(
-        "NWM EPSG:4326 output shape: "
+        "NWM EPSG:3857 output shape: "
         f"{destination.shape}"
     )
+    print("NWM image CRS: EPSG:3857")
     print(f"NWM Leaflet bounds: {leaflet_bounds}")
 
     return destination, leaflet_bounds
 
 
-# -----------------------------------------------------------------------------
-# 6. CREATE THE RGBA PNG DIRECTLY
-# -----------------------------------------------------------------------------
 def create_rgba_image(data):
     palette = np.array(
         [
-            [210, 180, 140, 255],  # 0-40
-            [224, 238, 224, 255],  # 40-60
-            [144, 238, 144, 255],  # 60-70
-            [60, 179, 113, 255],   # 70-80
-            [0, 206, 209, 255],    # 80-90
-            [30, 144, 255, 255],   # 90-95
-            [0, 0, 139, 255],      # 95-100
+            [210, 180, 140, 255],
+            [224, 238, 224, 255],
+            [144, 238, 144, 255],
+            [60, 179, 113, 255],
+            [0, 206, 209, 255],
+            [30, 144, 255, 255],
+            [0, 0, 139, 255],
         ],
         dtype=np.uint8,
     )
@@ -548,15 +545,9 @@ def create_rgba_image(data):
     )
 
     rgba[valid] = palette[class_index[valid]]
-
-    # No manual flip is needed. Rasterio's destination transform is
-    # north-up, so row 0 is already the northern edge.
     return rgba
 
 
-# -----------------------------------------------------------------------------
-# 7. MAIN
-# -----------------------------------------------------------------------------
 def main():
     OUTPUT_PNG.parent.mkdir(
         parents=True,
@@ -583,7 +574,7 @@ def main():
         (
             destination_data,
             leaflet_bounds,
-        ) = reproject_to_wgs84(
+        ) = reproject_to_web_mercator(
             source_data,
             source_transform,
             source_crs,
@@ -591,7 +582,7 @@ def main():
 
         rgba = create_rgba_image(destination_data)
 
-        Image.fromarray(rgba, mode="RGBA").save(
+        Image.fromarray(rgba).save(
             OUTPUT_PNG,
             optimize=True,
         )
@@ -615,7 +606,9 @@ def main():
                 1,
             ),
             "bounds": leaflet_bounds,
-            "crs": "EPSG:4326",
+            "crs": "EPSG:3857",
+            "image_crs": "EPSG:3857",
+            "bounds_crs": "EPSG:4326",
             "product": "NOAA National Water Model SOILSAT_TOP",
             "depth": "top two soil layers, 0-40 cm",
             "units": "percent saturation",
