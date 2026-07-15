@@ -8,39 +8,49 @@ from matplotlib.colors import LinearSegmentedColormap
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURATION ---
-# NOMADS typically holds 2 days of rolling NLDAS-2 data. 
-# We target 2 days ago to ensure the file is fully processed and available.
-target_date = datetime.utcnow() - timedelta(days=2)
-date_str = target_date.strftime('%Y%m%d')
-
-# NCEP NOMADS URL for the NLDAS-2 Noah LSM (Grabbing 12Z forecast hour 00)
-URL = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/nldas/prod/nldas.{date_str}/noah.t12z.grb2f00"
 GRIB_FILE = "nldas_temp.grb2"
 OUTPUT_PNG = "static/nldas_soil_moisture.png"
 OUTPUT_JSON = "static/nldas_metadata.json"
-
-# NLDAS-2 CONUS Bounds
 BOUNDS = [[25.0, -125.0], [53.0, -67.0]]
 
-# --- 2. DOWNLOAD GRIB2 FILE ---
-print(f"Fetching NLDAS-2 data for {date_str} 12Z...")
-try:
-    response = requests.get(URL, timeout=30)
-    response.raise_for_status()
-    with open(GRIB_FILE, 'wb') as f:
-        f.write(response.content)
-    print("Download successful.")
-except Exception as e:
-    print(f"Failed to download NLDAS-2 data. URL checked: {URL}")
-    print(f"Error: {e}")
+# --- 2. BULLETPROOF DOWNLOAD LOOP ---
+# NLDAS-2 typically has a 4-day lag. We will scan backwards from 3 to 8 days 
+# to guarantee we find the absolute latest available processed run.
+found_data = False
+target_date = None
+
+for lag in range(3, 9):
+    target_date = datetime.utcnow() - timedelta(days=lag)
+    date_str = target_date.strftime('%Y%m%d')
+    
+    # NCEP NOMADS standard URL for the NLDAS-2 Noah LSM (12Z run)
+    url = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/nldas/prod/nldas.{date_str}/nldas.t12z.noah.grb2"
+    print(f"Checking NOAA servers for: {date_str} 12Z...")
+    
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            print("Success! Data found. Downloading...")
+            with open(GRIB_FILE, 'wb') as f:
+                f.write(response.content)
+            found_data = True
+            break
+        else:
+            print(f" -> Not yet available (HTTP {response.status_code}).")
+    except requests.RequestException as e:
+        print(f" -> Connection error: {e}")
+
+if not found_data:
+    print("CRITICAL: Could not find any recent NLDAS-2 data within the last 8 days.")
     exit(1)
 
 # --- 3. PROCESS GRIB2 WITH XARRAY ---
 try:
+    print("Processing GRIB2 file...")
     # NLDAS-2 Volumetric Soil Moisture is mapped as 'soilw' in cfgrib
+    # Using filter_by_keys to isolate the correct depth variable
     ds = xr.open_dataset(GRIB_FILE, engine='cfgrib', backend_kwargs={'filter_by_keys': {'shortName': 'soilw'}})
     
-    # We want the top soil layer (0-10 cm)
     var_name = 'soilw'
     
     # If the array has a depth dimension, slice the top layer (index 0)
@@ -52,7 +62,7 @@ try:
     lats = ds.latitude.values
     lons = ds.longitude.values
     
-    # Convert longitudes from 0..360 to -180..180 for Leaflet map mapping
+    # Convert longitudes from 0..360 to -180..180 for Leaflet mapping
     if lons.max() > 180:
         lons = np.where(lons > 180, lons - 360, lons)
         
