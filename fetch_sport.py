@@ -10,11 +10,9 @@ from PIL import Image
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-
 # -----------------------------------------------------------------------------
 # 1. CONFIGURATION
 # -----------------------------------------------------------------------------
-
 BASE_URL = (
     "https://nssrgeo.ndc.nasa.gov/"
     "SPoRT/modeling/lis/conus3km/geotiff/vsm_percentiles"
@@ -35,11 +33,9 @@ HEADERS = {
     "Accept": "image/tiff,application/octet-stream,*/*",
 }
 
-
 # -----------------------------------------------------------------------------
 # 2. HTTP SESSION
 # -----------------------------------------------------------------------------
-
 def build_session():
     retry = Retry(
         total=4,
@@ -57,10 +53,8 @@ def build_session():
 
     return session
 
-
 def is_tiff(path):
     """Confirm that the downloaded response has a TIFF header."""
-
     try:
         with path.open("rb") as file:
             magic = file.read(4)
@@ -69,21 +63,17 @@ def is_tiff(path):
             b"II*\x00",   # Little-endian TIFF
             b"MM\x00*",   # Big-endian TIFF
         )
-
     except OSError:
         return False
-
 
 # -----------------------------------------------------------------------------
 # 3. DOWNLOAD THE MOST RECENT AVAILABLE DAILY PRODUCT
 # -----------------------------------------------------------------------------
-
 def download_latest_sport():
     session = build_session()
     now = datetime.now(timezone.utc)
 
     for lag_days in range(LOOKBACK_DAYS + 1):
-
         valid_time = (
             now - timedelta(days=lag_days)
         ).replace(
@@ -148,20 +138,16 @@ def download_latest_sport():
         except requests.RequestException as error:
             print(f" -> Connection error: {error}")
 
-    raise RuntimeError(
-        "No SPoRT-LIS 0–100 cm percentile GeoTIFF "
-        f"was found in the last {LOOKBACK_DAYS} days."
-    )
-
+        raise RuntimeError(
+            "No SPoRT-LIS 0–100 cm percentile GeoTIFF "
+            f"was found in the last {LOOKBACK_DAYS} days."
+        )
 
 # -----------------------------------------------------------------------------
 # 4. PROCESS THE GEOTIFF
 # -----------------------------------------------------------------------------
-
 def process_geotiff():
-
     with rasterio.open(SPORT_FILE) as source:
-
         percentile = source.read(
             1,
             masked=True,
@@ -207,13 +193,10 @@ def process_geotiff():
 
     return data, valid, bounds, crs
 
-
 # -----------------------------------------------------------------------------
 # 5. CREATE TRANSPARENT PNG
 # -----------------------------------------------------------------------------
-
 def create_rgba_image(data, valid):
-
     # Classes:
     # <70     transparent
     # 70–80   yellow
@@ -224,43 +207,34 @@ def create_rgba_image(data, valid):
 
     palette = np.array(
         [
-            [0, 0, 0, 0],
-            [255, 255, 0, 255],
-            [255, 204, 0, 255],
-            [255, 102, 0, 255],
-            [255, 0, 0, 255],
-            [204, 0, 204, 255],
+            [0, 0, 0, 0],          # Transparent (<70)
+            [255, 255, 0, 255],    # Yellow (70-80)
+            [255, 204, 0, 255],    # Gold (80-90)
+            [255, 102, 0, 255],    # Orange (90-95)
+            [255, 0, 0, 255],      # Red (95-98)
+            [204, 0, 204, 255],    # Magenta (>=98)
         ],
         dtype=np.uint8,
     )
 
-    class_index = np.digitize(
-        data,
-        bins=[70, 80, 90, 95, 98],
-        right=False,
-    )
+    # Initialize rgba array with transparency
+    rgba = np.zeros((data.shape[0], data.shape[1], 4), dtype=np.uint8)
 
-    rgba = np.zeros(
-        (data.shape[0], data.shape[1], 4),
-        dtype=np.uint8,
-    )
+    # Apply valid mask to avoid categorizing NoData values
+    valid_data = data[valid]
+    
+    # Digitize only the valid data points
+    class_index = np.digitize(valid_data, bins=[70, 80, 90, 95, 98], right=False)
 
-    rgba[valid] = palette[class_index[valid]]
-
-    # Do not use np.flipud().
-    #
-    # A north-up GeoTIFF stores the northernmost row first,
-    # and the PNG also stores the upper image row first.
+    # Apply the colors
+    rgba[valid] = palette[class_index]
 
     return rgba
-
 
 # -----------------------------------------------------------------------------
 # 6. MAIN
 # -----------------------------------------------------------------------------
-
 def main():
-
     OUTPUT_PNG.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -284,7 +258,6 @@ def main():
         retrieval_time = datetime.now(timezone.utc)
 
         metadata = {
-            # Preserve the field format your dashboard already uses.
             "valid_time": valid_time.strftime(
                 "SPoRT-LIS: %b %d, %Y %HZ"
             ),
@@ -331,33 +304,26 @@ def main():
         return 0
 
     except Exception as error:
-
         print(
             "WARNING: SPoRT-LIS update failed: "
             f"{error}"
         )
 
-        # Do not break the entire dashboard deployment
-        # during a temporary NASA server interruption.
         if OUTPUT_PNG.exists() and OUTPUT_JSON.exists():
-
             print(
                 "Keeping the previous SPoRT-LIS "
                 "dashboard layer."
             )
-
             return 0
 
         print(
             "No previous SPoRT-LIS output exists; "
             "the workflow must fail."
         )
-
         return 1
 
     finally:
         SPORT_FILE.unlink(missing_ok=True)
-
 
 if __name__ == "__main__":
     sys.exit(main())
