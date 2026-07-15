@@ -2,7 +2,7 @@ name: Fetch SPoRT-LIS Soil Percentiles
 
 on:
   schedule:
-    # Runs at 15 past the hour, on cycles 01, 07, 13, and 19 UTC to catch the latest 00/06/12/18Z runs
+    # Runs at 15 past the hour, on cycles 01, 07, 13, and 19 UTC
     - cron: '15 1,7,13,19 * * *'
   workflow_dispatch: 
 
@@ -31,5 +31,5 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add static/sport_soil_percentile.png static/sport_metadata.json
-          git commit -m "Automated update: SPoRT-LIS soil moisture percentiles" || echo "No changes to commit"
+          git commit -m "Automated update: SPoRT-LIS percentiles" || echo "No changes to commit"
           git push
