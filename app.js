@@ -705,13 +705,17 @@ function validateRasterBounds(bounds, productName) {
 }
 
 function cacheBustedRasterUrl(baseUrl, metadata) {
-    const version = (
-        metadata.valid_time_iso ||
-        metadata.retrieved_time ||
+    // Prefer retrieval time rather than valid time. SPoRT has the same 00Z
+    // valid time all day, so using valid_time_iso can leave an older PNG in
+    // browser/CDN cache after a corrected workflow rerun.
+    const versionParts = [
+        metadata.retrieved_time,
+        metadata.render_revision,
+        metadata.valid_time_iso,
         Date.now()
-    );
+    ].filter(Boolean);
 
-    return `${baseUrl}?v=${encodeURIComponent(version)}`;
+    return `${baseUrl}?v=${encodeURIComponent(versionParts.join('-'))}`;
 }
 
 function applySoilRasterMetadata({
@@ -1222,13 +1226,13 @@ const nwmLegendHTML = `
 
 const sportLegendHTML = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 250px;">
-        <strong style="font-size: 13px;">SPoRT-LIS 0-100cm Percentile</strong><br>
+        <strong style="font-size: 13px;">SPoRT-LIS 0-100cm Wet Percentile</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
-            <div style="background: #ffff00; flex: 1;" title="70-80"></div>
-            <div style="background: #ffcc00; flex: 1;" title="80-90"></div>
-            <div style="background: #ff6600; flex: 0.5;" title="90-95"></div>
-            <div style="background: #ff0000; flex: 0.3;" title="95-98"></div>
-            <div style="background: #cc00cc; flex: 0.2;" title=">98"></div>
+            <div style="background: rgb(170,220,255); flex: 1;" title="70-80"></div>
+            <div style="background: rgb(80,170,255); flex: 1;" title="80-90"></div>
+            <div style="background: rgb(20,110,235); flex: 0.5;" title="90-95"></div>
+            <div style="background: rgb(0,45,180); flex: 0.3;" title="95-98"></div>
+            <div style="background: rgb(120,0,180); flex: 0.2;" title="98-100"></div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
             <span>70</span><span>80</span><span>90</span><span>95</span><span>98</span><span>100</span>
