@@ -561,9 +561,13 @@ const eroCamLayers = {};
     });
 });
 
-// --- NEW: NWM SOIL SATURATION LAYER ---
+// --- SOIL LAYERS (NWM & SPoRT) ---
 const nwmBounds = [[21.0, -130.0], [55.0, -65.0]];
 const nwmLayer = L.imageOverlay('static/nwm_soil_saturation.png', nwmBounds, {zIndex: 10});
+
+const sportBounds = [[24.0, -125.0], [50.0, -66.0]];
+const sportLayer = L.imageOverlay('static/sport_soil_percentile.png', sportBounds, {zIndex: 10});
+
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
 let rapValidTime = "Unknown";
@@ -571,6 +575,7 @@ let rapValidTimeF03 = "Unknown";
 let camCycles = { href: "Unknown", refs: "Unknown" };
 let eroValidRangeStr = "Unknown";
 let nwmValidTime = "Unknown";
+let sportValidTime = "Unknown";
 
 function fetchRAPMetadata() {
     fetch('static/rap_metadata.json?t=' + new Date().getTime())
@@ -659,11 +664,31 @@ function fetchNWMMetadata() {
         .catch(err => console.log("NWM metadata not found yet."));
 }
 
+function fetchSPoRTMetadata() {
+    fetch('static/sport_metadata.json?t=' + new Date().getTime())
+        .then(r => r.json())
+        .then(data => {
+            sportValidTime = data.valid_time || "Unknown";
+            const timeBox = document.getElementById('sport-time-box');
+            if (timeBox && timeBox.style.display === 'block') {
+                timeBox.innerHTML = `<strong>SPoRT-LIS 0-100cm Percentile</strong><br><span style="color: #ffeb3b;">${sportValidTime}</span>`;
+            }
+            if (data.bounds) {
+                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+                sportLayer.setBounds(exactBounds);
+                const base = sportLayer._url.split('?')[0];
+                sportLayer.setUrl(base + '?t=' + new Date().getTime());
+            }
+        })
+        .catch(err => console.log("SPoRT metadata not found yet."));
+}
+
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
 fetchEROCAMMetadata();
 fetchNWMMetadata();
+fetchSPoRTMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
@@ -671,6 +696,7 @@ setInterval(() => {
     fetchCAMMetadata();
     fetchEROCAMMetadata();
     fetchNWMMetadata();
+    fetchSPoRTMetadata();
 }, 15 * 60 * 1000); 
 
 function getValidTimeRange(cycleStr, windowStr) {
@@ -785,6 +811,21 @@ nwmTimeControl.onAdd = function() {
     return div;
 };
 nwmTimeControl.addTo(map);
+
+const sportTimeControl = L.control({position: 'bottomright'});
+sportTimeControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'time-box');
+    div.id = 'sport-time-box';
+    div.style.background = 'rgba(0, 0, 0, 0.7)';
+    div.style.color = '#ffffff';
+    div.style.padding = '8px 12px';
+    div.style.borderRadius = '6px';
+    div.style.marginBottom = '5px';
+    div.style.textAlign = 'center';
+    div.style.display = 'none'; 
+    return div;
+};
+sportTimeControl.addTo(map);
 
 const legendControl = L.control({position: 'bottomright'});
 legendControl.onAdd = function () {
@@ -1029,6 +1070,22 @@ const nwmLegendHTML = `
     </div>
 `;
 
+const sportLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 250px;">
+        <strong style="font-size: 13px;">SPoRT-LIS 0-100cm Percentile</strong><br>
+        <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
+            <div style="background: #ffff00; flex: 1;" title="70-80"></div>
+            <div style="background: #ffcc00; flex: 1;" title="80-90"></div>
+            <div style="background: #ff6600; flex: 0.5;" title="90-95"></div>
+            <div style="background: #ff0000; flex: 0.3;" title="95-98"></div>
+            <div style="background: #cc00cc; flex: 0.2;" title=">98"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
+            <span>70</span><span>80</span><span>90</span><span>95</span><span>98</span><span>100</span>
+        </div>
+    </div>
+`;
+
 // Global tracker for currently active layers
 let activeLayerNames = new Set();
 
@@ -1051,6 +1108,7 @@ function updateLegends() {
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
     if (activeLayerNames.has('NWM Soil Saturation (0-40cm)')) addLegendBlock(nwmLegendHTML);
+    if (activeLayerNames.has('SPoRT-LIS Soil Moisture Percentile (0-100cm)')) addLegendBlock(sportLegendHTML);
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -1093,6 +1151,7 @@ map.on('overlayadd', function(eventLayer) {
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
+    const sportTimeBox = document.getElementById('sport-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         if (eventLayer.name.includes('+3h Forecast')) {
@@ -1123,6 +1182,13 @@ map.on('overlayadd', function(eventLayer) {
         if (nwmTimeBox) {
             nwmTimeBox.innerHTML = `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`;
             nwmTimeBox.style.display = 'block';
+        }
+    }
+
+    if (eventLayer.name === 'SPoRT-LIS Soil Moisture Percentile (0-100cm)') {
+        if (sportTimeBox) {
+            sportTimeBox.innerHTML = `<strong>SPoRT-LIS 0-100cm Percentile</strong><br><span style="color: #ffeb3b;">${sportValidTime}</span>`;
+            sportTimeBox.style.display = 'block';
         }
     }
 
@@ -1200,6 +1266,7 @@ map.on('overlayremove', function(eventLayer) {
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
+    const sportTimeBox = document.getElementById('sport-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -1217,6 +1284,10 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
         if (nwmTimeBox) nwmTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === 'SPoRT-LIS Soil Moisture Percentile (0-100cm)') {
+        if (sportTimeBox) sportTimeBox.style.display = 'none';
     }
     
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -1246,7 +1317,8 @@ const groupedOverlays = {
         "Day 1 ERO (Real-Time)": eroLayer
     },
     "Antecedent Hydrologic Conditions": {
-        "NWM Soil Saturation (0-40cm)": nwmLayer
+        "NWM Soil Saturation (0-40cm)": nwmLayer,
+        "SPoRT-LIS Soil Moisture Percentile (0-100cm)": sportLayer
     },
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
