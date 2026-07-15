@@ -873,25 +873,25 @@ const ffdLegendHTML = `
     </div>
 `;
 
-// THE FIX: Accurate NWS QPE (Rainbow) custom HTML legend mapped directly to IEM tiles
+// THE FIX: Reversed Blue Scale to accurately map NWS MRMS standard colors
 const mrmsLegendQPE = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 280px; max-width: 320px;">
         <strong style="font-size: 13px;">MRMS QPE (inches)</strong><br>
         <div style="display: flex; margin-top: 5px; border: 1px solid #333; height: 16px;">
-            <div style="background: #00ECEB; flex: 1;" title="0.01 - 0.1"></div>
-            <div style="background: #01A0F6; flex: 1;" title="0.1 - 0.25"></div>
-            <div style="background: #0000F6; flex: 1;" title="0.25 - 0.5"></div>
-            <div style="background: #00FF00; flex: 1;" title="0.5 - 1.0"></div>
-            <div style="background: #00C800; flex: 1;" title="1.0 - 1.5"></div>
-            <div style="background: #008F00; flex: 1;" title="1.5 - 2.0"></div>
-            <div style="background: #FFFF00; flex: 1;" title="2.0 - 3.0"></div>
-            <div style="background: #FFC800; flex: 1;" title="3.0 - 4.0"></div>
-            <div style="background: #FF9000; flex: 1;" title="4.0 - 5.0"></div>
-            <div style="background: #FF0000; flex: 1;" title="5.0 - 6.0"></div>
-            <div style="background: #DF0000; flex: 1;" title="6.0 - 8.0"></div>
+            <div style="background: #000080; flex: 1;" title="0.01 - 0.1"></div>
+            <div style="background: #0000FF; flex: 1;" title="0.1 - 0.25"></div>
+            <div style="background: #0080FF; flex: 1;" title="0.25 - 0.5"></div>
+            <div style="background: #00FFFF; flex: 1;" title="0.5 - 1.0"></div>
+            <div style="background: #00FF00; flex: 1;" title="1.0 - 1.5"></div>
+            <div style="background: #00C800; flex: 1;" title="1.5 - 2.0"></div>
+            <div style="background: #008000; flex: 1;" title="2.0 - 3.0"></div>
+            <div style="background: #FFFF00; flex: 1;" title="3.0 - 4.0"></div>
+            <div style="background: #FFC800; flex: 1;" title="4.0 - 5.0"></div>
+            <div style="background: #FF9000; flex: 1;" title="5.0 - 6.0"></div>
+            <div style="background: #FF0000; flex: 1;" title="6.0 - 8.0"></div>
             <div style="background: #C00000; flex: 1;" title="8.0 - 10.0"></div>
             <div style="background: #FF00FF; flex: 1;" title="10.0 - 15.0"></div>
-            <div style="background: #9955C9; flex: 1;" title="15.0 - 20.0"></div>
+            <div style="background: #800080; flex: 1;" title="15.0 - 20.0"></div>
             <div style="background: #FFFFFF; flex: 1;" title="20.0+"></div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 2px;">
@@ -1192,7 +1192,6 @@ L.DomEvent.disableClickPropagation(layerControl.getContainer());
 L.DomEvent.disableScrollPropagation(layerControl.getContainer());
 
 // --- THE FIX: INITIALIZE DEFAULT DASHBOARD STATE ---
-// We use a safe timeout to ensure Leaflet has physically drawn the layers before reading them
 setTimeout(() => {
     if (map.hasLayer(warningsLayer)) activeLayerNames.add("Active Hydro Warnings & Advisories");
     if (map.hasLayer(watchesLayer)) activeLayerNames.add("Active Hydro Watches");
@@ -1200,7 +1199,6 @@ setTimeout(() => {
     if (map.hasLayer(eroLayer)) activeLayerNames.add("Day 1 ERO (Real-Time)");
     if (map.hasLayer(radarTimeLayer)) activeLayerNames.add("NEXRAD Radar (2-Hour Loop)");
     
-    // Explicitly handle additional layers if you want them on by default later
     if (map.hasLayer(ffdLayer)) activeLayerNames.add("MRMS DVD Flash Flood Detector");
     if (map.hasLayer(mrms1hr)) activeLayerNames.add("MRMS 1-Hour QPE");
 
