@@ -1,25 +1,9 @@
-// --- UI CSS FIXES (Scrollable Menu, Width & Popup/Tooltip Priority) ---
+// --- POPUP / TOOLTIP PRIORITY ---
+// The full dashboard interface is styled in style.css.
 const customStyle = document.createElement('style');
 customStyle.innerHTML = `
-    /* Fix for the double scrollbar and widening the menu */
-    .leaflet-control-layers-expanded {
-        overflow: hidden !important; 
-        min-width: 350px !important; 
-        padding-right: 10px !important;
-    }
-    .leaflet-control-layers-list {
-        max-height: 60vh !important; 
-        overflow-y: auto !important; 
-        overflow-x: hidden !important;
-        padding-right: 10px !important;
-    }
-    /* Force popups and tooltips to ALWAYS sit above city labels and map layers */
-    .leaflet-popup-pane {
-        z-index: 7000 !important;
-    }
-    .leaflet-tooltip-pane {
-        z-index: 6500 !important;
-    }
+    .leaflet-popup-pane { z-index: 7000 !important; }
+    .leaflet-tooltip-pane { z-index: 6500 !important; }
 `;
 document.head.appendChild(customStyle);
 
@@ -33,19 +17,6 @@ const map = L.map('map', {
 // --- TOP-CENTER DASHBOARD TITLE ---
 const mapTitle = L.DomUtil.create('div', 'map-title');
 mapTitle.innerHTML = '<strong>WPC Real-Time Hydrometeorological Dashboard</strong>';
-mapTitle.style.position = 'absolute';
-mapTitle.style.top = '10px';
-mapTitle.style.left = '50%';
-mapTitle.style.transform = 'translateX(-50%)';
-mapTitle.style.zIndex = '1000';
-mapTitle.style.background = 'rgba(0, 0, 0, 0.7)';
-mapTitle.style.color = 'white';
-mapTitle.style.padding = '12px 24px';
-mapTitle.style.borderRadius = '6px';
-mapTitle.style.fontFamily = 'sans-serif';
-mapTitle.style.fontSize = '24px';
-mapTitle.style.letterSpacing = '1px';
-mapTitle.style.boxShadow = '0 2px 5px rgba(0,0,0,0.5)';
 document.getElementById('map').appendChild(mapTitle);
 
 // --- GLOBAL UTILITY FUNCTION ---
@@ -1467,141 +1438,532 @@ map.on('overlayremove', function(eventLayer) {
     }
 });
 
-// --- MENU CONTROLS ---
-const baseMaps = {
-    "Esri Dark Gray": esriDarkBase,
-    "OpenStreetMap": osmLayer,
-    "Esri World Imagery (Satellite)": esriWorldImagery,
-    "Esri World Topographic": esriWorldTopo
-};
+// --- SIDEBAR LAYER REGISTRY & CONTROLS ---
+// This registry is the single source of truth for layer order, labels, search,
+// sidebar selection, opacity utilities, and future experimental additions.
+const baseMapRegistry = [
+    {id: 'esri-dark', label: 'Esri Dark Gray', layer: esriDarkBase},
+    {id: 'osm', label: 'OpenStreetMap', layer: osmLayer},
+    {id: 'esri-imagery', label: 'Esri World Imagery (Satellite)', layer: esriWorldImagery},
+    {id: 'esri-topo', label: 'Esri World Topographic', layer: esriWorldTopo}
+];
 
-const groupedOverlays = {
-    "Active Hazards & Warnings": {
-        "Active Hydro Warnings & Advisories": warningsLayer,
-        "Active Hydro Watches": watchesLayer,
-        "WPC Active MPDs": mpdLayer,
-        "Day 1 ERO (Real-Time)": eroLayer
+const dashboardSections = [
+    {
+        id: 'hazards',
+        title: 'Active Hazards & Warnings',
+        openByDefault: true,
+        layers: [
+            {id: 'hydro-warnings', label: 'Active Hydro Warnings & Advisories', layer: warningsLayer, kind: 'vector', defaultActive: true},
+            {id: 'hydro-watches', label: 'Active Hydro Watches', layer: watchesLayer, kind: 'vector', defaultActive: true},
+            {id: 'wpc-mpds', label: 'WPC Active MPDs', layer: mpdLayer, kind: 'vector', defaultActive: true},
+            {id: 'day1-ero', label: 'Day 1 ERO (Real-Time)', layer: eroLayer, kind: 'vector', defaultActive: true}
+        ]
     },
-
-    "Radar and Satellite Data (Real-Time)": {
-        "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
-        "MRMS DVD Flash Flood Detector": ffdLayer,
-        "MRMS 1-Hour QPE": mrms1hr,
-        "MRMS 24-Hour QPE": mrms24hr,
-        "MRMS 48-Hour QPE": mrms48hr,
-        "MRMS 72-Hour QPE": mrms72hr,
-        "GOES-East: Visible (Ch. 2)": goesEastVis,
-        "GOES-East: Mid-Level WV (Ch. 9)": goesEastWV,
-        "GOES-East: Clean IR (Ch. 13)": goesEastIR,
-        "GOES-West: Visible (Ch. 2)": goesWestVis,
-        "GOES-West: Mid-Level WV (Ch. 9)": goesWestWV,
-        "GOES-West: Clean IR (Ch. 13)": goesWestIR
+    {
+        id: 'radar-satellite',
+        title: 'Radar and Satellite Data (Real-Time)',
+        layers: [
+            {id: 'nexrad-loop', label: 'NEXRAD Radar (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, defaultActive: true},
+            {id: 'mrms-ffd', label: 'MRMS DVD Flash Flood Detector', layer: ffdLayer, kind: 'vector'},
+            {id: 'mrms-qpe-1h', label: 'MRMS 1-Hour QPE', layer: mrms1hr, kind: 'raster'},
+            {id: 'mrms-qpe-24h', label: 'MRMS 24-Hour QPE', layer: mrms24hr, kind: 'raster'},
+            {id: 'mrms-qpe-48h', label: 'MRMS 48-Hour QPE', layer: mrms48hr, kind: 'raster'},
+            {id: 'mrms-qpe-72h', label: 'MRMS 72-Hour QPE', layer: mrms72hr, kind: 'raster'},
+            {id: 'goes-east-vis', label: 'GOES-East: Visible (Ch. 2)', layer: goesEastVis, kind: 'raster'},
+            {id: 'goes-east-wv', label: 'GOES-East: Mid-Level WV (Ch. 9)', layer: goesEastWV, kind: 'raster'},
+            {id: 'goes-east-ir', label: 'GOES-East: Clean IR (Ch. 13)', layer: goesEastIR, kind: 'raster'},
+            {id: 'goes-west-vis', label: 'GOES-West: Visible (Ch. 2)', layer: goesWestVis, kind: 'raster'},
+            {id: 'goes-west-wv', label: 'GOES-West: Mid-Level WV (Ch. 9)', layer: goesWestWV, kind: 'raster'},
+            {id: 'goes-west-ir', label: 'GOES-West: Clean IR (Ch. 13)', layer: goesWestIR, kind: 'raster'}
+        ]
     },
-
-    "Antecedent Hydrologic Conditions": {
-        "NWM Soil Saturation (0-40cm)": nwmLayer,
-        "SPoRT-LIS Soil Moisture Percentile (0-100cm)": sportLayer
+    {
+        id: 'antecedent',
+        title: 'Antecedent Hydrologic Conditions',
+        layers: [
+            {id: 'nwm-soilsat', label: 'NWM Soil Saturation (0-40cm)', layer: nwmLayer, kind: 'raster'},
+            {id: 'sport-percentile', label: 'SPoRT-LIS Soil Moisture Percentile (0-100cm)', layer: sportLayer, kind: 'raster'}
+        ]
     },
+    {
+        id: 'rap',
+        title: 'RAP Mesoanalysis Data',
+        layers: [
+            {id: 'rap-pwat', label: 'Precipitable Water (PWAT)', layer: pwatLayer, kind: 'raster'},
+            {id: 'rap-pwat-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change', layer: pwatDiffLayer, kind: 'raster', nested: true},
+            {id: 'rap-pwat-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT', layer: pwatF03Layer, kind: 'raster', nested: true},
 
-    "RAP Mesoanalysis Data": {
-        "Precipitable Water (PWAT)": pwatLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": pwatF03Layer,
+            {id: 'rap-sbcape', label: 'Surface Based CAPE', layer: sbcapeLayer, kind: 'raster'},
+            {id: 'rap-sbcape-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change', layer: sbcapeDiffLayer, kind: 'raster', nested: true},
+            {id: 'rap-sbcape-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE', layer: sbcapeF03Layer, kind: 'raster', nested: true},
 
-        "Surface Based CAPE": sbcapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": sbcapeF03Layer,
+            {id: 'rap-mlcape', label: 'Mixed Layer CAPE (90mb)', layer: mlcapeLayer, kind: 'raster'},
+            {id: 'rap-mlcape-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change', layer: mlcapeDiffLayer, kind: 'raster', nested: true},
+            {id: 'rap-mlcape-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE', layer: mlcapeF03Layer, kind: 'raster', nested: true},
 
-        "Mixed Layer CAPE (90mb)": mlcapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": mlcapeF03Layer,
+            {id: 'rap-mucape', label: 'Most Unstable CAPE (255mb)', layer: mucapeLayer, kind: 'raster'},
+            {id: 'rap-mucape-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change', layer: mucapeDiffLayer, kind: 'raster', nested: true},
+            {id: 'rap-mucape-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE', layer: mucapeF03Layer, kind: 'raster', nested: true},
 
-        "Most Unstable CAPE (255mb)": mucapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": mucapeF03Layer,
+            {id: 'rap-lr-sfc3', label: 'Sfc-3km Low-Level Lapse Rate', layer: lrsfc3Layer, kind: 'raster'},
+            {id: 'rap-lr-75', label: '700-500mb Mid-Level Lapse Rate', layer: lr75Layer, kind: 'raster'},
+            {id: 'rap-scp', label: 'Supercell Composite Parameter', layer: scpLayer, kind: 'raster'},
+            {id: 'rap-mfc', label: 'Mean BL Moisture Convergence', layer: mfcLayer, kind: 'raster'},
+            {id: 'rap-f925', label: '925/850mb Frontogenesis', layer: f925Layer, kind: 'raster'},
+            {id: 'rap-f850', label: '850/700mb Frontogenesis', layer: f850Layer, kind: 'raster'},
+            {id: 'rap-eff-shear', label: 'Effective Bulk Shear', layer: effShearLayer, kind: 'raster'},
+            {id: 'rap-corfidi-up', label: 'Corfidi Upwind (Back-Building) Vectors', layer: corfidiUpLayer, kind: 'raster'},
+            {id: 'rap-corfidi-down', label: 'Corfidi Downwind (Forward) Vectors', layer: corfidiDownLayer, kind: 'raster'},
 
-        "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
-        "700-500mb Mid-Level Lapse Rate": lr75Layer,
-        "Supercell Composite Parameter": scpLayer,
-        "Mean BL Moisture Convergence": mfcLayer,
-        "925/850mb Frontogenesis": f925Layer,
-        "850/700mb Frontogenesis": f850Layer,
-        "Effective Bulk Shear": effShearLayer,
-        "Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
-        "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
+            {id: 'rap-trans850', label: '850mb Moisture Transport', layer: trans850Layer, kind: 'raster'},
+            {id: 'rap-trans850-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change', layer: trans850DiffLayer, kind: 'raster', nested: true},
+            {id: 'rap-trans850-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Transport', layer: trans850F03Layer, kind: 'raster', nested: true},
 
-        "850mb Moisture Transport": trans850Layer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Transport": trans850F03Layer,
-
-        "700mb Moisture Transport": trans700Layer,
-        "850-300mb Mean Layer Wind": meanWindLayer,
-        "500mb Absolute Vorticity": vort500Layer,
-        "700-400mb Diff Vorticity Advection": diffAdvLayer,
-        "250mb Divergence": div250Layer
+            {id: 'rap-trans700', label: '700mb Moisture Transport', layer: trans700Layer, kind: 'raster'},
+            {id: 'rap-mean-wind', label: '850-300mb Mean Layer Wind', layer: meanWindLayer, kind: 'raster'},
+            {id: 'rap-vort500', label: '500mb Absolute Vorticity', layer: vort500Layer, kind: 'raster'},
+            {id: 'rap-diff-adv', label: '700-400mb Diff Vorticity Advection', layer: diffAdvLayer, kind: 'raster'},
+            {id: 'rap-div250', label: '250mb Divergence', layer: div250Layer, kind: 'raster'}
+        ]
     },
-
-    "CAM Nowcasts (+3h to +9h)": {
-        "<b>SuperEnsemble</b>: Max FFG Exceedance": camLayers['ffg_3h_to_9h_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance": camLayers['ffg_3h_to_9h_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance": camLayers['ffg_3h_to_9h_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5\"/hr": camLayers['qpf_3h_to_9h_0.5_inch_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0\"/hr": camLayers['qpf_3h_to_9h_1_inch_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0\"/hr": camLayers['qpf_3h_to_9h_2_inch_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0\"/hr": camLayers['qpf_3h_to_9h_3_inch_refs']
+    {
+        id: 'cam-3-9',
+        title: 'CAM Nowcasts (+3h to +9h)',
+        layers: [
+            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
+            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster'},
+            {id: 'cam-3-9-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_super'], kind: 'raster'},
+            {id: 'cam-3-9-q1-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q1-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_super'], kind: 'raster'},
+            {id: 'cam-3-9-q2-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q2-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_super'], kind: 'raster'},
+            {id: 'cam-3-9-q3-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q3-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_refs'], kind: 'raster', nested: true}
+        ]
     },
-
-    "CAM Nowcasts (+9h to +15h)": {
-        "<b>SuperEnsemble</b>: Max FFG Exceedance": camLayers['ffg_9h_to_15h_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance": camLayers['ffg_9h_to_15h_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance": camLayers['ffg_9h_to_15h_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5\"/hr": camLayers['qpf_9h_to_15h_0.5_inch_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0\"/hr": camLayers['qpf_9h_to_15h_1_inch_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0\"/hr": camLayers['qpf_9h_to_15h_2_inch_refs'],
-        "<b>SuperEnsemble</b>: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0\"/hr": camLayers['qpf_9h_to_15h_3_inch_refs']
+    {
+        id: 'cam-9-15',
+        title: 'CAM Nowcasts (+9h to +15h)',
+        layers: [
+            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
+            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster'},
+            {id: 'cam-9-15-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_super'], kind: 'raster'},
+            {id: 'cam-9-15-q1-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q1-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_super'], kind: 'raster'},
+            {id: 'cam-9-15-q2-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q2-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_super'], kind: 'raster'},
+            {id: 'cam-9-15-q3-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q3-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_refs'], kind: 'raster', nested: true}
+        ]
     },
-
-    "Day 1 ERO CAMs (12Z-12Z)": {
-        "<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance": eroCamLayers['ffg_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max FFG Exceedance": eroCamLayers['ffg_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max FFG Exceedance": eroCamLayers['ffg_refs'],
-        "<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5\"/hr": eroCamLayers['qpf_0.5_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 0.5\"/hr": eroCamLayers['qpf_0.5_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 0.5\"/hr": eroCamLayers['qpf_0.5_inch_refs'],
-        "<b>SuperEnsemble [ERO]</b>: Max Prob > 1.0\"/hr": eroCamLayers['qpf_1_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 1.0\"/hr": eroCamLayers['qpf_1_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 1.0\"/hr": eroCamLayers['qpf_1_inch_refs'],
-        "<b>SuperEnsemble [ERO]</b>: Max Prob > 2.0\"/hr": eroCamLayers['qpf_2_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 2.0\"/hr": eroCamLayers['qpf_2_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 2.0\"/hr": eroCamLayers['qpf_2_inch_refs'],
-        "<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_super'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_href'],
-        "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_refs']
+    {
+        id: 'ero-cams',
+        title: 'Day 1 ERO CAMs (12Z-12Z)',
+        layers: [
+            {id: 'ero-ffg-super', label: '<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance', layer: eroCamLayers['ffg_super'], kind: 'raster'},
+            {id: 'ero-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max FFG Exceedance', layer: eroCamLayers['ffg_href'], kind: 'raster', nested: true},
+            {id: 'ero-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max FFG Exceedance', layer: eroCamLayers['ffg_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q05-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_super'], kind: 'raster'},
+            {id: 'ero-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_href'], kind: 'raster', nested: true},
+            {id: 'ero-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q1-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_super'], kind: 'raster'},
+            {id: 'ero-q1-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_href'], kind: 'raster', nested: true},
+            {id: 'ero-q1-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q2-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_super'], kind: 'raster'},
+            {id: 'ero-q2-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_href'], kind: 'raster', nested: true},
+            {id: 'ero-q2-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q3-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_super'], kind: 'raster'},
+            {id: 'ero-q3-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_href'], kind: 'raster', nested: true},
+            {id: 'ero-q3-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_refs'], kind: 'raster', nested: true}
+        ]
+    },
+    {
+        id: 'experimental',
+        title: 'Experimental Models',
+        layers: [],
+        emptyMessage: 'Ready for NLDAS-3 and other experimental products. New layers can be registered without rebuilding the sidebar.'
     }
-};
+];
 
-const layerControl = L.control.groupedLayers(baseMaps, groupedOverlays, { 
-    collapsed: true 
-}).addTo(map);
+const layerEntriesById = new Map();
+let selectedDashboardLayerId = null;
+let sidebarRenderQueued = false;
 
-L.DomEvent.disableClickPropagation(layerControl.getContainer());
-L.DomEvent.disableScrollPropagation(layerControl.getContainer());
+function cleanLayerLabel(label) {
+    const node = document.createElement('div');
+    node.innerHTML = label;
+    return (node.textContent || node.innerText || '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function getAllDashboardLayerEntries() {
+    return dashboardSections.flatMap(section => section.layers);
+}
+
+function rebuildLayerEntryIndex() {
+    layerEntriesById.clear();
+    getAllDashboardLayerEntries().forEach(entry => {
+        if (!entry.id || !entry.label || !entry.layer) {
+            throw new Error('Every dashboard layer requires id, label, and layer.');
+        }
+        if (layerEntriesById.has(entry.id)) {
+            throw new Error(`Duplicate dashboard layer id: ${entry.id}`);
+        }
+        entry.searchText = cleanLayerLabel(
+            `${entry.label} ${entry.keywords || ''}`
+        ).toLowerCase();
+        layerEntriesById.set(entry.id, entry);
+    });
+}
+
+function dispatchOverlayEvent(eventName, entry) {
+    map.fire(eventName, {
+        name: entry.label,
+        layer: entry.layer
+    });
+}
+
+function setDashboardLayerActive(entry, shouldBeActive) {
+    const isActive = map.hasLayer(entry.layer);
+
+    if (shouldBeActive && !isActive) {
+        map.addLayer(entry.layer);
+        dispatchOverlayEvent('overlayadd', entry);
+        if (typeof entry.onActivate === 'function') entry.onActivate(entry);
+    } else if (!shouldBeActive && isActive) {
+        map.removeLayer(entry.layer);
+        dispatchOverlayEvent('overlayremove', entry);
+        if (typeof entry.onDeactivate === 'function') entry.onDeactivate(entry);
+    }
+
+    syncSidebarWithMap();
+}
+
+function selectDashboardLayer(entryId) {
+    selectedDashboardLayerId = entryId;
+    const selected = layerEntriesById.get(entryId) || null;
+    const selectedName = document.getElementById('selected-layer-name');
+    const opacitySlider = document.getElementById('layer-opacity');
+    const opacityValue = document.getElementById('opacity-value');
+    const soloButton = document.getElementById('solo-selected-layer');
+
+    document.querySelectorAll('.layer-row').forEach(row => {
+        row.classList.toggle('is-selected', row.dataset.layerId === entryId);
+    });
+
+    if (selectedName) {
+        selectedName.textContent = selected
+            ? cleanLayerLabel(selected.label)
+            : 'No layer selected';
+    }
+
+    const opacityTarget = selected
+        ? (selected.opacityTarget || selected.layer)
+        : null;
+    const canSetOpacity = Boolean(
+        selected &&
+        selected.kind === 'raster' &&
+        opacityTarget &&
+        typeof opacityTarget.setOpacity === 'function'
+    );
+
+    if (opacitySlider) {
+        opacitySlider.disabled = !canSetOpacity;
+        const currentOpacity = canSetOpacity
+            ? Number(opacityTarget.options?.opacity ?? 1)
+            : 1;
+        opacitySlider.value = String(Math.round(currentOpacity * 100));
+    }
+    if (opacityValue) {
+        opacityValue.textContent = canSetOpacity
+            ? `${opacitySlider.value}%`
+            : '—';
+    }
+    if (soloButton) {
+        soloButton.disabled = !(selected && selected.kind === 'raster');
+    }
+}
+
+function updateActiveLayerCount() {
+    const activeCount = getAllDashboardLayerEntries()
+        .filter(entry => map.hasLayer(entry.layer))
+        .length;
+    const target = document.getElementById('active-layer-count');
+    if (target) {
+        target.textContent = `${activeCount} active layer${activeCount === 1 ? '' : 's'}`;
+    }
+}
+
+function syncSidebarWithMap() {
+    document.querySelectorAll('.layer-checkbox[data-layer-id]').forEach(input => {
+        const entry = layerEntriesById.get(input.dataset.layerId);
+        if (entry) input.checked = map.hasLayer(entry.layer);
+    });
+    updateActiveLayerCount();
+    if (selectedDashboardLayerId) selectDashboardLayer(selectedDashboardLayerId);
+}
+
+function renderLayerRow(entry) {
+    const row = document.createElement('label');
+    row.className = `layer-row${entry.nested ? ' is-nested' : ''}`;
+    row.dataset.layerId = entry.id;
+    row.dataset.searchText = entry.searchText;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'layer-checkbox';
+    checkbox.dataset.layerId = entry.id;
+    checkbox.checked = map.hasLayer(entry.layer);
+    checkbox.addEventListener('change', () => {
+        selectDashboardLayer(entry.id);
+        setDashboardLayerActive(entry, checkbox.checked);
+    });
+
+    const label = document.createElement('span');
+    label.className = 'layer-label';
+    label.innerHTML = entry.label;
+
+    row.addEventListener('click', () => selectDashboardLayer(entry.id));
+    row.append(checkbox, label);
+    return row;
+}
+
+function renderUtilitySection(container) {
+    const section = document.createElement('details');
+    section.className = 'dashboard-section utility-section';
+    section.dataset.sectionId = 'utilities';
+
+    const summary = document.createElement('summary');
+    summary.innerHTML = '<span class="section-title">Dashboard Utilities</span>';
+
+    const body = document.createElement('div');
+    body.className = 'section-body utility-grid';
+    body.innerHTML = `
+        <div class="utility-field">
+            <label for="basemap-select">Basemap</label>
+            <select id="basemap-select" aria-label="Select basemap"></select>
+        </div>
+        <div class="opacity-control">
+            <label for="layer-opacity">Selected raster opacity</label>
+            <div class="opacity-row">
+                <input id="layer-opacity" type="range" min="10" max="100" step="5" value="100" disabled>
+                <span id="opacity-value">—</span>
+            </div>
+        </div>
+        <div class="utility-button-grid">
+            <button id="solo-selected-layer" class="sidebar-tool-button" type="button" disabled>Solo selected raster</button>
+            <button id="clear-raster-layers" class="sidebar-tool-button" type="button">Clear raster layers</button>
+            <button id="reset-map-view" class="sidebar-tool-button" type="button">Reset map extent</button>
+            <button id="restore-dashboard-defaults" class="sidebar-tool-button" type="button">Restore defaults</button>
+        </div>
+    `;
+
+    section.append(summary, body);
+    container.append(section);
+
+    const basemapSelect = body.querySelector('#basemap-select');
+    baseMapRegistry.forEach(base => {
+        const option = document.createElement('option');
+        option.value = base.id;
+        option.textContent = base.label;
+        option.selected = map.hasLayer(base.layer);
+        basemapSelect.append(option);
+    });
+
+    basemapSelect.addEventListener('change', () => {
+        const next = baseMapRegistry.find(base => base.id === basemapSelect.value);
+        if (!next) return;
+        baseMapRegistry.forEach(base => {
+            if (base !== next && map.hasLayer(base.layer)) map.removeLayer(base.layer);
+        });
+        if (!map.hasLayer(next.layer)) map.addLayer(next.layer);
+        map.fire('baselayerchange', {name: next.label, layer: next.layer});
+    });
+
+    body.querySelector('#layer-opacity').addEventListener('input', event => {
+        const selected = layerEntriesById.get(selectedDashboardLayerId);
+        if (!selected) return;
+        const target = selected.opacityTarget || selected.layer;
+        if (typeof target.setOpacity !== 'function') return;
+        const opacity = Number(event.target.value) / 100;
+        target.setOpacity(opacity);
+        body.querySelector('#opacity-value').textContent = `${event.target.value}%`;
+    });
+
+    body.querySelector('#solo-selected-layer').addEventListener('click', () => {
+        const selected = layerEntriesById.get(selectedDashboardLayerId);
+        if (!selected || selected.kind !== 'raster') return;
+        getAllDashboardLayerEntries().forEach(entry => {
+            if (entry.kind === 'raster' && entry !== selected) {
+                setDashboardLayerActive(entry, false);
+            }
+        });
+        setDashboardLayerActive(selected, true);
+    });
+
+    body.querySelector('#clear-raster-layers').addEventListener('click', () => {
+        getAllDashboardLayerEntries().forEach(entry => {
+            if (entry.kind === 'raster') setDashboardLayerActive(entry, false);
+        });
+    });
+
+    body.querySelector('#reset-map-view').addEventListener('click', () => {
+        map.setView([39.8283, -98.5795], 5);
+    });
+
+    body.querySelector('#restore-dashboard-defaults').addEventListener('click', () => {
+        getAllDashboardLayerEntries().forEach(entry => {
+            setDashboardLayerActive(entry, Boolean(entry.defaultActive));
+        });
+        const defaultBase = baseMapRegistry[0];
+        baseMapRegistry.forEach(base => {
+            if (base !== defaultBase && map.hasLayer(base.layer)) map.removeLayer(base.layer);
+        });
+        if (!map.hasLayer(defaultBase.layer)) map.addLayer(defaultBase.layer);
+        map.fire('baselayerchange', {name: defaultBase.label, layer: defaultBase.layer});
+        basemapSelect.value = defaultBase.id;
+        map.setView([39.8283, -98.5795], 5);
+    });
+}
+
+function applyLayerSearch() {
+    const searchInput = document.getElementById('layer-search');
+    const query = (searchInput?.value || '').trim().toLowerCase();
+
+    document.querySelectorAll('.dashboard-section[data-section-id]').forEach(sectionEl => {
+        if (sectionEl.dataset.sectionId === 'utilities') return;
+        const rows = Array.from(sectionEl.querySelectorAll('.layer-row'));
+        let visibleRows = 0;
+        rows.forEach(row => {
+            const visible = !query || row.dataset.searchText.includes(query);
+            row.hidden = !visible;
+            if (visible) visibleRows += 1;
+        });
+
+        const isExperimentalEmpty = sectionEl.dataset.sectionId === 'experimental' && rows.length === 0;
+        const emptyNote = sectionEl.querySelector('.empty-section-note');
+        const noteMatches = isExperimentalEmpty && (!query || 'experimental nldas-3 model research'.includes(query));
+        if (emptyNote) emptyNote.hidden = !noteMatches;
+
+        sectionEl.hidden = query
+            ? (visibleRows === 0 && !noteMatches)
+            : false;
+        if (query && !sectionEl.hidden) sectionEl.open = true;
+    });
+}
+
+function renderDashboardSidebar() {
+    if (sidebarRenderQueued) return;
+    sidebarRenderQueued = true;
+    requestAnimationFrame(() => {
+        sidebarRenderQueued = false;
+        rebuildLayerEntryIndex();
+        const container = document.getElementById('sidebar-sections');
+        if (!container) return;
+        container.innerHTML = '';
+
+        dashboardSections.forEach(sectionConfig => {
+            const section = document.createElement('details');
+            section.className = 'dashboard-section';
+            section.dataset.sectionId = sectionConfig.id;
+            section.open = Boolean(sectionConfig.openByDefault);
+
+            const summary = document.createElement('summary');
+            const count = sectionConfig.layers.length;
+            summary.innerHTML = `
+                <span class="section-title">${sectionConfig.title}</span>
+                <span class="section-count">${count}</span>
+            `;
+
+            const body = document.createElement('div');
+            body.className = 'section-body';
+
+            if (count === 0) {
+                const note = document.createElement('div');
+                note.className = 'empty-section-note';
+                note.textContent = sectionConfig.emptyMessage || 'No layers registered.';
+                body.append(note);
+            } else {
+                sectionConfig.layers.forEach(entry => body.append(renderLayerRow(entry)));
+            }
+
+            section.append(summary, body);
+            container.append(section);
+        });
+
+        renderUtilitySection(container);
+        syncSidebarWithMap();
+        applyLayerSearch();
+    });
+}
+
+function setSidebarOpen(isOpen, persist = true) {
+    document.body.classList.toggle('sidebar-open', isOpen);
+    const toggle = document.getElementById('sidebar-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', String(isOpen));
+    if (persist) localStorage.setItem('wpcSidebarOpen', isOpen ? '1' : '0');
+    window.setTimeout(() => map.invalidateSize(), 240);
+}
+
+function initializeSidebarControls() {
+    const savedState = localStorage.getItem('wpcSidebarOpen');
+    const defaultOpen = window.innerWidth > 900;
+    setSidebarOpen(savedState === null ? defaultOpen : savedState === '1', false);
+
+    document.getElementById('sidebar-toggle')?.addEventListener('click', () => setSidebarOpen(true));
+    document.getElementById('sidebar-close')?.addEventListener('click', () => setSidebarOpen(false));
+    document.getElementById('layer-search')?.addEventListener('input', applyLayerSearch);
+    document.getElementById('clear-layer-search')?.addEventListener('click', () => {
+        const input = document.getElementById('layer-search');
+        if (input) input.value = '';
+        applyLayerSearch();
+        input?.focus();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
+            setSidebarOpen(false);
+        }
+    });
+}
+
+function registerDashboardLayer(sectionId, config) {
+    const section = dashboardSections.find(item => item.id === sectionId);
+    if (!section) throw new Error(`Unknown dashboard section: ${sectionId}`);
+    if (!config || !config.id || !config.label || !config.layer) {
+        throw new Error('registerDashboardLayer requires id, label, and layer.');
+    }
+    section.layers.push({kind: 'raster', ...config});
+    renderDashboardSidebar();
+    return config.layer;
+}
+
+window.WPCDashboard = Object.freeze({
+    registerLayer: registerDashboardLayer,
+    refreshSidebar: renderDashboardSidebar,
+    sections: dashboardSections,
+    getActiveLayers: () => getAllDashboardLayerEntries()
+        .filter(entry => map.hasLayer(entry.layer))
+        .map(entry => ({id: entry.id, label: cleanLayerLabel(entry.label)}))
+});
+
+initializeSidebarControls();
+renderDashboardSidebar();
+map.on('layeradd layerremove', () => window.setTimeout(syncSidebarWithMap, 0));
 
 // --- INITIALIZE DEFAULT DASHBOARD STATE ---
 setTimeout(() => {

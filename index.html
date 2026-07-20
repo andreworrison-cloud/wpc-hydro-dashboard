@@ -11,9 +11,36 @@
     
     <link rel="stylesheet" href="style.css">
 
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet-groupedlayercontrol/0.6.1/leaflet.groupedlayercontrol.min.css" />
 </head>
 <body>
+    <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="dashboard-sidebar" aria-expanded="true">
+        <span aria-hidden="true">☰</span>
+        <span>Layers</span>
+    </button>
+
+    <aside id="dashboard-sidebar" class="dashboard-sidebar" aria-label="Dashboard data controls">
+        <header class="sidebar-header">
+            <div>
+                <div class="sidebar-kicker">WPC Hydrometeorological Dashboard</div>
+                <h1>Data Layers</h1>
+            </div>
+            <button id="sidebar-close" class="sidebar-close" type="button" aria-label="Close data-layer sidebar">×</button>
+        </header>
+
+        <div class="sidebar-search-wrap">
+            <label for="layer-search">Search layers</label>
+            <div class="sidebar-search-row">
+                <input id="layer-search" type="search" placeholder="Search RAP, MRMS, soil moisture…" autocomplete="off">
+                <button id="clear-layer-search" type="button" aria-label="Clear layer search">×</button>
+            </div>
+            <div class="sidebar-status-row">
+                <span id="active-layer-count">0 active layers</span>
+                <span id="selected-layer-name">No layer selected</span>
+            </div>
+        </div>
+
+        <div id="sidebar-sections" class="sidebar-sections"></div>
+    </aside>
 
     <div id="map"></div>
 
@@ -21,7 +48,6 @@
     
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/iso8601-js-period@0.2.1/iso8601.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-groupedlayercontrol/0.6.1/leaflet.groupedlayercontrol.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
