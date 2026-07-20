@@ -1503,6 +1503,44 @@ const groupedOverlays = {
         "SPoRT-LIS Soil Moisture Percentile (0-100cm)": sportLayer
     },
 
+    "RAP Mesoanalysis Data": {
+        "Precipitable Water (PWAT)": pwatLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": pwatF03Layer,
+
+        "Surface Based CAPE": sbcapeLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": sbcapeF03Layer,
+
+        "Mixed Layer CAPE (90mb)": mlcapeLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": mlcapeF03Layer,
+
+        "Most Unstable CAPE (255mb)": mucapeLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": mucapeF03Layer,
+
+        "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
+        "700-500mb Mid-Level Lapse Rate": lr75Layer,
+        "Supercell Composite Parameter": scpLayer,
+        "Mean BL Moisture Convergence": mfcLayer,
+        "925/850mb Frontogenesis": f925Layer,
+        "850/700mb Frontogenesis": f850Layer,
+        "Effective Bulk Shear": effShearLayer,
+        "Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
+        "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
+
+        "850mb Moisture Transport": trans850Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": trans850F03Layer,
+
+        "700mb Moisture Transport": trans700Layer,
+        "850-300mb Mean Layer Wind": meanWindLayer,
+        "500mb Absolute Vorticity": vort500Layer,
+        "700-400mb Diff Vorticity Advection": diffAdvLayer,
+        "250mb Divergence": div250Layer
+    },
+
     "CAM Nowcasts (+3h to +9h)": {
         "<b>SuperEnsemble</b>: Max FFG Exceedance": camLayers['ffg_3h_to_9h_super'],
         "&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance": camLayers['ffg_3h_to_9h_href'],
@@ -1555,44 +1593,6 @@ const groupedOverlays = {
         "<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_super'],
         "&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_href'],
         "&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 3.0\"/hr": eroCamLayers['qpf_3_inch_refs']
-    },
-
-    "RAP Mesoanalysis Data": {
-        "Precipitable Water (PWAT)": pwatLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": pwatF03Layer,
-
-        "Surface Based CAPE": sbcapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": sbcapeF03Layer,
-
-        "Mixed Layer CAPE (90mb)": mlcapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": mlcapeF03Layer,
-
-        "Most Unstable CAPE (255mb)": mucapeLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": mucapeF03Layer,
-
-        "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
-        "700-500mb Mid-Level Lapse Rate": lr75Layer,
-        "Supercell Composite Parameter": scpLayer,
-        "Mean BL Moisture Convergence": mfcLayer,
-        "925/850mb Frontogenesis": f925Layer,
-        "850/700mb Frontogenesis": f850Layer,
-        "Effective Bulk Shear": effShearLayer,
-        "Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
-        "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
-
-        "850mb Moisture Transport": trans850Layer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": trans850F03Layer,
-
-        "700mb Moisture Transport": trans700Layer,
-        "850-300mb Mean Layer Wind": meanWindLayer,
-        "500mb Absolute Vorticity": vort500Layer,
-        "700-400mb Diff Vorticity Advection": diffAdvLayer,
-        "250mb Divergence": div250Layer
     }
 };
 
