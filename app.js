@@ -1033,7 +1033,7 @@ const rapLegendMapping = {
     "Corfidi Downwind (Forward) Vectors": "static/leg_corfidi_down.png",
     "850mb Moisture Transport": "static/leg_trans.png",
     "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": "static/leg_trans_diff.png",
-    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": "static/leg_trans.png",
+    "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Transport": "static/leg_trans.png",
     "700mb Moisture Transport": "static/leg_trans.png",
     "850-300mb Mean Layer Wind": "static/leg_mean_wind.png",
     "500mb Absolute Vorticity": "static/leg_vort.png",
@@ -1532,7 +1532,7 @@ const groupedOverlays = {
 
         "850mb Moisture Transport": trans850Layer,
         "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer,
-        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": trans850F03Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Transport": trans850F03Layer,
 
         "700mb Moisture Transport": trans700Layer,
         "850-300mb Mean Layer Wind": meanWindLayer,
