@@ -1308,6 +1308,10 @@ map.on('overlayadd', function(eventLayer) {
     const sportTimeBox = document.getElementById('sport-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
+        // Refresh bounds, valid times, and cache-busted RAP image URLs
+        // immediately when a RAP layer is selected.
+        fetchRAPMetadata();
+
         if (eventLayer.name.includes('+3h Forecast')) {
             rapTimeBox.innerHTML = `<strong>${rapValidTimeF03}</strong>`;
         } else {
@@ -1482,6 +1486,45 @@ const groupedOverlays = {
         "NWM Soil Saturation (0-40cm)": nwmLayer,
         "SPoRT-LIS Soil Moisture Percentile (0-100cm)": sportLayer
     },
+
+    "RAP Mesoanalysis — Current Analysis": {
+        "Precipitable Water (PWAT)": pwatLayer,
+        "Surface Based CAPE": sbcapeLayer,
+        "Mixed Layer CAPE (90mb)": mlcapeLayer,
+        "Most Unstable CAPE (255mb)": mucapeLayer,
+        "850mb Moisture Transport": trans850Layer,
+        "Sfc-3km Low-Level Lapse Rate": lrsfc3Layer,
+        "700-500mb Mid-Level Lapse Rate": lr75Layer,
+        "Supercell Composite Parameter": scpLayer,
+        "Mean BL Moisture Convergence": mfcLayer,
+        "925/850mb Frontogenesis": f925Layer,
+        "850/700mb Frontogenesis": f850Layer,
+        "Effective Bulk Shear": effShearLayer,
+        "Corfidi Upwind (Back-Building) Vectors": corfidiUpLayer,
+        "Corfidi Downwind (Forward) Vectors": corfidiDownLayer,
+        "700mb Moisture Transport": trans700Layer,
+        "850-300mb Mean Layer Wind": meanWindLayer,
+        "500mb Absolute Vorticity": vort500Layer,
+        "700-400mb Diff Vorticity Advection": diffAdvLayer,
+        "250mb Divergence": div250Layer
+    },
+
+    "RAP Mesoanalysis — 3-Hour Changes": {
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour PWAT Change": pwatDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour SBCAPE Change": sbcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MLCAPE Change": mlcapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change": mucapeDiffLayer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;3-Hour 850mb Moisture Transport Change": trans850DiffLayer
+    },
+
+    "RAP Mesoanalysis — +3 Hour Forecast": {
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> PWAT": pwatF03Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> SBCAPE": sbcapeF03Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MLCAPE": mlcapeF03Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE": mucapeF03Layer,
+        "&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> 850mb Moisture Trans": trans850F03Layer
+    },
+
     "Radar and Satellite Data (Real-Time)": {
         "NEXRAD Radar (2-Hour Loop)": radarTimeLayer,
         "MRMS DVD Flash Flood Detector": ffdLayer,
