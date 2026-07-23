@@ -7,12 +7,36 @@ customStyle.innerHTML = `
 `;
 document.head.appendChild(customStyle);
 
+// --- MOBILE VIEWPORT COMPATIBILITY ---
+// Older mobile browsers can report 100vh taller than the actually visible page.
+// Keep the dashboard sized to the usable browser viewport instead.
+function updateDashboardViewportHeight() {
+    const viewportHeight = window.innerHeight;
+    if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+    document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+}
+
+updateDashboardViewportHeight();
+
 // Initialize the map, centered roughly over the CONUS
 const map = L.map('map', {
     zoomControl: true,
     center: [39.8283, -98.5795], 
     zoom: 5
 });
+
+let viewportRefreshTimer = null;
+function refreshDashboardViewport() {
+    window.clearTimeout(viewportRefreshTimer);
+    viewportRefreshTimer = window.setTimeout(() => {
+        updateDashboardViewportHeight();
+        map.invalidateSize({pan: false, animate: false});
+        viewportRefreshTimer = null;
+    }, 120);
+}
+
+window.addEventListener('resize', refreshDashboardViewport, {passive: true});
+window.addEventListener('orientationchange', refreshDashboardViewport, {passive: true});
 
 // --- TOP-CENTER DASHBOARD TITLE ---
 const mapTitle = L.DomUtil.create('div', 'map-title');
