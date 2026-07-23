@@ -63,6 +63,17 @@ if 'window.WPCDashboard' not in app or 'registerLayer: registerDashboardLayer' n
 if '.dashboard-sidebar' not in css or '.dashboard-section' not in css:
     errors.append('Sidebar styles are missing.')
 
+if 'const LEGEND_DOCK_SESSION_KEY' not in app:
+    errors.append('Responsive legend-dock controller is missing.')
+if 'id="legend-dock-toggle"' not in app or 'id="legend-dock-body"' not in app:
+    errors.append('Legend-dock controls are missing from app.js.')
+if 'rapTimeControl' in app or 'const legendControl' in app:
+    errors.append('Legacy separate legend/time controls are still active.')
+if '.legend-dock' not in css or '.legend-dock.is-collapsed' not in css:
+    errors.append('Responsive legend-dock styles are missing.')
+if 'legend-dock-v1' not in index:
+    errors.append('Frontend cache-busting token for legend dock is missing.')
+
 if errors:
     print('Dashboard validation FAILED:')
     for error in errors:
