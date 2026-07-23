@@ -845,124 +845,174 @@ function getValidTimeRange(cycleStr, windowStr) {
     return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
 }
 
-// --- STACKABLE LEGENDS & TIME BOX UI ---
+// --- RESPONSIVE LEGEND & VALID-TIME DOCK ---
 
-const rapTimeControl = L.control({position: 'bottomright'});
-rapTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'rap-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-rapTimeControl.addTo(map);
+const LEGEND_DOCK_SESSION_KEY = 'wpcLegendDockExpanded';
+const legendDockCompactMedia = window.matchMedia('(max-width: 900px), (pointer: coarse)');
+let legendDockExpanded = true;
+let legendDockPreferenceExplicit = false;
 
-const mrmsTimeControl = L.control({position: 'bottomright'});
-mrmsTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'mrms-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-mrmsTimeControl.addTo(map);
+function readLegendDockPreference() {
+    try {
+        return window.sessionStorage.getItem(LEGEND_DOCK_SESSION_KEY);
+    } catch (error) {
+        return null;
+    }
+}
 
-const camTimeControl = L.control({position: 'bottomright'});
-camTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'cam-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-camTimeControl.addTo(map);
+function writeLegendDockPreference(isExpanded) {
+    try {
+        window.sessionStorage.setItem(
+            LEGEND_DOCK_SESSION_KEY,
+            isExpanded ? 'true' : 'false'
+        );
+    } catch (error) {
+        // The dock still works when browser privacy settings block storage.
+    }
+}
 
-const radarTimeControl = L.control({position: 'bottomright'});
-radarTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'radar-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-radarTimeControl.addTo(map);
+function applyLegendDockState(dock, isExpanded) {
+    if (!dock) return;
 
-const ffdTimeControl = L.control({position: 'bottomright'});
-ffdTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'ffd-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-ffdTimeControl.addTo(map);
+    legendDockExpanded = Boolean(isExpanded);
+    dock.classList.toggle('is-collapsed', !legendDockExpanded);
 
-const nwmTimeControl = L.control({position: 'bottomright'});
-nwmTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'nwm-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-nwmTimeControl.addTo(map);
+    const toggle = dock.querySelector('#legend-dock-toggle');
+    const title = dock.querySelector('#legend-dock-title');
+    const icon = dock.querySelector('#legend-dock-icon');
 
-const sportTimeControl = L.control({position: 'bottomright'});
-sportTimeControl.onAdd = function() {
-    const div = L.DomUtil.create('div', 'time-box');
-    div.id = 'sport-time-box';
-    div.style.background = 'rgba(0, 0, 0, 0.7)';
-    div.style.color = '#ffffff';
-    div.style.padding = '8px 12px';
-    div.style.borderRadius = '6px';
-    div.style.marginBottom = '5px';
-    div.style.textAlign = 'center';
-    div.style.display = 'none'; 
-    return div;
-};
-sportTimeControl.addTo(map);
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', String(legendDockExpanded));
+        toggle.setAttribute(
+            'aria-label',
+            legendDockExpanded
+                ? 'Collapse legends and valid times'
+                : 'Expand legends and valid times'
+        );
+    }
+    if (title) {
+        title.textContent = legendDockExpanded
+            ? 'Legends & Valid Times'
+            : 'Legends';
+    }
+    if (icon) icon.textContent = legendDockExpanded ? '−' : '+';
+}
 
-const legendControl = L.control({position: 'bottomright'});
-legendControl.onAdd = function () {
-    const div = L.DomUtil.create('div', 'legend-container');
-    div.id = 'legend-container';
-    div.style.background = 'transparent';
-    div.style.padding = '0px';
-    div.style.boxShadow = 'none';
-    div.style.display = 'none'; 
+function setLegendDockExpanded(isExpanded, persist = true) {
+    const dock = document.getElementById('legend-dock');
+    applyLegendDockState(dock, isExpanded);
+
+    if (persist) {
+        legendDockPreferenceExplicit = true;
+        writeLegendDockPreference(Boolean(isExpanded));
+    }
+}
+
+function initializeLegendDockState() {
+    const storedPreference = readLegendDockPreference();
+    if (storedPreference === 'true' || storedPreference === 'false') {
+        legendDockPreferenceExplicit = true;
+        setLegendDockExpanded(storedPreference === 'true', false);
+        return;
+    }
+
+    legendDockPreferenceExplicit = false;
+    setLegendDockExpanded(!legendDockCompactMedia.matches, false);
+}
+
+function refreshLegendDockSummary() {
+    const dock = document.getElementById('legend-dock');
+    if (!dock) return;
+
+    const legendContainer = document.getElementById('legend-container');
+    const legendCount = legendContainer
+        ? legendContainer.querySelectorAll('.legend-block').length
+        : 0;
+    const visibleTimeCount = Array.from(
+        dock.querySelectorAll('.legend-dock-time-box')
+    ).filter(box => window.getComputedStyle(box).display !== 'none').length;
+
+    const count = document.getElementById('legend-dock-count');
+    if (count) {
+        count.textContent = String(legendCount);
+        count.setAttribute(
+            'aria-label',
+            `${legendCount} active legend${legendCount === 1 ? '' : 's'}`
+        );
+    }
+
+    dock.classList.toggle(
+        'has-content',
+        legendCount > 0 || visibleTimeCount > 0
+    );
+}
+
+function createLegendDockTimeBox(parent, id) {
+    const div = L.DomUtil.create(
+        'div',
+        'time-box legend-dock-time-box',
+        parent
+    );
+    div.id = id;
+    div.style.display = 'none';
     return div;
+}
+
+const legendDockControl = L.control({position: 'bottomright'});
+legendDockControl.onAdd = function () {
+    const dock = L.DomUtil.create('section', 'legend-dock');
+    dock.id = 'legend-dock';
+    dock.setAttribute('aria-label', 'Active legends and valid times');
+
+    dock.innerHTML = `
+        <button
+            id="legend-dock-toggle"
+            class="legend-dock-toggle"
+            type="button"
+            aria-controls="legend-dock-body"
+            aria-expanded="true"
+        >
+            <span id="legend-dock-title" class="legend-dock-title">Legends & Valid Times</span>
+            <span id="legend-dock-count" class="legend-dock-count" aria-label="0 active legends">0</span>
+            <span id="legend-dock-icon" class="legend-dock-icon" aria-hidden="true">−</span>
+        </button>
+        <div id="legend-dock-body" class="legend-dock-body">
+            <div id="legend-time-stack" class="legend-time-stack"></div>
+            <div id="legend-container" class="legend-container"></div>
+        </div>
+    `;
+
+    const timeStack = dock.querySelector('#legend-time-stack');
+    [
+        'rap-time-box',
+        'mrms-time-box',
+        'cam-time-box',
+        'radar-time-box',
+        'ffd-time-box',
+        'nwm-time-box',
+        'sport-time-box'
+    ].forEach(id => createLegendDockTimeBox(timeStack, id));
+
+    const toggle = dock.querySelector('#legend-dock-toggle');
+    toggle.addEventListener('click', () => {
+        setLegendDockExpanded(!legendDockExpanded);
+    });
+
+    L.DomEvent.disableClickPropagation(dock);
+    L.DomEvent.disableScrollPropagation(dock);
+
+    return dock;
 };
-legendControl.addTo(map);
+legendDockControl.addTo(map);
+initializeLegendDockState();
+
+if (typeof legendDockCompactMedia.addEventListener === 'function') {
+    legendDockCompactMedia.addEventListener('change', () => {
+        if (!legendDockPreferenceExplicit) {
+            setLegendDockExpanded(!legendDockCompactMedia.matches, false);
+        }
+    });
+}
 
 // Update radar loop timestamps dynamically as player plays
 map.timeDimension.on('timeload', function() {
@@ -1216,12 +1266,14 @@ let activeLayerNames = new Set();
 
 function updateLegends() {
     const legendContainer = document.getElementById('legend-container');
+    if (!legendContainer) return;
+
     legendContainer.innerHTML = '';
     let hasLegend = false;
 
     const addLegendBlock = (htmlContent) => {
         const div = document.createElement('div');
-        div.style.marginBottom = '5px'; 
+        div.className = 'legend-block';
         div.innerHTML = htmlContent;
         legendContainer.appendChild(div);
         hasLegend = true;
@@ -1263,6 +1315,7 @@ function updateLegends() {
     }
 
     legendContainer.style.display = hasLegend ? 'block' : 'none';
+    refreshLegendDockSummary();
 }
 
 // Map overlay handling dynamically updates Sets and GUI
@@ -1391,6 +1444,9 @@ map.on('overlayadd', function(eventLayer) {
             <span style="font-size: 0.85em; color: #ffeb3b;">Last Checked: ${formatUTC(new Date())}</span>
         `;
     }
+
+
+    refreshLegendDockSummary();
 });
 
 map.on('overlayremove', function(eventLayer) {
@@ -1436,6 +1492,9 @@ map.on('overlayremove', function(eventLayer) {
         const hasSatRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar') || name.includes('GOES-'));
         if (!hasSatRadar) radarTimeBox.style.display = 'none';
     }
+
+
+    refreshLegendDockSummary();
 });
 
 // --- SIDEBAR LAYER REGISTRY & CONTROLS ---
@@ -1992,4 +2051,6 @@ setTimeout(() => {
     if (ffdTimeBox && map.hasLayer(ffdLayer)) {
         ffdTimeBox.style.display = 'block';
     }
+
+    refreshLegendDockSummary();
 }, 1500);
