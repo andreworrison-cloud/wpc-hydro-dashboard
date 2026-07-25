@@ -88,7 +88,7 @@ OUTPUT_METADATA = Path("static/nldas_rsm_metadata.json")
 
 LOOKBACK_DAYS = 20
 MAX_OUTPUT_DIMENSION = 1800
-RENDER_REVISION = "nldas-rsm-percent-saturation-v1"
+RENDER_REVISION = "nldas-rsm-percent-saturation-v1.1"
 
 EXPECTED_GRID = {
     "Ni": 464,
@@ -103,6 +103,10 @@ PRODUCT_RECORDS = {
         "depth_m": 1.0,
         "depth_mm": 1000.0,
         "output": OUTPUT_0_100,
+        "expected_discipline": 2,
+        "expected_parameter_category": 3,
+        "expected_parameter_number": 20,
+        "authoritative_units": "kg m**-2",
     },
     "0_10cm": {
         "record_number": 26,
@@ -110,6 +114,10 @@ PRODUCT_RECORDS = {
         "depth_m": 0.1,
         "depth_mm": 100.0,
         "output": OUTPUT_0_10,
+        "expected_discipline": 2,
+        "expected_parameter_category": 3,
+        "expected_parameter_number": 20,
+        "authoritative_units": "kg m**-2",
     },
 }
 
@@ -349,8 +357,25 @@ def extract_required_grib_records(
                     "name": str(
                         safe_codes_get(gid, "name", "")
                     ),
-                    "units": str(
+                    "decoded_units": str(
                         safe_codes_get(gid, "units", "")
+                    ),
+                    "discipline": int(
+                        safe_codes_get(gid, "discipline", -1)
+                    ),
+                    "parameter_category": int(
+                        safe_codes_get(
+                            gid,
+                            "parameterCategory",
+                            -1,
+                        )
+                    ),
+                    "parameter_number": int(
+                        safe_codes_get(
+                            gid,
+                            "parameterNumber",
+                            -1,
+                        )
                     ),
                     "type_of_level": str(
                         safe_codes_get(gid, "typeOfLevel", "")
@@ -411,10 +436,52 @@ def extract_required_grib_records(
                             f"{key}={info[key]}; expected {expected}."
                         )
 
-                if "kg" not in info["units"].lower():
+                config = PRODUCT_RECORDS[product_key]
+
+                parameter_checks = {
+                    "discipline": config["expected_discipline"],
+                    "parameter_category": (
+                        config["expected_parameter_category"]
+                    ),
+                    "parameter_number": (
+                        config["expected_parameter_number"]
+                    ),
+                }
+
+                for key, expected in parameter_checks.items():
+                    if info[key] != expected:
+                        raise RuntimeError(
+                            f"Record {message_number} has unexpected "
+                            f"{key}={info[key]}; expected {expected} "
+                            "for CISOILM."
+                        )
+
+                decoded_units = info["decoded_units"].strip()
+                normalized_units = decoded_units.lower()
+
+                if normalized_units in {"", "unknown"}:
+                    # ecCodes can report "unknown" for these NLDAS local
+                    # GRIB2 records even though the official NOAA inventory
+                    # defines CISOILM as kg m-2. Preserve both values in the
+                    # metadata and use the authoritative inventory units.
+                    info["units"] = config["authoritative_units"]
+                    info["units_source"] = (
+                        "NOAA/NCEP NLDAS Noah inventory"
+                    )
+                    print(
+                        f"Record {message_number}: ecCodes returned "
+                        f"{decoded_units or 'blank'} units; using "
+                        f"authoritative CISOILM units "
+                        f"{info['units']}."
+                    )
+                elif "kg" in normalized_units:
+                    info["units"] = decoded_units
+                    info["units_source"] = "ecCodes"
+                else:
                     raise RuntimeError(
-                        f"Record {message_number} has unexpected units "
-                        f"{info['units']!r}; expected kg m-2."
+                        f"Record {message_number} has unexpected "
+                        f"decoded units {decoded_units!r}; expected "
+                        "CISOILM in kg m-2."
                     )
 
                 selected[product_key] = {
@@ -428,7 +495,8 @@ def extract_required_grib_records(
                     f"Extracted record {message_number} for "
                     f"{PRODUCT_RECORDS[product_key]['depth_label']}: "
                     f"{info['short_name']} | {info['name']} | "
-                    f"{info['units']}"
+                    f"{info['units']} "
+                    f"(decoded={info['decoded_units']!r})"
                 )
 
             finally:
