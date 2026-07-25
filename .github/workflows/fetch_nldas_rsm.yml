@@ -1,0 +1,84 @@
+name: Fetch NLDAS-2 Noah Relative Soil Moisture
+
+on:
+  schedule:
+    # NLDAS-2 is posted as delayed daily blocks. Four checks per day
+    # catch a newly posted block without creating hourly duplicate commits.
+    - cron: '45 2,8,14,20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nldas-rsm-update
+  cancel-in-progress: false
+
+jobs:
+  update-nldas-rsm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install ecCodes system library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            requests \
+            numpy \
+            xarray \
+            h5netcdf \
+            h5py \
+            rasterio \
+            pyproj \
+            affine \
+            Pillow \
+            eccodes
+
+      - name: Generate NLDAS-2 RSM products
+        run: python fetch_nldas_rsm.py
+
+      - name: Upload RSM preview artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nldas-rsm-preview
+          path: |
+            static/nldas_rsm_0_10cm.png
+            static/nldas_rsm_0_100cm.png
+            static/nldas_rsm_metadata.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit generated products
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add \
+            static/nldas_rsm_0_10cm.png \
+            static/nldas_rsm_0_100cm.png \
+            static/nldas_rsm_metadata.json
+
+          if git diff --cached --quiet; then
+            echo "NLDAS-2 RSM products are unchanged."
+            exit 0
+          fi
+
+          git commit -m "Automated update: NLDAS-2 Noah RSM"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
