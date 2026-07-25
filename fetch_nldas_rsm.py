@@ -88,7 +88,8 @@ OUTPUT_METADATA = Path("static/nldas_rsm_metadata.json")
 
 LOOKBACK_DAYS = 20
 MAX_OUTPUT_DIMENSION = 1800
-RENDER_REVISION = "nldas-rsm-percent-saturation-v1.1"
+RENDER_UPSCALE_FACTOR = 3.0
+RENDER_REVISION = "nldas-rsm-percent-saturation-v1.2"
 
 EXPECTED_GRID = {
     "Ni": 464,
@@ -792,31 +793,37 @@ def reproject_to_web_mercator(
         *source_bounds,
     )
 
-    scale_factor = max(
-        destination_width / MAX_OUTPUT_DIMENSION,
-        destination_height / MAX_OUTPUT_DIMENSION,
-        1.0,
+    native_destination_width = destination_width
+    native_destination_height = destination_height
+
+    # The Web Mercator reprojection of the native 0.125-degree NLDAS grid
+    # is only about 435 x 277 pixels over CONUS. Render at three times that
+    # pixel density so Leaflet does not have to enlarge a small PNG across
+    # the map. Nearest-neighbor resampling below preserves crisp native-grid
+    # boundaries and does not invent additional meteorological resolution.
+    upscale_factor = min(
+        RENDER_UPSCALE_FACTOR,
+        MAX_OUTPUT_DIMENSION / native_destination_width,
+        MAX_OUTPUT_DIMENSION / native_destination_height,
+    )
+    upscale_factor = max(upscale_factor, 1.0)
+
+    destination_width = max(
+        1,
+        int(round(native_destination_width * upscale_factor)),
+    )
+    destination_height = max(
+        1,
+        int(round(native_destination_height * upscale_factor)),
     )
 
-    if scale_factor > 1.0:
-        reduced_width = max(
-            1,
-            int(round(destination_width / scale_factor)),
+    destination_transform = (
+        destination_transform
+        * Affine.scale(
+            native_destination_width / destination_width,
+            native_destination_height / destination_height,
         )
-        reduced_height = max(
-            1,
-            int(round(destination_height / scale_factor)),
-        )
-
-        destination_transform = (
-            destination_transform
-            * Affine.scale(
-                destination_width / reduced_width,
-                destination_height / reduced_height,
-            )
-        )
-        destination_width = reduced_width
-        destination_height = reduced_height
+    )
 
     destination = np.full(
         (destination_height, destination_width),
@@ -840,7 +847,7 @@ def reproject_to_web_mercator(
         dst_transform=destination_transform,
         dst_crs=destination_crs,
         dst_nodata=np.nan,
-        resampling=Resampling.bilinear,
+        resampling=Resampling.nearest,
         init_dest_nodata=True,
         num_threads=2,
     )
@@ -882,6 +889,13 @@ def reproject_to_web_mercator(
         [float(south), float(west)],
         [float(north), float(east)],
     ]
+
+    print(
+        "NLDAS RSM Web Mercator render: "
+        f"{native_destination_width}x{native_destination_height} native "
+        f"-> {destination_width}x{destination_height} output; "
+        "nearest-neighbor resampling"
+    )
 
     return destination, leaflet_bounds
 
@@ -1121,6 +1135,9 @@ def main() -> int:
                 "layer_depth_mm": float(
                     config["depth_mm"]
                 ),
+                "rendered_width": int(projected_rsm.shape[1]),
+                "rendered_height": int(projected_rsm.shape[0]),
+                "resampling": "nearest",
                 "statistics": statistics,
             }
 
@@ -1192,6 +1209,15 @@ def main() -> int:
                 "Ni": EXPECTED_GRID["Ni"],
                 "Nj": EXPECTED_GRID["Nj"],
                 "resolution_degrees": 0.125,
+            },
+            "rendering": {
+                "upscale_factor": RENDER_UPSCALE_FACTOR,
+                "maximum_output_dimension": MAX_OUTPUT_DIMENSION,
+                "resampling": "nearest",
+                "purpose": (
+                    "crisp display of native NLDAS grid cells; "
+                    "no added meteorological resolution"
+                ),
             },
             "products": product_metadata,
         }
