@@ -849,13 +849,14 @@ def run(args: argparse.Namespace) -> None:
     summary_name = "mrms_crest_unitq_max24h_summary.txt"
     html_name = "mrms_crest_unitq_max24h.html"
 
-    write_geotiff(
-        output_dir / geotiff_name,
-        maximum,
-        transform,
-        "float32",
-        NODATA_FLOAT,
-    )
+    if not args.dashboard_only:
+        write_geotiff(
+            output_dir / geotiff_name,
+            maximum,
+            transform,
+            "float32",
+            NODATA_FLOAT,
+        )
     projected, bounds, projected_transform = (
         reproject_for_dashboard(
             maximum,
@@ -867,12 +868,26 @@ def run(args: argparse.Namespace) -> None:
         output_dir / png_name,
         colorize_unitq(projected),
     )
-    write_html(
-        output_dir / html_name,
-        bounds,
-        window_start,
-        end_time,
-    )
+    if not args.dashboard_only:
+        write_html(
+            output_dir / html_name,
+            bounds,
+            window_start,
+            end_time,
+        )
+
+    output_manifest = {
+        "png": png_name,
+        "metadata": metadata_name,
+    }
+    if not args.dashboard_only:
+        output_manifest.update(
+            {
+                "native_geotiff": geotiff_name,
+                "summary": summary_name,
+                "interactive_preview": html_name,
+            }
+        )
 
     metadata = {
         "product": "MRMS FLASH CREST Maximum Unit Streamflow",
@@ -890,10 +905,12 @@ def run(args: argparse.Namespace) -> None:
         "completeness_fraction": (
             len(used_times) / expected_count
         ),
-        "used_times_utc": used_times,
         "missing_times_utc": missing_times,
-        "end_time_search_attempts": end_attempts,
-        "source_records": source_records,
+        "metadata_mode": (
+            "dashboard_compact"
+            if args.dashboard_only
+            else "diagnostic_full"
+        ),
         "grid": {
             "shape": list(reference.data.shape),
             "crs": "EPSG:4326",
@@ -914,14 +931,17 @@ def run(args: argparse.Namespace) -> None:
         "generated_time_utc": iso_z(
             datetime.now(timezone.utc)
         ),
-        "outputs": {
-            "png": png_name,
-            "native_geotiff": geotiff_name,
-            "metadata": metadata_name,
-            "summary": summary_name,
-            "interactive_preview": html_name,
-        },
+        "outputs": output_manifest,
     }
+
+    if not args.dashboard_only:
+        metadata.update(
+            {
+                "used_times_utc": used_times,
+                "end_time_search_attempts": end_attempts,
+                "source_records": source_records,
+            }
+        )
     (output_dir / metadata_name).write_text(
         json.dumps(metadata, indent=2),
         encoding="utf-8",
@@ -942,10 +962,11 @@ def run(args: argparse.Namespace) -> None:
             "",
         ]
     )
-    (output_dir / summary_name).write_text(
-        summary,
-        encoding="utf-8",
-    )
+    if not args.dashboard_only:
+        (output_dir / summary_name).write_text(
+            summary,
+            encoding="utf-8",
+        )
     print(summary)
     print(f"Outputs written to {output_dir.resolve()}")
 
@@ -983,6 +1004,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         default=str(DEFAULT_OUTPUT_DIR),
+    )
+    parser.add_argument(
+        "--dashboard-only",
+        action="store_true",
+        help=(
+            "Write only the compact dashboard PNG and metadata JSON. "
+            "Skip GeoTIFF, HTML, and summary files."
+        ),
     )
     parser.add_argument(
         "--self-test",
