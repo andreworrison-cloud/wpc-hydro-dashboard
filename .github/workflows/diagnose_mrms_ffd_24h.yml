@@ -1,0 +1,83 @@
+name: Diagnose MRMS FFD 24-Hour Maximum
+
+on:
+  workflow_dispatch:
+    inputs:
+      end_time:
+        description: >-
+          UTC ending analysis, for example 2025-07-03T00:20:00Z.
+          Leave blank for the newest synchronized FLASH cycle.
+        required: false
+        default: ''
+        type: string
+      minimum_completeness:
+        description: Required fraction of the expected 144 cycles
+        required: false
+        default: '0.85'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-mrms-ffd-max24h
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install ecCodes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "numpy<3" \
+            requests \
+            xarray \
+            cfgrib \
+            eccodes \
+            rasterio \
+            affine \
+            Pillow
+
+      - name: Validate FFD algorithm and rolling window
+        run: python fetch_mrms_ffd_24h.py --self-test
+
+      - name: Calculate FFD rolling 24-hour maximum
+        env:
+          END_TIME: ${{ inputs.end_time }}
+          MINIMUM_COMPLETENESS: ${{ inputs.minimum_completeness }}
+        run: |
+          python fetch_mrms_ffd_24h.py \
+            --hours 24 \
+            --minimum-completeness "${MINIMUM_COMPLETENESS}" \
+            --output-dir mrms_ffd_24h_output
+
+      - name: List outputs
+        run: |
+          find mrms_ffd_24h_output -maxdepth 1 -type f \
+            -printf '%f %s bytes\n' | sort
+
+      - name: Upload FFD artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrms-ffd-max24h
+          path: mrms_ffd_24h_output/
+          if-no-files-found: error
+          retention-days: 14
