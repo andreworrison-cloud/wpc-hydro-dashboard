@@ -73,10 +73,31 @@ def build_session() -> requests.Session:
 
 
 def parse_utc_time(value: str) -> datetime:
-    normalized = value.strip()
+    normalized = value.strip().strip('"').strip("'")
+
+    # Be forgiving when a workflow input is pasted as:
+    #   end_time = 2025-07-03T00:20:00Z
+    # rather than only the ISO timestamp.
+    if "=" in normalized:
+        key, candidate = normalized.split("=", 1)
+        if key.strip().lower() in {
+            "end_time",
+            "analysis_time",
+            "time",
+        }:
+            normalized = candidate.strip().strip('"').strip("'")
+
     if normalized.endswith("Z"):
         normalized = normalized[:-1] + "+00:00"
-    parsed = datetime.fromisoformat(normalized)
+
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(
+            "Invalid UTC time. Enter only an ISO timestamp such as "
+            "2025-07-03T00:20:00Z."
+        ) from error
+
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
