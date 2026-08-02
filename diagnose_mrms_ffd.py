@@ -61,6 +61,8 @@ CATEGORY_RGBA = {
     5: (255, 0, 255, 215),
 }
 
+UNITQ_DISPLAY_MINIMUM = 1.0
+
 UNITQ_BINS = np.array(
     [0.25, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.5, 10.0, 15.0, 20.0],
     dtype=np.float32,
@@ -580,7 +582,15 @@ def colorize_ffd(data: np.ndarray, nodata: float) -> np.ndarray:
 
 def colorize_unitq(data: np.ndarray, nodata: float) -> np.ndarray:
     rgba = np.zeros((*data.shape, 4), dtype=np.uint8)
-    valid = (data != nodata) & np.isfinite(data) & (data >= UNITQ_BINS[0])
+    # Keep the scientific GeoTIFF unchanged, but suppress widespread
+    # low-background Unit Q values in the visual preview. Values below
+    # 1.0 m^3 s^-1 km^-2 are not operationally useful at CONUS scale and
+    # produced the gray/white speckled appearance in the first diagnostic.
+    valid = (
+        (data != nodata)
+        & np.isfinite(data)
+        & (data >= UNITQ_DISPLAY_MINIMUM)
+    )
     if np.any(valid):
         indices = np.digitize(data[valid], UNITQ_BINS, right=False) - 1
         indices = np.clip(indices, 0, len(UNITQ_COLORS) - 1)
@@ -758,9 +768,21 @@ def run_diagnostic(args: argparse.Namespace) -> None:
     reference = fields["crest"]
     transform = source_transform(reference)
 
-    # QPE_FFGMAX is a non-dimensional ratio. The documented DVD thresholds
-    # use percentage values, so ratio 0.50 becomes 50 percent.
-    ffg_percent = fields["ffg"].data * 100.0
+    # IEM's archived QPE_FFGMAX grid is already stored in the same
+    # percent-of-guidance convention used by the DVD algorithm:
+    # 50 means 50 percent, 100 means 100 percent, and so forth.
+    #
+    # The first diagnostic incorrectly multiplied this field by 100,
+    # producing values such as 78,500 instead of the archived maximum 785
+    # and causing an unrealistically widespread Monitor category.
+    ffg_percent = fields["ffg"].data.copy()
+    finite_ffg = ffg_percent[np.isfinite(ffg_percent)]
+    if finite_ffg.size:
+        print(
+            "QPE_FFGMAX archive range used directly: "
+            f"{float(np.min(finite_ffg)):.1f} to "
+            f"{float(np.max(finite_ffg)):.1f} percent"
+        )
     ari_years = fields["ari"].data
     crest_unitq = fields["crest"].data
     sac_unitq = fields["sac"].data
@@ -826,7 +848,7 @@ def run_diagnostic(args: argparse.Namespace) -> None:
     dy = float(abs(np.median(np.diff(reference.latitudes))))
 
     metadata = {
-        "diagnostic_version": "mrms-ffd-single-time-v1",
+        "diagnostic_version": "mrms-ffd-single-time-v1.1",
         "generated_time_utc": generated_time.isoformat().replace("+00:00", "Z"),
         "requested_time_utc": requested_time.isoformat().replace("+00:00", "Z"),
         "selected_analysis_time_utc": selected_time.isoformat().replace(
@@ -848,10 +870,14 @@ def run_diagnostic(args: argparse.Namespace) -> None:
             "leaflet_bounds": bounds,
         },
         "transformations": {
-            "ffg": "raw non-dimensional QPE/FFG ratio multiplied by 100",
+            "ffg": (
+                "IEM QPE_FFGMAX used directly as percent of guidance; "
+                "50=50 percent and 100=100 percent"
+            ),
             "hydrologic_input": "pixelwise maximum of CREST and SAC Unit Q",
             "preview_resampling": "nearest",
             "preview_max_dimension": PREVIEW_MAX_DIMENSION,
+            "unitq_preview_display_minimum": UNITQ_DISPLAY_MINIMUM,
         },
         "derived_statistics": {
             "ffg_percent": statistics(ffg_percent),
