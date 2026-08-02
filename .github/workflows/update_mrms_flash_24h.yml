@@ -1,0 +1,219 @@
+name: Update MRMS FLASH 24-Hour Maxima
+
+on:
+  schedule:
+    # Offset from the top and half-hour to reduce peak GitHub scheduler load.
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mrms-flash-24h-operational
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ecCodes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "numpy<3" \
+            requests \
+            xarray \
+            cfgrib \
+            eccodes \
+            rasterio \
+            affine \
+            Pillow
+
+      - name: Validate rolling-window scripts
+        run: |
+          python fetch_mrms_crest_24h.py --self-test
+          python fetch_mrms_ffd_24h.py --self-test
+
+      - name: Resolve one common MRMS FLASH ending cycle
+        id: cycle
+        run: |
+          python - <<'PY'
+          import os
+          from fetch_mrms_ffd_24h import (
+              PRODUCTS,
+              build_session,
+              iso_z,
+              resolve_end_time,
+          )
+
+          session = build_session()
+          end_time, attempts = resolve_end_time(
+              session=session,
+              requested="",
+              required_products=PRODUCTS,
+              lookback_minutes=360,
+          )
+          value = iso_z(end_time)
+          print(f"Shared MRMS FLASH ending cycle: {value}")
+          print(f"Search attempts: {len(attempts)}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"end_time={value}\n")
+          PY
+
+      - name: Calculate CREST rolling 24-hour maximum
+        run: |
+          python fetch_mrms_crest_24h.py \
+            --end-time "${{ steps.cycle.outputs.end_time }}" \
+            --hours 24 \
+            --minimum-completeness 0.85 \
+            --dashboard-only \
+            --output-dir "${RUNNER_TEMP}/mrms_crest_dashboard"
+
+      - name: Calculate FFD rolling 24-hour maximum
+        run: |
+          python fetch_mrms_ffd_24h.py \
+            --end-time "${{ steps.cycle.outputs.end_time }}" \
+            --hours 24 \
+            --minimum-completeness 0.85 \
+            --dashboard-only \
+            --output-dir "${RUNNER_TEMP}/mrms_ffd_dashboard"
+
+      - name: Validate synchronized dashboard products
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from PIL import Image
+
+          runner_temp = Path(os.environ["RUNNER_TEMP"])
+          crest_dir = runner_temp / "mrms_crest_dashboard"
+          ffd_dir = runner_temp / "mrms_ffd_dashboard"
+
+          crest_png = crest_dir / "mrms_crest_unitq_max24h.png"
+          crest_json = crest_dir / "mrms_crest_unitq_max24h_metadata.json"
+          ffd_png = ffd_dir / "mrms_ffd_max24h.png"
+          ffd_json = ffd_dir / "mrms_ffd_max24h_metadata.json"
+
+          required = [crest_png, crest_json, ffd_png, ffd_json]
+          missing = [str(path) for path in required if not path.exists()]
+          if missing:
+              raise SystemExit(f"Missing required outputs: {missing}")
+
+          crest = json.loads(crest_json.read_text(encoding="utf-8"))
+          ffd = json.loads(ffd_json.read_text(encoding="utf-8"))
+
+          if crest["window_end_utc"] != ffd["window_end_utc"]:
+              raise SystemExit(
+                  "CREST and FFD ending times differ: "
+                  f"{crest['window_end_utc']} vs {ffd['window_end_utc']}"
+              )
+          if crest["window_start_utc"] != ffd["window_start_utc"]:
+              raise SystemExit(
+                  "CREST and FFD starting times differ: "
+                  f"{crest['window_start_utc']} vs {ffd['window_start_utc']}"
+              )
+          if crest["processed_cycles"] < 123:
+              raise SystemExit("CREST processed fewer than 123 cycles.")
+          if ffd["processed_cycles"] < 123:
+              raise SystemExit("FFD processed fewer than 123 cycles.")
+          if crest.get("metadata_mode") != "dashboard_compact":
+              raise SystemExit("CREST metadata is not compact dashboard mode.")
+          if ffd.get("metadata_mode") != "dashboard_compact":
+              raise SystemExit("FFD metadata is not compact dashboard mode.")
+
+          crest_size = Image.open(crest_png).size
+          ffd_size = Image.open(ffd_png).size
+          if crest_size != ffd_size:
+              raise SystemExit(
+                  f"Rendered image sizes differ: {crest_size} vs {ffd_size}"
+              )
+          if crest_size[0] < 6000:
+              raise SystemExit(
+                  f"Rendered images are unexpectedly small: {crest_size}"
+              )
+
+          print(
+              "Validated synchronized products: "
+              f"{crest['window_start_utc']} through "
+              f"{crest['window_end_utc']}; image size {crest_size}"
+          )
+          PY
+
+      - name: Install latest products under static
+        run: |
+          mkdir -p static
+          install -m 0644 \
+            "${RUNNER_TEMP}/mrms_crest_dashboard/mrms_crest_unitq_max24h.png" \
+            "static/mrms_crest_unitq_max24h.png"
+          install -m 0644 \
+            "${RUNNER_TEMP}/mrms_crest_dashboard/mrms_crest_unitq_max24h_metadata.json" \
+            "static/mrms_crest_unitq_max24h_metadata.json"
+          install -m 0644 \
+            "${RUNNER_TEMP}/mrms_ffd_dashboard/mrms_ffd_max24h.png" \
+            "static/mrms_ffd_max24h.png"
+          install -m 0644 \
+            "${RUNNER_TEMP}/mrms_ffd_dashboard/mrms_ffd_max24h_metadata.json" \
+            "static/mrms_ffd_max24h_metadata.json"
+
+          ls -lh \
+            static/mrms_crest_unitq_max24h.png \
+            static/mrms_crest_unitq_max24h_metadata.json \
+            static/mrms_ffd_max24h.png \
+            static/mrms_ffd_max24h_metadata.json
+
+      - name: Commit synchronized MRMS FLASH products
+        env:
+          END_TIME: ${{ steps.cycle.outputs.end_time }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            static/mrms_crest_unitq_max24h.png \
+            static/mrms_crest_unitq_max24h_metadata.json \
+            static/mrms_ffd_max24h.png \
+            static/mrms_ffd_max24h_metadata.json
+
+          if git diff --cached --quiet; then
+            echo "No MRMS FLASH product changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update MRMS FLASH 24h maxima ${END_TIME}"
+
+          for attempt in 1 2 3; do
+            echo "Push attempt ${attempt}..."
+            git pull --rebase origin "${BRANCH_NAME}"
+
+            if git push origin "HEAD:${BRANCH_NAME}"; then
+              echo "MRMS FLASH products committed successfully."
+              exit 0
+            fi
+
+            sleep $((attempt * 10))
+          done
+
+          echo "Unable to push MRMS FLASH products after three attempts."
+          exit 1
