@@ -1,0 +1,83 @@
+name: Diagnose MRMS FLASH FFD
+
+on:
+  workflow_dispatch:
+    inputs:
+      analysis_time:
+        description: >-
+          UTC analysis time, for example 2025-07-03T00:20:00Z.
+          Leave blank for the newest synchronized analysis.
+        required: false
+        default: ''
+        type: string
+      lookback_minutes:
+        description: >-
+          Minutes to search backward when the requested synchronized
+          analysis is unavailable.
+        required: false
+        default: '360'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-mrms-flash-ffd
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install ecCodes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            requests \
+            numpy \
+            xarray \
+            cfgrib \
+            eccodes \
+            rasterio \
+            affine \
+            Pillow
+
+      - name: Validate FFD threshold algorithm
+        run: python diagnose_mrms_ffd.py --self-test
+
+      - name: Run single-time MRMS FLASH diagnostic
+        env:
+          ANALYSIS_TIME: ${{ inputs.analysis_time }}
+          LOOKBACK_MINUTES: ${{ inputs.lookback_minutes }}
+        run: |
+          python diagnose_mrms_ffd.py \
+            --lookback-minutes "${LOOKBACK_MINUTES}" \
+            --output-dir diagnostic_output
+
+      - name: List diagnostic outputs
+        run: |
+          find diagnostic_output -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+
+      - name: Upload diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrms-flash-ffd-diagnostic
+          path: diagnostic_output/
+          if-no-files-found: error
+          retention-days: 14
