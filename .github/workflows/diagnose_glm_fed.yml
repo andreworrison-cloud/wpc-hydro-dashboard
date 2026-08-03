@@ -1,0 +1,88 @@
+name: Diagnose GOES GLM 5-Minute FED
+
+on:
+  workflow_dispatch:
+    inputs:
+      analysis_time:
+        description: >-
+          UTC five-minute window ending time, for example
+          2026-08-03T16:00:00Z. Leave blank for the newest common
+          GOES-19/GOES-18 window.
+        required: false
+        default: ''
+        type: string
+      lookback_minutes:
+        description: Minutes to search backward for a complete common window
+        required: false
+        default: '180'
+        type: string
+      minimum_completeness:
+        description: Required fraction of the expected 15 LCFA files per satellite
+        required: false
+        default: '0.80'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-goes-glm-fed-5min
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            boto3 \
+            botocore \
+            'numpy<3' \
+            xarray \
+            netCDF4 \
+            rasterio \
+            Pillow
+
+      - name: Validate synthetic FED logic
+        run: python diagnose_glm_fed.py --self-test
+
+      - name: Generate GOES-19 and GOES-18 diagnostic products
+        env:
+          ANALYSIS_TIME: ${{ inputs.analysis_time }}
+          LOOKBACK_MINUTES: ${{ inputs.lookback_minutes }}
+          MINIMUM_COMPLETENESS: ${{ inputs.minimum_completeness }}
+        run: |
+          python diagnose_glm_fed.py \
+            --analysis-time "${ANALYSIS_TIME}" \
+            --lookback-minutes "${LOOKBACK_MINUTES}" \
+            --minimum-completeness "${MINIMUM_COMPLETENESS}" \
+            --output-dir glm_fed_diagnostic_output
+
+      - name: List diagnostic outputs
+        run: |
+          find glm_fed_diagnostic_output -maxdepth 1 -type f \
+            -printf '%f %s bytes\n' | sort
+
+      - name: Upload GLM diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: goes-glm-fed-5min-diagnostic
+          path: glm_fed_diagnostic_output/
+          if-no-files-found: error
+          retention-days: 14
