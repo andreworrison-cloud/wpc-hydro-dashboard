@@ -463,8 +463,9 @@ def fetch_and_process_mpds():
         else:
             print(f" -> Using corrected/latest text geometry: {geometry_note}")
 
-        issue_str = valid_start.strftime("%HZ %b %d %Y")
-        expire_str = valid_end.strftime("%HZ %b %d %Y")
+        # Preserve the official four-digit HHMMZ time from the MPD text.
+        issue_str = valid_start.strftime("%H%MZ %b %d %Y")
+        expire_str = valid_end.strftime("%H%MZ %b %d %Y")
         valid_str = f"{issue_str} - {expire_str}"
 
         active_gdf = gpd.GeoDataFrame(
