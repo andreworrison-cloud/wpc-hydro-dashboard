@@ -39,10 +39,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
@@ -80,7 +80,7 @@ jobs:
             -printf '%f %s bytes\n' | sort
 
       - name: Upload GLM diagnostic artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: goes-glm-fed-5min-diagnostic
           path: glm_fed_diagnostic_output/
