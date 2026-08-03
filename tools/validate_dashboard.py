@@ -46,6 +46,8 @@ if (
 required_labels = [
     "Active Hydro Warnings & Advisories",
     "NEXRAD Radar (2-Hour Loop)",
+    "MRMS FLASH CREST Unit Q — Rolling 24-Hour Maximum",
+    "MRMS FLASH FFD — Rolling 24-Hour Maximum Category",
     "NWM Soil Saturation (0-40cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
@@ -63,6 +65,29 @@ required_labels = [
 for label in required_labels:
     if label not in app:
         errors.append(f"Missing required layer label: {label}")
+
+# Enforce the agreed placement of the two rolling MRMS FLASH layers within
+# Radar and Satellite Data. They belong directly after MRMS 24-Hour QPE and
+# before the longer-duration MRMS QPE layers.
+radar_start = app.find("title: 'Radar and Satellite Data (Real-Time)'")
+antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
+if radar_start >= 0 and antecedent_start > radar_start:
+    radar_block = app[radar_start:antecedent_start]
+    radar_labels = [
+        "{id: 'mrms-qpe-24h'",
+        "{id: 'mrms-flash-crest-24h'",
+        "{id: 'mrms-flash-ffd-24h'",
+        "{id: 'mrms-qpe-48h'",
+    ]
+    radar_positions = [radar_block.find(label) for label in radar_labels]
+    if any(position < 0 for position in radar_positions):
+        errors.append(
+            "Radar and Satellite Data is missing a required MRMS FLASH layer."
+        )
+    elif radar_positions != sorted(radar_positions):
+        errors.append(
+            "MRMS FLASH rolling layers are not in the required radar-section order."
+        )
 
 # Enforce the agreed order within Antecedent Hydrologic Conditions.
 antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
@@ -88,6 +113,25 @@ if antecedent_start >= 0 and rap_start > antecedent_start:
             "required order."
         )
 
+# Confirm the rolling MRMS FLASH files, metadata, legends, and time boxes are
+# wired into the dashboard.
+required_mrms_flash_fragments = [
+    "static/mrms_crest_unitq_max24h.png",
+    "static/mrms_crest_unitq_max24h_metadata.json",
+    "static/mrms_ffd_max24h.png",
+    "static/mrms_ffd_max24h_metadata.json",
+    "fetchMRMSFlash24hMetadata",
+    "mrms-crest-24h-time-box",
+    "mrms-ffd-24h-time-box",
+    "mrmsCrest24hLegendHTML",
+    "mrmsFfd24hLegendHTML",
+]
+for fragment in required_mrms_flash_fragments:
+    if fragment not in app:
+        errors.append(
+            f"Missing MRMS FLASH 24-hour integration fragment: {fragment}"
+        )
+
 # Confirm the new NLDAS files, metadata, legends, and time boxes are wired in.
 required_nldas_fragments = [
     "static/nldas_rsm_0_10cm.png",
@@ -111,7 +155,7 @@ duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
 
-expected_layer_count = 98
+expected_layer_count = 100
 if len(ids) != expected_layer_count:
     errors.append(
         f"Expected {expected_layer_count} registered layers, found {len(ids)}."
@@ -155,6 +199,6 @@ if errors:
 
 print(
     "Dashboard validation passed: "
-    f"{len(ids)} registered layers; menu order, antecedent order, "
-    "NLDAS RSM mappings, and required labels preserved."
+    f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
+    "antecedent order, MRMS/NLDAS mappings, and required labels preserved."
 )
