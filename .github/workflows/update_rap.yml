@@ -1,19 +1,26 @@
 name: Update RAP Mesoanalysis
 
 on:
-  # Strictly listens for your dedicated ping from cron-job.org
+  # Strictly listens for the dedicated ping from cron-job.org.
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: update-rap-operational
+  cancel-in-progress: false
+
 jobs:
   update-rap:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,13 +40,39 @@ jobs:
       - name: Run RAP Mesoanalysis Script
         run: python fetch_rap.py
 
-      - name: Commit and Push RAP Maps
+      - name: Commit and push RAP maps
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          # Stage ONLY the RAP outputs
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          # Preserve the existing behavior: stage only generated static outputs.
           git add static/
-          
-          # Commit, neatly pull any changes from the 5-minute script, and push
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update hourly RAP maps" && git pull --rebase && git push)
+
+          if git diff --cached --quiet; then
+            echo "RAP products are unchanged."
+            exit 0
+          fi
+
+          git commit -m "Auto-update hourly RAP maps"
+
+          for attempt in 1 2 3; do
+            echo "Sync/push attempt ${attempt}..."
+
+            if ! git pull --rebase origin "${BRANCH_NAME}"; then
+              git rebase --abort || true
+              sleep $((attempt * 10))
+              continue
+            fi
+
+            if git push origin "HEAD:${BRANCH_NAME}"; then
+              echo "RAP products committed successfully."
+              exit 0
+            fi
+
+            sleep $((attempt * 10))
+          done
+
+          echo "Unable to push RAP products after three attempts."
+          exit 1
