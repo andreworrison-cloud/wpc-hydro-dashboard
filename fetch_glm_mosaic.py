@@ -887,9 +887,27 @@ def render_web_mercator(
         )
         dst_transform = from_origin(left, top, (right - left) / dst_width, (top - bottom) / dst_height)
 
+    # Normalize every source dtype before clipping.  NumPy 2 raises an
+    # OverflowError when a Python scalar such as 65535 is compared directly
+    # with a uint8 array (the debug FED footprint is uint8).  Upcasting first
+    # keeps the generic renderer valid for uint8, uint16, and uint32 products.
+    source_values = np.asarray(array)
+    if np.issubdtype(source_values.dtype, np.floating):
+        source_values = np.nan_to_num(
+            source_values, nan=0.0, posinf=float(np.iinfo(np.uint16).max), neginf=0.0
+        )
+        source_uint16 = np.clip(
+            source_values, 0, np.iinfo(np.uint16).max
+        ).astype(np.uint16)
+    else:
+        source_unsigned = source_values.astype(np.uint64, copy=False)
+        source_uint16 = np.minimum(
+            source_unsigned, np.uint64(np.iinfo(np.uint16).max)
+        ).astype(np.uint16)
+
     destination = np.zeros((dst_height, dst_width), dtype=np.uint16)
     reproject(
-        source=np.minimum(array, np.iinfo(np.uint16).max).astype(np.uint16),
+        source=source_uint16,
         destination=destination,
         src_transform=grid.transform,
         src_crs="EPSG:4326",
@@ -1605,6 +1623,18 @@ def self_test() -> None:
     simple_g19 = np.array([[5, 6, 7, 0]], dtype=np.uint32)
     simple = build_controlled_mosaic(simple_g18, simple_g19, simple_owner)
     assert np.array_equal(simple, np.array([[1, 0, 7, 0]], dtype=np.uint32))
+
+    # Renderer dtype regression: the operational failure occurred when the
+    # uint8 FED-footprint debug layer was compared directly with 65535.
+    with tempfile.TemporaryDirectory(prefix="glm-render-selftest-") as temp_name:
+        test_png = Path(temp_name) / "uint8_footprint.png"
+        test_footprint = np.zeros((grid.height, grid.width), dtype=np.uint8)
+        test_footprint[0, 0] = 1
+        render_web_mercator(
+            test_footprint, grid, test_png, 512, FOOTPRINT_BINS, FOOTPRINT_RGBA
+        )
+        assert test_png.is_file() and test_png.stat().st_size > 0
+
     print("Incremental GOES GLM controlled-mosaic self-test passed.")
 
 
