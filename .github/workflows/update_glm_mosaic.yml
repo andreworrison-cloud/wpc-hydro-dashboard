@@ -1,30 +1,30 @@
-name: Update GOES GLM Controlled Mosaic
+name: Update GOES GLM Mosaic
 
 on:
   workflow_dispatch:
     inputs:
       analysis_time:
-        description: Optional UTC end time; leave blank for newest synchronized data
+        description: Optional UTC end time; leave blank for newest synchronized radar-aligned data
         required: false
         default: ''
         type: string
       lookback_minutes:
-        description: Minutes to search backward for a synchronized GOES-18/GOES-19 window
+        description: Minutes to search backward for a synchronized GOES-18/GOES-19 slot
         required: false
         default: '180'
         type: string
       minimum_completeness:
-        description: Minimum required LCFA file fraction for every satellite and time window
+        description: Minimum required LCFA/cache completeness for both satellites and every window
         required: false
         default: '0.80'
         type: string
       maximum_latency_minutes:
-        description: Maximum age allowed for an automatically selected real-time end time
+        description: Maximum age allowed for automatically selected real-time data
         required: false
         default: '45'
         type: string
       publish_debug_layers:
-        description: Publish source ownership and separate GOES-18/GOES-19 reference layers
+        description: Publish ownership and separate GOES-18/GOES-19 dashboard debug references
         required: false
         default: true
         type: boolean
@@ -33,16 +33,18 @@ permissions:
   contents: write
 
 concurrency:
-  group: update-goes-glm-controlled-mosaic
+  group: update-goes-glm-mosaic
   cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
 
     env:
       PYTHONUNBUFFERED: '1'
+      GLM_CACHE_DIR: .glm_mosaic_cache
+      GLM_OUTPUT_DIR: glm_operational_staging
 
     steps:
       - name: Checkout repository
@@ -56,6 +58,16 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - name: Restore rolling GLM five-minute cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.GLM_CACHE_DIR }}
+          # Caches are immutable. A run-specific key saves the newly updated
+          # cache; restore-keys selects the newest preceding successful cache.
+          key: ${{ runner.os }}-glm-mosaic-incremental-v2-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-glm-mosaic-incremental-v2-
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -68,29 +80,32 @@ jobs:
             rasterio \
             Pillow
 
-      - name: Validate controlled-mosaic science logic
+      - name: Validate incremental and mosaic science logic
         run: python fetch_glm_mosaic.py --self-test
 
-      - name: Generate dashboard-ready GLM products
+      - name: Generate dashboard-ready GLM products incrementally
         env:
           ANALYSIS_TIME: ${{ inputs.analysis_time }}
           LOOKBACK_MINUTES: ${{ inputs.lookback_minutes }}
           MINIMUM_COMPLETENESS: ${{ inputs.minimum_completeness }}
           MAXIMUM_LATENCY_MINUTES: ${{ inputs.maximum_latency_minutes }}
           PUBLISH_DEBUG_LAYERS: ${{ inputs.publish_debug_layers }}
+        shell: bash
         run: |
-          DEBUG_FLAG='--publish-debug-layers'
-          if [[ "${PUBLISH_DEBUG_LAYERS}" == 'false' ]]; then
-            DEBUG_FLAG='--no-publish-debug-layers'
+          set -euo pipefail
+          debug_flag='--publish-debug-layers'
+          if [[ "${PUBLISH_DEBUG_LAYERS:-true}" == 'false' ]]; then
+            debug_flag='--no-publish-debug-layers'
           fi
 
           python fetch_glm_mosaic.py \
-            --analysis-time "${ANALYSIS_TIME}" \
-            --lookback-minutes "${LOOKBACK_MINUTES}" \
-            --minimum-completeness "${MINIMUM_COMPLETENESS}" \
-            --maximum-latency-minutes "${MAXIMUM_LATENCY_MINUTES}" \
-            "${DEBUG_FLAG}" \
-            --output-dir glm_operational_staging
+            --analysis-time "${ANALYSIS_TIME:-}" \
+            --lookback-minutes "${LOOKBACK_MINUTES:-180}" \
+            --minimum-completeness "${MINIMUM_COMPLETENESS:-0.80}" \
+            --maximum-latency-minutes "${MAXIMUM_LATENCY_MINUTES:-45}" \
+            --cache-dir "$GLM_CACHE_DIR" \
+            --output-dir "$GLM_OUTPUT_DIR" \
+            "$debug_flag"
 
       - name: Validate complete GLM publication package
         env:
@@ -106,116 +121,112 @@ jobs:
           root = Path('glm_operational_staging')
           minimum = float(os.environ.get('MINIMUM_COMPLETENESS') or 0.80)
           debug = (os.environ.get('PUBLISH_DEBUG_LAYERS') or 'true').lower() != 'false'
-
-          main_stems = [
-              'glm_conus_mosaic_5min',
-              'glm_conus_mosaic_30min',
-              'glm_conus_mosaic_60min',
-          ]
-          debug_stems = [
+          primary = ['glm_conus_mosaic_5min', 'glm_conus_mosaic_30min', 'glm_conus_mosaic_60min']
+          references = [
               'glm_g18_fed_5min', 'glm_g18_fed_30min', 'glm_g18_fed_60min',
               'glm_g19_fed_5min', 'glm_g19_fed_30min', 'glm_g19_fed_60min',
           ] if debug else []
-
-          expected = {'glm_mosaic_manifest.json', 'glm_mosaic_summary.csv'}
-          for stem in main_stems + debug_stems:
+          expected = {'glm_mosaic_manifest.json', 'glm_mosaic_summary.csv', 'glm_mosaic_incremental_debug.html'}
+          for stem in primary + references:
               expected.update({f'{stem}.png', f'{stem}_metadata.json'})
           if debug:
-              expected.update({
-                  'glm_mosaic_source_ownership.png',
-                  'glm_mosaic_source_ownership_metadata.json',
-              })
-
+              expected.update({'glm_mosaic_source_ownership.png', 'glm_mosaic_source_ownership_metadata.json'})
           missing = sorted(name for name in expected if not (root / name).is_file())
           if missing:
-              raise SystemExit(f'Missing GLM publication files: {missing}')
+              raise SystemExit(f'Missing GLM files: {missing}')
 
-          windows = {}
-          for stem in main_stems:
+          endings = set()
+          arrays_by_window = {}
+          for stem in primary:
               metadata = json.loads((root / f'{stem}_metadata.json').read_text())
-              if metadata.get('metadata_mode') != 'glm_dashboard_v1':
-                  raise SystemExit(f'{stem}: invalid metadata_mode')
-              if metadata.get('product_role') != 'controlled_mosaic':
-                  raise SystemExit(f'{stem}: invalid product_role')
+              if metadata.get('metadata_mode') != 'glm_dashboard_v1' or metadata.get('product_role') != 'controlled_mosaic':
+                  raise SystemExit(f'{stem}: dashboard metadata contract failed')
               method = metadata.get('mosaic_method') or {}
-              if any(method.get(key) is not False for key in (
-                  'summation', 'averaging', 'blending', 'secondary_source_gap_fill'
-              )):
-                  raise SystemExit(f'{stem}: controlled mosaic safeguards failed')
-              grid = metadata.get('grid') or {}
-              if str(grid.get('image_crs', '')).upper() != 'EPSG:3857':
-                  raise SystemExit(f'{stem}: PNG is not EPSG:3857')
-              bounds = grid.get('leaflet_bounds')
-              if not isinstance(bounds, list) or len(bounds) != 2:
-                  raise SystemExit(f'{stem}: invalid Leaflet bounds')
-              for satellite in ('G18', 'G19'):
+              if any(method.get(key) is not False for key in ('summation','averaging','blending','secondary_source_gap_fill')):
+                  raise SystemExit(f'{stem}: controlled-mosaic safeguards failed')
+              if str((metadata.get('grid') or {}).get('image_crs','')).upper() != 'EPSG:3857':
+                  raise SystemExit(f'{stem}: invalid image CRS')
+              for satellite in ('G18','G19'):
                   stats = (metadata.get('satellite_inputs') or {}).get(satellite) or {}
-                  if float(stats.get('completeness_fraction', 0.0)) < minimum:
+                  if float(stats.get('completeness_fraction',0)) < minimum:
                       raise SystemExit(f'{stem}: {satellite} completeness below threshold')
-              windows[metadata['window_minutes']] = metadata['window_end_utc']
-
+              endings.add(metadata['window_end_utc'])
               image = Image.open(root / f'{stem}.png').convert('RGBA')
-              alpha = image.getchannel('A')
-              if image.width < 1000 or image.height < 500 or alpha.getextrema()[1] == 0:
+              if image.width < 1000 or image.height < 500 or image.getchannel('A').getextrema()[1] == 0:
                   raise SystemExit(f'{stem}: empty or implausibly small PNG')
-
-          if len(set(windows.values())) != 1:
-              raise SystemExit(f'Mosaic windows are not synchronized: {windows}')
+          if len(endings) != 1:
+              raise SystemExit(f'Primary windows are not synchronized: {endings}')
 
           manifest = json.loads((root / 'glm_mosaic_manifest.json').read_text())
-          if manifest.get('window_end_utc') != next(iter(windows.values())):
-              raise SystemExit('Manifest window does not match mosaic metadata')
-
-          print(f'Validated {len(expected)} GLM publication files at {next(iter(windows.values()))}.')
+          if manifest.get('metadata_mode') != 'glm_dashboard_v1':
+              raise SystemExit('Manifest metadata contract failed')
+          cache = manifest.get('incremental_cache') or {}
+          if int(cache.get('retained_slot_count',0)) < 1:
+              raise SystemExit('Incremental cache did not retain any synchronized slot')
+          if manifest.get('window_end_utc') != next(iter(endings)):
+              raise SystemExit('Manifest and primary metadata ending times differ')
+          print(f'Validated incremental GLM package through {next(iter(endings))}.')
           PY
 
-      - name: Upload GLM operational artifact
+      - name: Upload GLM operational and radar-debug artifact
         uses: actions/upload-artifact@v7
         with:
-          name: goes-glm-controlled-mosaic-operational
-          path: glm_operational_staging/
+          name: goes-glm-mosaic-incremental-${{ github.run_id }}
+          path: ${{ env.GLM_OUTPUT_DIR }}/
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
 
-      - name: Publish products and push with retry
+      - name: Publish established dashboard files and push with retry
+        env:
+          PUBLISH_DEBUG_LAYERS: ${{ inputs.publish_debug_layers }}
+        shell: bash
         run: |
           set -euo pipefail
           branch="${GITHUB_REF_NAME}"
+          root="$GLM_OUTPUT_DIR"
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git pull --rebase origin "${branch}"
+          git pull --rebase origin "$branch"
           mkdir -p static
-          cp -f glm_operational_staging/glm_* static/
 
-          git add \
-            static/glm_*.png \
-            static/glm_*_metadata.json \
-            static/glm_mosaic_manifest.json \
-            static/glm_mosaic_summary.csv
+          publish=(
+            glm_conus_mosaic_5min.png glm_conus_mosaic_5min_metadata.json
+            glm_conus_mosaic_30min.png glm_conus_mosaic_30min_metadata.json
+            glm_conus_mosaic_60min.png glm_conus_mosaic_60min_metadata.json
+            glm_mosaic_manifest.json glm_mosaic_summary.csv
+          )
+          if [[ "${PUBLISH_DEBUG_LAYERS:-true}" != 'false' ]]; then
+            publish+=(
+              glm_g18_fed_5min.png glm_g18_fed_5min_metadata.json
+              glm_g18_fed_30min.png glm_g18_fed_30min_metadata.json
+              glm_g18_fed_60min.png glm_g18_fed_60min_metadata.json
+              glm_g19_fed_5min.png glm_g19_fed_5min_metadata.json
+              glm_g19_fed_30min.png glm_g19_fed_30min_metadata.json
+              glm_g19_fed_60min.png glm_g19_fed_60min_metadata.json
+              glm_mosaic_source_ownership.png glm_mosaic_source_ownership_metadata.json
+            )
+          fi
+
+          for file in "${publish[@]}"; do
+            cp -f "$root/$file" "static/$file"
+          done
+          printf 'static/%s\n' "${publish[@]}" | xargs git add --
 
           if git diff --cached --quiet; then
             echo 'No GLM product changes to commit.'
             exit 0
           fi
-
-          valid_end=$(python - <<'PY'
-          import json
-          print(json.load(open('glm_operational_staging/glm_mosaic_manifest.json'))['window_end_utc'])
-          PY
-          )
+          valid_end=$(python -c "import json; print(json.load(open('$root/glm_mosaic_manifest.json'))['window_end_utc'])")
           git commit -m "Update GOES GLM mosaic through ${valid_end}"
 
           for attempt in 1 2 3; do
-            if git push origin "HEAD:${branch}"; then
-              exit 0
-            fi
-            if [[ "${attempt}" -eq 3 ]]; then
+            if git push origin "HEAD:${branch}"; then exit 0; fi
+            if [[ "$attempt" -eq 3 ]]; then
               echo 'GLM push failed after three attempts.' >&2
               exit 1
             fi
             sleep $((attempt * 10))
-            git pull --rebase origin "${branch}"
+            git pull --rebase origin "$branch"
           done
