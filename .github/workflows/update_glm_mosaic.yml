@@ -59,13 +59,13 @@ jobs:
           cache: pip
 
       - name: Restore rolling GLM five-minute cache
-        uses: actions/cache@v5
+        id: restore-glm-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.GLM_CACHE_DIR }}
-          # Caches are immutable. A run-specific key saves the newly updated
-          # cache; restore-keys selects the newest preceding successful cache.
-          key: ${{ runner.os }}-glm-mosaic-incremental-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-glm-mosaic-incremental-v3-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            ${{ runner.os }}-glm-mosaic-incremental-v3-
             ${{ runner.os }}-glm-mosaic-incremental-v2-
 
       - name: Install Python dependencies
@@ -106,6 +106,13 @@ jobs:
             --cache-dir "$GLM_CACHE_DIR" \
             --output-dir "$GLM_OUTPUT_DIR" \
             "$debug_flag"
+
+      - name: Save rolling GLM five-minute cache
+        if: ${{ always() && hashFiles('.glm_mosaic_cache/**/*') != '' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.GLM_CACHE_DIR }}
+          key: ${{ runner.os }}-glm-mosaic-incremental-v3-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Validate complete GLM publication package
         env:
