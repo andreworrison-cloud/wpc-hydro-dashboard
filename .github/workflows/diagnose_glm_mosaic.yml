@@ -1,0 +1,97 @@
+name: Diagnose GOES GLM Controlled Mosaic
+
+on:
+  workflow_dispatch:
+    inputs:
+      analysis_time:
+        description: >-
+          UTC ending time shared by the 5-, 30-, and 60-minute windows.
+          Defaults to the July 21, 2026 canned validation case. Clear the
+          value to use the newest common GOES-19/GOES-18 end time.
+        required: false
+        default: '2026-07-21T21:00:00Z'
+        type: string
+      lookback_minutes:
+        description: Minutes to search backward when analysis_time is blank
+        required: false
+        default: '180'
+        type: string
+      minimum_completeness:
+        description: >-
+          Required fraction of expected LCFA files for every satellite and
+          window (15 files for 5 minutes, 90 for 30, 180 for 60)
+        required: false
+        default: '0.80'
+        type: string
+      seam_band_degrees:
+        description: Half-width in longitude for East/West seam comparison statistics
+        required: false
+        default: '5.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-goes-glm-controlled-mosaic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            boto3 \
+            botocore \
+            'numpy<3' \
+            xarray \
+            netCDF4 \
+            rasterio \
+            Pillow
+
+      - name: Validate controlled-mosaic logic
+        run: python diagnose_glm_mosaic.py --self-test
+
+      - name: Generate controlled GOES GLM mosaic products
+        env:
+          ANALYSIS_TIME: ${{ inputs.analysis_time }}
+          LOOKBACK_MINUTES: ${{ inputs.lookback_minutes }}
+          MINIMUM_COMPLETENESS: ${{ inputs.minimum_completeness }}
+          SEAM_BAND_DEGREES: ${{ inputs.seam_band_degrees }}
+        run: |
+          python diagnose_glm_mosaic.py \
+            --analysis-time "${ANALYSIS_TIME}" \
+            --lookback-minutes "${LOOKBACK_MINUTES}" \
+            --minimum-completeness "${MINIMUM_COMPLETENESS}" \
+            --seam-band-degrees "${SEAM_BAND_DEGREES}" \
+            --output-dir glm_mosaic_diagnostic_output
+
+      - name: List controlled-mosaic outputs
+        run: |
+          find glm_mosaic_diagnostic_output -maxdepth 1 -type f \
+            -printf '%f %s bytes\n' | sort
+
+      - name: Upload controlled-mosaic artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: goes-glm-controlled-mosaic
+          path: glm_mosaic_diagnostic_output/
+          if-no-files-found: error
+          retention-days: 14
