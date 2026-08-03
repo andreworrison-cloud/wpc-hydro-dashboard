@@ -1,0 +1,90 @@
+name: Diagnose GOES GLM 30/60-Minute Rolling Fields
+
+on:
+  workflow_dispatch:
+    inputs:
+      analysis_time:
+        description: >-
+          UTC ending time for both rolling windows, for example
+          2026-07-21T21:00:00Z. Leave blank for the newest common
+          GOES-19/GOES-18 end time.
+        required: false
+        default: ''
+        type: string
+      lookback_minutes:
+        description: Minutes to search backward for a complete common end time
+        required: false
+        default: '180'
+        type: string
+      minimum_completeness:
+        description: >-
+          Required fraction of expected LCFA files for every satellite/window
+          combination (90 files for 30 minutes; 180 files for 60 minutes)
+        required: false
+        default: '0.80'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-goes-glm-rolling-30-60min
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            boto3 \
+            botocore \
+            'numpy<3' \
+            xarray \
+            netCDF4 \
+            rasterio \
+            Pillow
+
+      - name: Validate rolling GLM logic
+        run: python diagnose_glm_rolling.py --self-test
+
+      - name: Generate GOES-19 and GOES-18 rolling products
+        env:
+          ANALYSIS_TIME: ${{ inputs.analysis_time }}
+          LOOKBACK_MINUTES: ${{ inputs.lookback_minutes }}
+          MINIMUM_COMPLETENESS: ${{ inputs.minimum_completeness }}
+        run: |
+          python diagnose_glm_rolling.py \
+            --analysis-time "${ANALYSIS_TIME}" \
+            --lookback-minutes "${LOOKBACK_MINUTES}" \
+            --minimum-completeness "${MINIMUM_COMPLETENESS}" \
+            --output-dir glm_rolling_diagnostic_output
+
+      - name: List diagnostic outputs
+        run: |
+          find glm_rolling_diagnostic_output -maxdepth 1 -type f \
+            -printf '%f %s bytes\n' | sort
+
+      - name: Upload GLM rolling diagnostic artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: goes-glm-rolling-30-60min-diagnostic
+          path: glm_rolling_diagnostic_output/
+          if-no-files-found: error
+          retention-days: 14
