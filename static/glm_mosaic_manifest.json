@@ -1,7 +1,7 @@
 {
   "metadata_mode": "glm_dashboard_v1",
-  "product": "GOES GLM controlled CONUS mosaic operational package",
-  "window_end_utc": "2026-08-03T22:15:00Z",
+  "product": "Incremental operational GOES GLM controlled CONUS mosaic package",
+  "window_end_utc": "2026-08-03T23:50:00Z",
   "windows_minutes": [
     5,
     30,
@@ -19,63 +19,1088 @@
       "nominal_equal_angle_seam_longitude": -106.1
     }
   },
+  "incremental_cache": {
+    "slot_minutes": 5,
+    "retained_synchronized_slots": [
+      "2026-08-03T22:55:00Z",
+      "2026-08-03T23:00:00Z",
+      "2026-08-03T23:05:00Z",
+      "2026-08-03T23:10:00Z",
+      "2026-08-03T23:15:00Z",
+      "2026-08-03T23:20:00Z",
+      "2026-08-03T23:25:00Z",
+      "2026-08-03T23:30:00Z",
+      "2026-08-03T23:35:00Z",
+      "2026-08-03T23:40:00Z",
+      "2026-08-03T23:45:00Z",
+      "2026-08-03T23:50:00Z"
+    ],
+    "retained_slot_count": 12,
+    "cache_hits_this_run": 0,
+    "new_slots_built_this_run": 12,
+    "expected_lcfa_files_per_slot_per_satellite": 15,
+    "cache_directory": "/home/runner/work/wpc-hydro-dashboard/wpc-hydro-dashboard/.glm_mosaic_cache"
+  },
+  "radar_coordination": {
+    "wms_endpoint": "https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi",
+    "wms_layer": "nexrad-n0q-wmst",
+    "frame_interval_minutes": 10,
+    "comparison_time_utc": "2026-08-03T23:50:00Z",
+    "artifact_debug_html": "glm_mosaic_incremental_debug.html"
+  },
   "mosaic_products": [
     {
+      "metadata_mode": "glm_dashboard_v1",
+      "product_role": "controlled_mosaic",
       "window_minutes": 5,
+      "product_kind": "five-minute flash extent density",
       "display_label": "GOES GLM Controlled Mosaic \u2014 Latest 5-Minute FED",
-      "window_start_utc": "2026-08-03T22:10:00Z",
-      "window_end_utc": "2026-08-03T22:15:00Z",
+      "window_start_utc": "2026-08-03T23:45:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
       "maximum_value": 142,
-      "nonzero_grid_cells": 2888,
-      "flash_cell_contributions": 14415,
-      "leaflet_png": "glm_conus_mosaic_5min.png"
+      "nonzero_grid_cells": 3419,
+      "flash_cell_contributions": 15553,
+      "source_g18_owned_cells": 2091250,
+      "source_g19_owned_cells": 4033750,
+      "source_g18_nonzero_cells": 676,
+      "source_g19_nonzero_cells": 2743,
+      "source_product": "GLM-L2-LCFA",
+      "mosaic_method": {
+        "name": "exclusive lower-view-angle source ownership",
+        "summation": false,
+        "averaging": false,
+        "blending": false,
+        "secondary_source_gap_fill": false,
+        "satellite_geometry": {
+          "g18_subsatellite_longitude": -137.0,
+          "g19_subsatellite_longitude": -75.2,
+          "nominal_equal_angle_seam_longitude": -106.1
+        }
+      },
+      "satellite_inputs": {
+        "G18": {
+          "satellite": "G18",
+          "satellite_label": "GOES-18 (West)",
+          "window_minutes": 5,
+          "window_start_utc": "2026-08-03T23:45:00Z",
+          "window_end_utc": "2026-08-03T23:50:00Z",
+          "expected_slots": 1,
+          "available_slots": 1,
+          "slot_completeness_fraction": 1.0,
+          "expected_files": 15,
+          "listed_files": 15,
+          "processed_files": 15,
+          "completeness_fraction": 1.0,
+          "quality_controlled_flash_records": 2848,
+          "events_mapped_to_good_flashes": 61352,
+          "events_in_domain": 29694,
+          "flash_cell_contributions": 7395,
+          "nonzero_grid_cells": 2189,
+          "maximum_value": 104
+        },
+        "G19": {
+          "satellite": "G19",
+          "satellite_label": "GOES-19 (East)",
+          "window_minutes": 5,
+          "window_start_utc": "2026-08-03T23:45:00Z",
+          "window_end_utc": "2026-08-03T23:50:00Z",
+          "expected_slots": 1,
+          "available_slots": 1,
+          "slot_completeness_fraction": 1.0,
+          "expected_files": 15,
+          "listed_files": 15,
+          "processed_files": 15,
+          "completeness_fraction": 1.0,
+          "quality_controlled_flash_records": 8601,
+          "events_mapped_to_good_flashes": 318526,
+          "events_in_domain": 82229,
+          "flash_cell_contributions": 14859,
+          "nonzero_grid_cells": 3288,
+          "maximum_value": 142
+        }
+      },
+      "incremental_cache": {
+        "slot_minutes": 5,
+        "expected_slots": 1,
+        "g18_available_slots": 1,
+        "g19_available_slots": 1,
+        "storage": "compressed sparse NPZ five-minute slots"
+      },
+      "seam_diagnostics": {
+        "seam_longitude": -106.1,
+        "band_half_width_degrees": 5.0,
+        "band_grid_cells": 875000,
+        "either_satellite_nonzero_cells": 2240,
+        "both_satellites_nonzero_cells": 51,
+        "g18_nonzero_cells": 1205,
+        "g19_nonzero_cells": 1086,
+        "selected_nonzero_cells": 1184,
+        "mean_g19_minus_g18_where_both_nonzero": -0.9019607843137255,
+        "median_g19_minus_g18_where_both_nonzero": 0.0
+      },
+      "units": "flashes per 0.02-degree grid cell per five minutes",
+      "legend_id": "five-minute",
+      "leaflet_png": "glm_conus_mosaic_5min.png",
+      "default_opacity": 0.88,
+      "grid": {
+        "west": -130.0,
+        "east": -60.0,
+        "south": 20.0,
+        "north": 55.0,
+        "resolution": 0.02,
+        "shape": [
+          1750,
+          3500
+        ],
+        "crs": "EPSG:4326",
+        "image_crs": "EPSG:3857",
+        "leaflet_bounds": [
+          [
+            19.992642947324196,
+            -129.99999999999997
+          ],
+          [
+            54.99999999999999,
+            -60.007474235991964
+          ]
+        ],
+        "rendered_shape": [
+          2140,
+          3276
+        ],
+        "rendered_transform": {
+          "a": 2378.3676213017266,
+          "b": 0.0,
+          "c": -14471533.803125564,
+          "d": 0.0,
+          "e": -2378.3676213017266,
+          "f": 7361866.113051188
+        }
+      },
+      "rendering": {
+        "resampling": "nearest",
+        "bins": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "labels": [
+          "1",
+          "2\u20133",
+          "4\u20137",
+          "8\u201315",
+          "16\u201331",
+          "32\u201363",
+          "64\u2013127",
+          "\u2265128"
+        ],
+        "rgba": [
+          [
+            0,
+            255,
+            255,
+            210
+          ],
+          [
+            0,
+            255,
+            0,
+            210
+          ],
+          [
+            255,
+            255,
+            0,
+            220
+          ],
+          [
+            255,
+            153,
+            0,
+            225
+          ],
+          [
+            255,
+            0,
+            0,
+            230
+          ],
+          [
+            255,
+            0,
+            255,
+            235
+          ],
+          [
+            199,
+            125,
+            255,
+            240
+          ],
+          [
+            255,
+            255,
+            255,
+            248
+          ]
+        ]
+      },
+      "nonzero_percentiles": {
+        "p50": 2.0,
+        "p75": 4.0,
+        "p90": 10.0,
+        "p95": 17.0,
+        "p99": 47.64000000000033,
+        "p99_5": 73.72999999999956,
+        "p99_9": 121.05800000000636
+      },
+      "render_bin_counts": {
+        "1": 1592,
+        "2\u20133": 862,
+        "4\u20137": 515,
+        "8\u201315": 251,
+        "16\u201331": 135,
+        "32\u201363": 41,
+        "64\u2013127": 19,
+        "\u2265128": 4
+      },
+      "generated_time_utc": "2026-08-03T23:53:49Z"
     },
     {
+      "metadata_mode": "glm_dashboard_v1",
+      "product_role": "controlled_mosaic",
       "window_minutes": 30,
+      "product_kind": "rolling 30-minute flash extent accumulation",
       "display_label": "GOES GLM Controlled Mosaic \u2014 Rolling 30-Minute Accumulation",
-      "window_start_utc": "2026-08-03T21:45:00Z",
-      "window_end_utc": "2026-08-03T22:15:00Z",
-      "maximum_value": 313,
-      "nonzero_grid_cells": 5953,
-      "flash_cell_contributions": 66736,
-      "leaflet_png": "glm_conus_mosaic_30min.png"
+      "window_start_utc": "2026-08-03T23:20:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "maximum_value": 660,
+      "nonzero_grid_cells": 7385,
+      "flash_cell_contributions": 93494,
+      "source_g18_owned_cells": 2091250,
+      "source_g19_owned_cells": 4033750,
+      "source_g18_nonzero_cells": 1321,
+      "source_g19_nonzero_cells": 6064,
+      "source_product": "GLM-L2-LCFA",
+      "mosaic_method": {
+        "name": "exclusive lower-view-angle source ownership",
+        "summation": false,
+        "averaging": false,
+        "blending": false,
+        "secondary_source_gap_fill": false,
+        "satellite_geometry": {
+          "g18_subsatellite_longitude": -137.0,
+          "g19_subsatellite_longitude": -75.2,
+          "nominal_equal_angle_seam_longitude": -106.1
+        }
+      },
+      "satellite_inputs": {
+        "G18": {
+          "satellite": "G18",
+          "satellite_label": "GOES-18 (West)",
+          "window_minutes": 30,
+          "window_start_utc": "2026-08-03T23:20:00Z",
+          "window_end_utc": "2026-08-03T23:50:00Z",
+          "expected_slots": 6,
+          "available_slots": 6,
+          "slot_completeness_fraction": 1.0,
+          "expected_files": 90,
+          "listed_files": 89,
+          "processed_files": 89,
+          "completeness_fraction": 0.9888888888888889,
+          "quality_controlled_flash_records": 16675,
+          "events_mapped_to_good_flashes": 334110,
+          "events_in_domain": 156565,
+          "flash_cell_contributions": 39685,
+          "nonzero_grid_cells": 4357,
+          "maximum_value": 508
+        },
+        "G19": {
+          "satellite": "G19",
+          "satellite_label": "GOES-19 (East)",
+          "window_minutes": 30,
+          "window_start_utc": "2026-08-03T23:20:00Z",
+          "window_end_utc": "2026-08-03T23:50:00Z",
+          "expected_slots": 6,
+          "available_slots": 6,
+          "slot_completeness_fraction": 1.0,
+          "expected_files": 90,
+          "listed_files": 90,
+          "processed_files": 90,
+          "completeness_fraction": 1.0,
+          "quality_controlled_flash_records": 53216,
+          "events_mapped_to_good_flashes": 1952274,
+          "events_in_domain": 472152,
+          "flash_cell_contributions": 87752,
+          "nonzero_grid_cells": 7074,
+          "maximum_value": 660
+        }
+      },
+      "incremental_cache": {
+        "slot_minutes": 5,
+        "expected_slots": 6,
+        "g18_available_slots": 6,
+        "g19_available_slots": 6,
+        "storage": "compressed sparse NPZ five-minute slots"
+      },
+      "seam_diagnostics": {
+        "seam_longitude": -106.1,
+        "band_half_width_degrees": 5.0,
+        "band_grid_cells": 875000,
+        "either_satellite_nonzero_cells": 4467,
+        "both_satellites_nonzero_cells": 115,
+        "g18_nonzero_cells": 2408,
+        "g19_nonzero_cells": 2174,
+        "selected_nonzero_cells": 2420,
+        "mean_g19_minus_g18_where_both_nonzero": -5.739130434782608,
+        "median_g19_minus_g18_where_both_nonzero": -1.0
+      },
+      "units": "flash extent contributions per 0.02-degree grid cell per 30 minutes",
+      "legend_id": "rolling",
+      "leaflet_png": "glm_conus_mosaic_30min.png",
+      "default_opacity": 0.88,
+      "grid": {
+        "west": -130.0,
+        "east": -60.0,
+        "south": 20.0,
+        "north": 55.0,
+        "resolution": 0.02,
+        "shape": [
+          1750,
+          3500
+        ],
+        "crs": "EPSG:4326",
+        "image_crs": "EPSG:3857",
+        "leaflet_bounds": [
+          [
+            19.992642947324196,
+            -129.99999999999997
+          ],
+          [
+            54.99999999999999,
+            -60.007474235991964
+          ]
+        ],
+        "rendered_shape": [
+          2140,
+          3276
+        ],
+        "rendered_transform": {
+          "a": 2378.3676213017266,
+          "b": 0.0,
+          "c": -14471533.803125564,
+          "d": 0.0,
+          "e": -2378.3676213017266,
+          "f": 7361866.113051188
+        }
+      },
+      "rendering": {
+        "resampling": "nearest",
+        "bins": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256,
+          512
+        ],
+        "labels": [
+          "1",
+          "2\u20133",
+          "4\u20137",
+          "8\u201315",
+          "16\u201331",
+          "32\u201363",
+          "64\u2013127",
+          "128\u2013255",
+          "256\u2013511",
+          "\u2265512"
+        ],
+        "rgba": [
+          [
+            0,
+            255,
+            255,
+            210
+          ],
+          [
+            0,
+            255,
+            0,
+            210
+          ],
+          [
+            255,
+            255,
+            0,
+            220
+          ],
+          [
+            255,
+            153,
+            0,
+            225
+          ],
+          [
+            255,
+            0,
+            0,
+            230
+          ],
+          [
+            255,
+            0,
+            255,
+            235
+          ],
+          [
+            199,
+            125,
+            255,
+            240
+          ],
+          [
+            0,
+            102,
+            255,
+            242
+          ],
+          [
+            102,
+            204,
+            255,
+            246
+          ],
+          [
+            255,
+            255,
+            255,
+            250
+          ]
+        ]
+      },
+      "nonzero_percentiles": {
+        "p50": 3.0,
+        "p75": 10.0,
+        "p90": 28.0,
+        "p95": 48.79999999999927,
+        "p99": 163.47999999999956,
+        "p99_5": 268.0799999999999,
+        "p99_9": 470.69600000000537
+      },
+      "render_bin_counts": {
+        "1": 2225,
+        "2\u20133": 1643,
+        "4\u20137": 1329,
+        "8\u201315": 881,
+        "16\u201331": 673,
+        "32\u201363": 368,
+        "64\u2013127": 167,
+        "128\u2013255": 57,
+        "256\u2013511": 37,
+        "\u2265512": 5
+      },
+      "generated_time_utc": "2026-08-03T23:53:50Z"
     },
     {
+      "metadata_mode": "glm_dashboard_v1",
+      "product_role": "controlled_mosaic",
       "window_minutes": 60,
+      "product_kind": "rolling 60-minute flash extent accumulation",
       "display_label": "GOES GLM Controlled Mosaic \u2014 Rolling 60-Minute Accumulation",
-      "window_start_utc": "2026-08-03T21:15:00Z",
-      "window_end_utc": "2026-08-03T22:15:00Z",
-      "maximum_value": 636,
-      "nonzero_grid_cells": 9698,
-      "flash_cell_contributions": 124719,
-      "leaflet_png": "glm_conus_mosaic_60min.png"
+      "window_start_utc": "2026-08-03T22:50:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "maximum_value": 1130,
+      "nonzero_grid_cells": 11047,
+      "flash_cell_contributions": 192182,
+      "source_g18_owned_cells": 2091250,
+      "source_g19_owned_cells": 4033750,
+      "source_g18_nonzero_cells": 1877,
+      "source_g19_nonzero_cells": 9170,
+      "source_product": "GLM-L2-LCFA",
+      "mosaic_method": {
+        "name": "exclusive lower-view-angle source ownership",
+        "summation": false,
+        "averaging": false,
+        "blending": false,
+        "secondary_source_gap_fill": false,
+        "satellite_geometry": {
+          "g18_subsatellite_longitude": -137.0,
+          "g19_subsatellite_longitude": -75.2,
+          "nominal_equal_angle_seam_longitude": -106.1
+        }
+      },
+      "satellite_inputs": {
+        "G18": {
+          "satellite": "G18",
+          "satellite_label": "GOES-18 (West)",
+          "window_minutes": 60,
+          "window_start_utc": "2026-08-03T22:50:00Z",
+          "window_end_utc": "2026-08-03T23:50:00Z",
+          "expected_slots": 12,
+          "available_slots": 12,
+          "slot_completeness_fraction": 1.0,
+          "expected_files": 180,
+          "listed_files": 179,
+          "processed_files": 179,
+          "completeness_fraction": 0.9944444444444445,
+          "quality_controlled_flash_records": 33505,
+          "events_mapped_to_good_flashes": 641536,
+          "events_in_domain": 307377,
+          "flash_cell_contributions": 75936,
+          "nonzero_grid_cells": 6296,
+          "maximum_value": 524
+        },
+        "G19": {
+          "satellite": "G19",
+          "satellite_label": "GOES-19 (East)",
+          "window_minutes": 60,
+          "window_start_utc": "2026-08-03T22:50:00Z",
+          "window_end_utc": "2026-08-03T23:50:00Z",
+          "expected_slots": 12,
+          "available_slots": 12,
+          "slot_completeness_fraction": 1.0,
+          "expected_files": 180,
+          "listed_files": 180,
+          "processed_files": 180,
+          "completeness_fraction": 1.0,
+          "quality_controlled_flash_records": 110188,
+          "events_mapped_to_good_flashes": 4018168,
+          "events_in_domain": 942930,
+          "flash_cell_contributions": 176402,
+          "nonzero_grid_cells": 10472,
+          "maximum_value": 1130
+        }
+      },
+      "incremental_cache": {
+        "slot_minutes": 5,
+        "expected_slots": 12,
+        "g18_available_slots": 12,
+        "g19_available_slots": 12,
+        "storage": "compressed sparse NPZ five-minute slots"
+      },
+      "seam_diagnostics": {
+        "seam_longitude": -106.1,
+        "band_half_width_degrees": 5.0,
+        "band_grid_cells": 875000,
+        "either_satellite_nonzero_cells": 6705,
+        "both_satellites_nonzero_cells": 172,
+        "g18_nonzero_cells": 3625,
+        "g19_nonzero_cells": 3252,
+        "selected_nonzero_cells": 3757,
+        "mean_g19_minus_g18_where_both_nonzero": -7.819767441860465,
+        "median_g19_minus_g18_where_both_nonzero": -1.0
+      },
+      "units": "flash extent contributions per 0.02-degree grid cell per 60 minutes",
+      "legend_id": "rolling",
+      "leaflet_png": "glm_conus_mosaic_60min.png",
+      "default_opacity": 0.88,
+      "grid": {
+        "west": -130.0,
+        "east": -60.0,
+        "south": 20.0,
+        "north": 55.0,
+        "resolution": 0.02,
+        "shape": [
+          1750,
+          3500
+        ],
+        "crs": "EPSG:4326",
+        "image_crs": "EPSG:3857",
+        "leaflet_bounds": [
+          [
+            19.992642947324196,
+            -129.99999999999997
+          ],
+          [
+            54.99999999999999,
+            -60.007474235991964
+          ]
+        ],
+        "rendered_shape": [
+          2140,
+          3276
+        ],
+        "rendered_transform": {
+          "a": 2378.3676213017266,
+          "b": 0.0,
+          "c": -14471533.803125564,
+          "d": 0.0,
+          "e": -2378.3676213017266,
+          "f": 7361866.113051188
+        }
+      },
+      "rendering": {
+        "resampling": "nearest",
+        "bins": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256,
+          512
+        ],
+        "labels": [
+          "1",
+          "2\u20133",
+          "4\u20137",
+          "8\u201315",
+          "16\u201331",
+          "32\u201363",
+          "64\u2013127",
+          "128\u2013255",
+          "256\u2013511",
+          "\u2265512"
+        ],
+        "rgba": [
+          [
+            0,
+            255,
+            255,
+            210
+          ],
+          [
+            0,
+            255,
+            0,
+            210
+          ],
+          [
+            255,
+            255,
+            0,
+            220
+          ],
+          [
+            255,
+            153,
+            0,
+            225
+          ],
+          [
+            255,
+            0,
+            0,
+            230
+          ],
+          [
+            255,
+            0,
+            255,
+            235
+          ],
+          [
+            199,
+            125,
+            255,
+            240
+          ],
+          [
+            0,
+            102,
+            255,
+            242
+          ],
+          [
+            102,
+            204,
+            255,
+            246
+          ],
+          [
+            255,
+            255,
+            255,
+            250
+          ]
+        ]
+      },
+      "nonzero_percentiles": {
+        "p50": 4.0,
+        "p75": 13.0,
+        "p90": 37.0,
+        "p95": 72.0,
+        "p99": 221.53999999999905,
+        "p99_5": 383.0,
+        "p99_9": 715.9540000000015
+      },
+      "render_bin_counts": {
+        "1": 3152,
+        "2\u20133": 2315,
+        "4\u20137": 1800,
+        "8\u201315": 1383,
+        "16\u201331": 1098,
+        "32\u201363": 653,
+        "64\u2013127": 391,
+        "128\u2013255": 161,
+        "256\u2013511": 64,
+        "\u2265512": 30
+      },
+      "generated_time_utc": "2026-08-03T23:53:50Z"
     }
   ],
-  "debug_layers_published": true,
-  "published_files": [
-    "glm_conus_mosaic_30min.png",
-    "glm_conus_mosaic_30min_metadata.json",
-    "glm_conus_mosaic_5min.png",
-    "glm_conus_mosaic_5min_metadata.json",
-    "glm_conus_mosaic_60min.png",
-    "glm_conus_mosaic_60min_metadata.json",
-    "glm_g18_fed_30min.png",
-    "glm_g18_fed_30min_metadata.json",
-    "glm_g18_fed_5min.png",
-    "glm_g18_fed_5min_metadata.json",
-    "glm_g18_fed_60min.png",
-    "glm_g18_fed_60min_metadata.json",
-    "glm_g19_fed_30min.png",
-    "glm_g19_fed_30min_metadata.json",
-    "glm_g19_fed_5min.png",
-    "glm_g19_fed_5min_metadata.json",
-    "glm_g19_fed_60min.png",
-    "glm_g19_fed_60min_metadata.json",
-    "glm_mosaic_manifest.json",
-    "glm_mosaic_source_ownership.png",
-    "glm_mosaic_source_ownership_metadata.json",
-    "glm_mosaic_summary.csv"
+  "satellite_reference_products": [
+    {
+      "satellite": "G19",
+      "satellite_label": "GOES-19 (East)",
+      "bucket": "noaa-goes19",
+      "window_minutes": 5,
+      "display_label": "GOES-19 (East) \u2014 Flash Extent Density \u2014 Latest 5 Minutes",
+      "product_kind": "five-minute flash extent density",
+      "units": "flashes per 0.02-degree grid cell per five minutes",
+      "window_start_utc": "2026-08-03T23:45:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "expected_slots": 1,
+      "available_slots": 1,
+      "slot_completeness_fraction": 1.0,
+      "expected_files": 15,
+      "processed_files": 15,
+      "file_completeness_fraction": 1.0,
+      "quality_controlled_flash_records": 8601,
+      "events_mapped_to_good_flashes": 318526,
+      "events_in_domain": 82229,
+      "flash_cell_contributions": 14859,
+      "nonzero_grid_cells": 3288,
+      "maximum_value": 142,
+      "native_geotiff": "glm_g19_fed_5min.tif",
+      "leaflet_png": "glm_g19_fed_5min.png",
+      "metadata_json": "glm_g19_fed_5min_metadata.json",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "legend_id": "five-minute"
+    },
+    {
+      "satellite": "G19",
+      "satellite_label": "GOES-19 (East)",
+      "bucket": "noaa-goes19",
+      "window_minutes": 30,
+      "display_label": "GOES-19 (East) \u2014 Flash Extent Accumulation \u2014 Rolling 30 Minutes",
+      "product_kind": "rolling 30-minute flash extent accumulation",
+      "units": "flash extent contributions per 0.02-degree grid cell per 30 minutes",
+      "window_start_utc": "2026-08-03T23:20:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "expected_slots": 6,
+      "available_slots": 6,
+      "slot_completeness_fraction": 1.0,
+      "expected_files": 90,
+      "processed_files": 90,
+      "file_completeness_fraction": 1.0,
+      "quality_controlled_flash_records": 53216,
+      "events_mapped_to_good_flashes": 1952274,
+      "events_in_domain": 472152,
+      "flash_cell_contributions": 87752,
+      "nonzero_grid_cells": 7074,
+      "maximum_value": 660,
+      "native_geotiff": "glm_g19_fed_30min.tif",
+      "leaflet_png": "glm_g19_fed_30min.png",
+      "metadata_json": "glm_g19_fed_30min_metadata.json",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "legend_id": "rolling"
+    },
+    {
+      "satellite": "G19",
+      "satellite_label": "GOES-19 (East)",
+      "bucket": "noaa-goes19",
+      "window_minutes": 60,
+      "display_label": "GOES-19 (East) \u2014 Flash Extent Accumulation \u2014 Rolling 60 Minutes",
+      "product_kind": "rolling 60-minute flash extent accumulation",
+      "units": "flash extent contributions per 0.02-degree grid cell per 60 minutes",
+      "window_start_utc": "2026-08-03T22:50:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "expected_slots": 12,
+      "available_slots": 12,
+      "slot_completeness_fraction": 1.0,
+      "expected_files": 180,
+      "processed_files": 180,
+      "file_completeness_fraction": 1.0,
+      "quality_controlled_flash_records": 110188,
+      "events_mapped_to_good_flashes": 4018168,
+      "events_in_domain": 942930,
+      "flash_cell_contributions": 176402,
+      "nonzero_grid_cells": 10472,
+      "maximum_value": 1130,
+      "native_geotiff": "glm_g19_fed_60min.tif",
+      "leaflet_png": "glm_g19_fed_60min.png",
+      "metadata_json": "glm_g19_fed_60min_metadata.json",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "legend_id": "rolling"
+    },
+    {
+      "satellite": "G18",
+      "satellite_label": "GOES-18 (West)",
+      "bucket": "noaa-goes18",
+      "window_minutes": 5,
+      "display_label": "GOES-18 (West) \u2014 Flash Extent Density \u2014 Latest 5 Minutes",
+      "product_kind": "five-minute flash extent density",
+      "units": "flashes per 0.02-degree grid cell per five minutes",
+      "window_start_utc": "2026-08-03T23:45:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "expected_slots": 1,
+      "available_slots": 1,
+      "slot_completeness_fraction": 1.0,
+      "expected_files": 15,
+      "processed_files": 15,
+      "file_completeness_fraction": 1.0,
+      "quality_controlled_flash_records": 2848,
+      "events_mapped_to_good_flashes": 61352,
+      "events_in_domain": 29694,
+      "flash_cell_contributions": 7395,
+      "nonzero_grid_cells": 2189,
+      "maximum_value": 104,
+      "native_geotiff": "glm_g18_fed_5min.tif",
+      "leaflet_png": "glm_g18_fed_5min.png",
+      "metadata_json": "glm_g18_fed_5min_metadata.json",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "legend_id": "five-minute"
+    },
+    {
+      "satellite": "G18",
+      "satellite_label": "GOES-18 (West)",
+      "bucket": "noaa-goes18",
+      "window_minutes": 30,
+      "display_label": "GOES-18 (West) \u2014 Flash Extent Accumulation \u2014 Rolling 30 Minutes",
+      "product_kind": "rolling 30-minute flash extent accumulation",
+      "units": "flash extent contributions per 0.02-degree grid cell per 30 minutes",
+      "window_start_utc": "2026-08-03T23:20:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "expected_slots": 6,
+      "available_slots": 6,
+      "slot_completeness_fraction": 1.0,
+      "expected_files": 90,
+      "processed_files": 89,
+      "file_completeness_fraction": 0.9888888888888889,
+      "quality_controlled_flash_records": 16675,
+      "events_mapped_to_good_flashes": 334110,
+      "events_in_domain": 156565,
+      "flash_cell_contributions": 39685,
+      "nonzero_grid_cells": 4357,
+      "maximum_value": 508,
+      "native_geotiff": "glm_g18_fed_30min.tif",
+      "leaflet_png": "glm_g18_fed_30min.png",
+      "metadata_json": "glm_g18_fed_30min_metadata.json",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "legend_id": "rolling"
+    },
+    {
+      "satellite": "G18",
+      "satellite_label": "GOES-18 (West)",
+      "bucket": "noaa-goes18",
+      "window_minutes": 60,
+      "display_label": "GOES-18 (West) \u2014 Flash Extent Accumulation \u2014 Rolling 60 Minutes",
+      "product_kind": "rolling 60-minute flash extent accumulation",
+      "units": "flash extent contributions per 0.02-degree grid cell per 60 minutes",
+      "window_start_utc": "2026-08-03T22:50:00Z",
+      "window_end_utc": "2026-08-03T23:50:00Z",
+      "expected_slots": 12,
+      "available_slots": 12,
+      "slot_completeness_fraction": 1.0,
+      "expected_files": 180,
+      "processed_files": 179,
+      "file_completeness_fraction": 0.9944444444444445,
+      "quality_controlled_flash_records": 33505,
+      "events_mapped_to_good_flashes": 641536,
+      "events_in_domain": 307377,
+      "flash_cell_contributions": 75936,
+      "nonzero_grid_cells": 6296,
+      "maximum_value": 524,
+      "native_geotiff": "glm_g18_fed_60min.tif",
+      "leaflet_png": "glm_g18_fed_60min.png",
+      "metadata_json": "glm_g18_fed_60min_metadata.json",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "legend_id": "rolling"
+    }
   ],
-  "generated_time_utc": "2026-08-03T22:19:52Z",
-  "publishing_mode": "operational staging package"
+  "source_ownership": {
+    "metadata_mode": "glm_dashboard_v1",
+    "product_role": "source_ownership_debug",
+    "product": "GOES GLM controlled-mosaic source ownership mask",
+    "display_label": "GOES GLM Mosaic \u2014 Satellite Source Ownership",
+    "methodology": "Each cell is assigned exclusively to the satellite with the smaller spherical central angle to its sub-satellite point.",
+    "source_codes": {
+      "18": "GOES-18 (West)",
+      "19": "GOES-19 (East)"
+    },
+    "satellite_geometry": {
+      "g18_subsatellite_longitude": -137.0,
+      "g19_subsatellite_longitude": -75.2,
+      "nominal_equal_angle_seam_longitude": -106.1
+    },
+    "owned_cell_counts": {
+      "G18": 2091250,
+      "G19": 4033750
+    },
+    "leaflet_png": "glm_mosaic_source_ownership.png",
+    "default_opacity": 0.42,
+    "grid": {
+      "west": -130.0,
+      "east": -60.0,
+      "south": 20.0,
+      "north": 55.0,
+      "resolution": 0.02,
+      "shape": [
+        1750,
+        3500
+      ],
+      "crs": "EPSG:4326",
+      "image_crs": "EPSG:3857",
+      "leaflet_bounds": [
+        [
+          19.992642947324196,
+          -129.99999999999997
+        ],
+        [
+          54.99999999999999,
+          -60.007474235991964
+        ]
+      ],
+      "rendered_shape": [
+        2140,
+        3276
+      ],
+      "rendered_transform": {
+        "a": 2378.3676213017266,
+        "b": 0.0,
+        "c": -14471533.803125564,
+        "d": 0.0,
+        "e": -2378.3676213017266,
+        "f": 7361866.113051188
+      }
+    },
+    "rendering": {
+      "resampling": "nearest",
+      "bins": [
+        18,
+        19
+      ],
+      "labels": [
+        "GOES-18 West ownership",
+        "GOES-19 East ownership"
+      ],
+      "rgba": [
+        [
+          0,
+          153,
+          255,
+          92
+        ],
+        [
+          255,
+          196,
+          0,
+          92
+        ]
+      ]
+    },
+    "generated_time_utc": "2026-08-03T23:53:48Z"
+  },
+  "publish_debug_layers": true,
+  "artifact_only_diagnostics": [
+    "glm_mosaic_incremental_debug.html",
+    "glm_g18_debug_event_density_5min.png",
+    "glm_g18_debug_footprint_5min.png",
+    "glm_g18_debug_event_sample_5min.geojson",
+    "glm_g18_debug_flash_centroids_5min.geojson",
+    "glm_g19_debug_event_density_5min.png",
+    "glm_g19_debug_footprint_5min.png",
+    "glm_g19_debug_event_sample_5min.geojson",
+    "glm_g19_debug_flash_centroids_5min.geojson"
+  ],
+  "summary_csv": "glm_mosaic_summary.csv",
+  "generated_time_utc": "2026-08-03T23:53:51Z"
 }
