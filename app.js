@@ -191,6 +191,34 @@ const mrms24hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 const mrms48hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p48h' });
 const mrms72hr = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms_nn.cgi", { ...mrmsOptions, layers: 'mrms_p72h' });
 
+// --- OPERATIONAL MRMS FLASH ROLLING 24-HOUR MAXIMA ---
+// These transparent PNGs are pre-warped to EPSG:3857. Their exact Leaflet
+// bounds and valid windows are read from the synchronized metadata files.
+const MRMS_CREST_24H_LAYER_NAME = 'MRMS FLASH CREST Unit Q — Rolling 24-Hour Maximum';
+const MRMS_FFD_24H_LAYER_NAME = 'MRMS FLASH FFD — Rolling 24-Hour Maximum Category';
+const MRMS_CREST_24H_IMAGE_URL = 'static/mrms_crest_unitq_max24h.png';
+const MRMS_CREST_24H_METADATA_URL = 'static/mrms_crest_unitq_max24h_metadata.json';
+const MRMS_FFD_24H_IMAGE_URL = 'static/mrms_ffd_max24h.png';
+const MRMS_FFD_24H_METADATA_URL = 'static/mrms_ffd_max24h_metadata.json';
+const mrmsFlashPlaceholderBounds = [[20.0, -130.0], [55.0, -60.0]];
+
+const mrmsCrest24hLayer = L.imageOverlay(
+    MRMS_CREST_24H_IMAGE_URL,
+    mrmsFlashPlaceholderBounds,
+    {zIndex: 12, opacity: 0, interactive: false}
+);
+
+const mrmsFfd24hLayer = L.imageOverlay(
+    MRMS_FFD_24H_IMAGE_URL,
+    mrmsFlashPlaceholderBounds,
+    {zIndex: 12, opacity: 0, interactive: false}
+);
+
+let mrmsCrest24hReady = false;
+let mrmsFfd24hReady = false;
+let mrmsCrest24hMetadata = null;
+let mrmsFfd24hMetadata = null;
+
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
@@ -721,8 +749,10 @@ function cacheBustedRasterUrl(baseUrl, metadata) {
     // browser/CDN cache after a corrected workflow rerun.
     const versionParts = [
         metadata.retrieved_time,
+        metadata.generated_time_utc,
         metadata.render_revision,
         metadata.valid_time_iso,
+        metadata.window_end_utc,
         Date.now()
     ].filter(Boolean);
 
@@ -770,6 +800,210 @@ function applySoilRasterMetadata({
             imageCrs
         }
     );
+}
+
+
+function formatMetadataUTC(value) {
+    if (!value) return "Unknown";
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "Unknown" : formatUTC(parsed);
+}
+
+function formatMRMSFlashTimeBox(title, metadata) {
+    if (!metadata) {
+        return `
+            <strong>${title}</strong><br>
+            <span style="color: #ffeb3b;">Loading latest synchronized raster...</span>
+        `;
+    }
+
+    const windowHours = Number(metadata.window_hours);
+    const start = formatMetadataUTC(metadata.window_start_utc);
+    const end = formatMetadataUTC(metadata.window_end_utc);
+    const generated = formatMetadataUTC(metadata.generated_time_utc);
+    const processed = Number(metadata.processed_cycles);
+    const expected = Number(metadata.expected_cycles);
+    const completeness = Number(metadata.completeness_fraction);
+    const completenessText = (
+        Number.isFinite(processed) &&
+        Number.isFinite(expected) &&
+        expected > 0
+    )
+        ? `${processed}/${expected} cycles` +
+          (Number.isFinite(completeness)
+              ? ` (${Math.round(completeness * 100)}%)`
+              : "")
+        : "Completeness unavailable";
+
+    return `
+        <strong>${title}</strong><br>
+        <span style="color: #4fc3f7; font-weight: bold;">
+            Rolling ${Number.isFinite(windowHours) ? windowHours : 24}-Hour Maximum
+        </span><br>
+        <span style="color: #ffeb3b;">${start} &mdash; ${end}</span><br>
+        <span style="font-size: 0.86em;">${completenessText}</span><br>
+        <span style="font-size: 0.82em; color: #d0d0d0;">Generated: ${generated}</span>
+    `;
+}
+
+function updateMRMSFlashTimeBoxes() {
+    const crestTimeBox = document.getElementById('mrms-crest-24h-time-box');
+    if (crestTimeBox && crestTimeBox.style.display === 'block') {
+        crestTimeBox.innerHTML = formatMRMSFlashTimeBox(
+            'MRMS FLASH CREST Unit Q',
+            mrmsCrest24hMetadata
+        );
+    }
+
+    const ffdTimeBox = document.getElementById('mrms-ffd-24h-time-box');
+    if (ffdTimeBox && ffdTimeBox.style.display === 'block') {
+        ffdTimeBox.innerHTML = formatMRMSFlashTimeBox(
+            'MRMS FLASH Flood Detector',
+            mrmsFfd24hMetadata
+        );
+    }
+}
+
+function applyMRMSFlashRasterMetadata({
+    metadata,
+    layer,
+    baseUrl,
+    productName,
+    defaultOpacity
+}) {
+    const grid = metadata && metadata.grid ? metadata.grid : {};
+    const imageCrs = String(grid.image_crs || "").toUpperCase();
+
+    if (metadata.metadata_mode !== "dashboard_compact") {
+        throw new Error(`${productName}: metadata is not dashboard_compact`);
+    }
+    if (imageCrs !== "EPSG:3857") {
+        throw new Error(
+            `${productName}: expected an EPSG:3857 PNG, found ` +
+            `${imageCrs || "no image CRS"}`
+        );
+    }
+
+    const exactBounds = validateRasterBounds(
+        grid.leaflet_bounds,
+        productName
+    );
+
+    const normalizedMetadata = {
+        generated_time_utc: metadata.generated_time_utc,
+        window_end_utc: metadata.window_end_utc,
+        valid_time_iso: metadata.window_end_utc
+    };
+
+    layer.setBounds(exactBounds);
+    layer.setUrl(cacheBustedRasterUrl(baseUrl, normalizedMetadata));
+    layer.setOpacity(defaultOpacity);
+
+    console.info(
+        `${productName} raster updated`,
+        {
+            bounds: grid.leaflet_bounds,
+            windowStart: metadata.window_start_utc,
+            windowEnd: metadata.window_end_utc,
+            processedCycles: metadata.processed_cycles,
+            expectedCycles: metadata.expected_cycles,
+            imageCrs
+        }
+    );
+}
+
+async function fetchMRMSFlash24hMetadata() {
+    try {
+        const cacheToken = Date.now();
+        const [crestResponse, ffdResponse] = await Promise.all([
+            fetch(
+                `${MRMS_CREST_24H_METADATA_URL}?t=${cacheToken}`,
+                {cache: 'no-store'}
+            ),
+            fetch(
+                `${MRMS_FFD_24H_METADATA_URL}?t=${cacheToken}`,
+                {cache: 'no-store'}
+            )
+        ]);
+
+        if (!crestResponse.ok) {
+            throw new Error(`CREST metadata HTTP ${crestResponse.status}`);
+        }
+        if (!ffdResponse.ok) {
+            throw new Error(`FFD metadata HTTP ${ffdResponse.status}`);
+        }
+
+        const [crestData, ffdData] = await Promise.all([
+            crestResponse.json(),
+            ffdResponse.json()
+        ]);
+
+        if (
+            crestData.window_start_utc !== ffdData.window_start_utc ||
+            crestData.window_end_utc !== ffdData.window_end_utc
+        ) {
+            throw new Error(
+                'MRMS FLASH CREST and FFD rolling windows are not synchronized'
+            );
+        }
+
+        const crestOpacity = mrmsCrest24hReady
+            ? Number(mrmsCrest24hLayer.options.opacity ?? 0.88)
+            : 0.88;
+        const ffdOpacity = mrmsFfd24hReady
+            ? Number(mrmsFfd24hLayer.options.opacity ?? 0.88)
+            : 0.88;
+
+        applyMRMSFlashRasterMetadata({
+            metadata: crestData,
+            layer: mrmsCrest24hLayer,
+            baseUrl: MRMS_CREST_24H_IMAGE_URL,
+            productName: 'MRMS FLASH CREST Unit Q 24-hour maximum',
+            defaultOpacity: crestOpacity
+        });
+
+        applyMRMSFlashRasterMetadata({
+            metadata: ffdData,
+            layer: mrmsFfd24hLayer,
+            baseUrl: MRMS_FFD_24H_IMAGE_URL,
+            productName: 'MRMS FLASH FFD 24-hour maximum',
+            defaultOpacity: ffdOpacity
+        });
+
+        mrmsCrest24hMetadata = crestData;
+        mrmsFfd24hMetadata = ffdData;
+        mrmsCrest24hReady = true;
+        mrmsFfd24hReady = true;
+        updateMRMSFlashTimeBoxes();
+    } catch (error) {
+        if (!mrmsCrest24hReady) mrmsCrest24hLayer.setOpacity(0);
+        if (!mrmsFfd24hReady) mrmsFfd24hLayer.setOpacity(0);
+        console.error('MRMS FLASH rolling 24-hour raster update failed:', error);
+
+        const crestTimeBox = document.getElementById('mrms-crest-24h-time-box');
+        if (
+            crestTimeBox &&
+            crestTimeBox.style.display === 'block' &&
+            !mrmsCrest24hReady
+        ) {
+            crestTimeBox.innerHTML = `
+                <strong>MRMS FLASH CREST Unit Q</strong><br>
+                <span style="color: #ff8080;">Latest raster unavailable</span>
+            `;
+        }
+
+        const ffdTimeBox = document.getElementById('mrms-ffd-24h-time-box');
+        if (
+            ffdTimeBox &&
+            ffdTimeBox.style.display === 'block' &&
+            !mrmsFfd24hReady
+        ) {
+            ffdTimeBox.innerHTML = `
+                <strong>MRMS FLASH Flood Detector</strong><br>
+                <span style="color: #ff8080;">Latest raster unavailable</span>
+            `;
+        }
+    }
 }
 
 async function fetchNWMMetadata() {
@@ -922,6 +1156,7 @@ async function fetchNLDASRSMMetadata() {
 fetchRAPMetadata();
 fetchCAMMetadata();
 fetchEROCAMMetadata();
+fetchMRMSFlash24hMetadata();
 fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
@@ -931,6 +1166,7 @@ setInterval(() => {
     fetchRAPMetadata();
     fetchCAMMetadata();
     fetchEROCAMMetadata();
+    fetchMRMSFlash24hMetadata();
     fetchNWMMetadata();
     fetchSPoRTMetadata();
     fetchNLDASRSMMetadata();
@@ -1101,6 +1337,8 @@ legendDockControl.onAdd = function () {
         'cam-time-box',
         'radar-time-box',
         'ffd-time-box',
+        'mrms-crest-24h-time-box',
+        'mrms-ffd-24h-time-box',
         'nwm-time-box',
         'sport-time-box',
         'nldas-rsm-010-time-box',
@@ -1341,6 +1579,62 @@ const mrmsLegendQPEMulti = `
     </div>
 `;
 
+const mrmsCrest24hLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 300px; max-width: 330px;">
+        <strong style="font-size: 13px;">MRMS FLASH CREST Unit Q — 24-Hour Maximum</strong><br>
+        <span style="font-size: 10px;">m³ s⁻¹ km⁻²</span>
+        <div style="display: flex; margin-top: 6px; border: 1px solid #333; height: 17px;">
+            <div style="background: #00ff00; flex: 1;" title="1.0–1.5"></div>
+            <div style="background: #ffff00; flex: 1;" title="1.5–2.0"></div>
+            <div style="background: #ffc800; flex: 1;" title="2.0–3.0"></div>
+            <div style="background: #ff8c00; flex: 1;" title="3.0–4.0"></div>
+            <div style="background: #ff4600; flex: 1;" title="4.0–5.0"></div>
+            <div style="background: #ff0000; flex: 1;" title="5.0–6.0"></div>
+            <div style="background: #be00be; flex: 1;" title="6.0–8.5"></div>
+            <div style="background: #6400be; flex: 1;" title="8.5–10.0"></div>
+            <div style="background: #0050ff; flex: 1;" title="10.0–15.0"></div>
+            <div style="background: #0000b4; flex: 1;" title="15.0–20.0"></div>
+            <div style="background: #000064; flex: 1;" title="20.0+"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 8px; margin-top: 2px;">
+            <span>1</span><span>1.5</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>8.5</span><span>10</span><span>15</span><span>20+</span>
+        </div>
+        <div style="font-size: 9px; margin-top: 4px; text-align: left;">
+            Transparent where Unit Q is below 1.0 or unavailable.
+        </div>
+    </div>
+`;
+
+const mrmsFfd24hLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 240px; text-align: left;">
+        <strong style="display: block; text-align: center; margin-bottom: 6px; font-size: 13px;">MRMS FLASH FFD — Highest 24-Hour Category</strong>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: transparent; margin-right: 8px; border: 1px dashed #555;"></div>
+            <span><strong>0</strong> — None / transparent</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #00ff00; margin-right: 8px; border: 1px solid #333;"></div>
+            <span><strong>1</strong> — Monitor</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ffff00; margin-right: 8px; border: 1px solid #333;"></div>
+            <span><strong>2</strong> — Flood Advisory</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ffaa00; margin-right: 8px; border: 1px solid #333;"></div>
+            <span><strong>3</strong> — FFW Base</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 3px;">
+            <div style="width: 15px; height: 15px; background: #ff0000; margin-right: 8px; border: 1px solid #333;"></div>
+            <span><strong>4</strong> — FFW Considerable</span>
+        </div>
+        <div style="display: flex; align-items: center;">
+            <div style="width: 15px; height: 15px; background: #ff00ff; margin-right: 8px; border: 1px solid #333;"></div>
+            <span><strong>5</strong> — FFW Catastrophic</span>
+        </div>
+    </div>
+`;
+
 const nwmLegendHTML = `
     <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 250px;">
         <strong style="font-size: 13px;">NWM 0-40cm Soil Saturation (%)</strong><br>
@@ -1422,6 +1716,8 @@ function updateLegends() {
     if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
+    if (activeLayerNames.has(MRMS_CREST_24H_LAYER_NAME)) addLegendBlock(mrmsCrest24hLegendHTML);
+    if (activeLayerNames.has(MRMS_FFD_24H_LAYER_NAME)) addLegendBlock(mrmsFfd24hLegendHTML);
     if (activeLayerNames.has('NWM Soil Saturation (0-40cm)')) addLegendBlock(nwmLegendHTML);
     if (activeLayerNames.has('NASA SPoRT-LIS VSM Percentile (0–100 cm)')) addLegendBlock(sportLegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)')) addLegendBlock(nldasRsm010LegendHTML);
@@ -1468,6 +1764,8 @@ map.on('overlayadd', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
+    const mrmsCrest24hTimeBox = document.getElementById('mrms-crest-24h-time-box');
+    const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -1500,6 +1798,28 @@ map.on('overlayadd', function(eventLayer) {
 
     if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'block';
+    }
+
+    if (eventLayer.name === MRMS_CREST_24H_LAYER_NAME) {
+        if (mrmsCrest24hTimeBox) {
+            mrmsCrest24hTimeBox.innerHTML = formatMRMSFlashTimeBox(
+                'MRMS FLASH CREST Unit Q',
+                mrmsCrest24hMetadata
+            );
+            mrmsCrest24hTimeBox.style.display = 'block';
+        }
+        fetchMRMSFlash24hMetadata();
+    }
+
+    if (eventLayer.name === MRMS_FFD_24H_LAYER_NAME) {
+        if (mrmsFfd24hTimeBox) {
+            mrmsFfd24hTimeBox.innerHTML = formatMRMSFlashTimeBox(
+                'MRMS FLASH Flood Detector',
+                mrmsFfd24hMetadata
+            );
+            mrmsFfd24hTimeBox.style.display = 'block';
+        }
+        fetchMRMSFlash24hMetadata();
     }
 
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
@@ -1622,6 +1942,8 @@ map.on('overlayremove', function(eventLayer) {
     const camTimeBox = document.getElementById('cam-time-box');
     const radarTimeBox = document.getElementById('radar-time-box');
     const ffdTimeBox = document.getElementById('ffd-time-box');
+    const mrmsCrest24hTimeBox = document.getElementById('mrms-crest-24h-time-box');
+    const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -1639,6 +1961,14 @@ map.on('overlayremove', function(eventLayer) {
     
     if (eventLayer.name.includes('MRMS DVD Flash Flood Detector')) {
         if (ffdTimeBox) ffdTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === MRMS_CREST_24H_LAYER_NAME) {
+        if (mrmsCrest24hTimeBox) mrmsCrest24hTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === MRMS_FFD_24H_LAYER_NAME) {
+        if (mrmsFfd24hTimeBox) mrmsFfd24hTimeBox.style.display = 'none';
     }
 
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
@@ -1701,6 +2031,8 @@ const dashboardSections = [
             {id: 'mrms-ffd', label: 'MRMS DVD Flash Flood Detector', layer: ffdLayer, kind: 'vector'},
             {id: 'mrms-qpe-1h', label: 'MRMS 1-Hour QPE', layer: mrms1hr, kind: 'raster'},
             {id: 'mrms-qpe-24h', label: 'MRMS 24-Hour QPE', layer: mrms24hr, kind: 'raster'},
+            {id: 'mrms-flash-crest-24h', label: MRMS_CREST_24H_LAYER_NAME, layer: mrmsCrest24hLayer, kind: 'raster'},
+            {id: 'mrms-flash-ffd-24h', label: MRMS_FFD_24H_LAYER_NAME, layer: mrmsFfd24hLayer, kind: 'raster'},
             {id: 'mrms-qpe-48h', label: 'MRMS 48-Hour QPE', layer: mrms48hr, kind: 'raster'},
             {id: 'mrms-qpe-72h', label: 'MRMS 72-Hour QPE', layer: mrms72hr, kind: 'raster'},
             {id: 'goes-east-vis', label: 'GOES-East: Visible (Ch. 2)', layer: goesEastVis, kind: 'raster'},
