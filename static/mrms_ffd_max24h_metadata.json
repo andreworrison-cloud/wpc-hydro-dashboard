@@ -1,0 +1,93 @@
+{
+  "product": "MRMS Flash Flood Detector Rolling Maximum",
+  "aggregation": "At each synchronized 10-minute analysis, diagnose the FFD category from QPE_FFGMAX, QPE_ARIMAX, CREST Unit Q, and SAC Unit Q; then retain the highest category reached at each grid cell during the rolling window.",
+  "important_method_note": "The four input maxima are not independently maximized before applying the detector. Each category is calculated from inputs valid at the same analysis time.",
+  "window_start_utc": "2026-08-02T00:50:00Z",
+  "window_end_utc": "2026-08-03T00:40:00Z",
+  "window_hours": 24,
+  "expected_cycles": 144,
+  "processed_cycles": 144,
+  "completeness_fraction": 1.0,
+  "missing_times_utc": [],
+  "metadata_mode": "dashboard_compact",
+  "input_products": [
+    "CREST_MAXUNITSTREAMFLOW",
+    "SAC_MAXUNITSTREAMFLOW",
+    "QPE_FFGMAX",
+    "QPE_ARIMAX"
+  ],
+  "grid": {
+    "shape": [
+      3500,
+      7000
+    ],
+    "crs": "EPSG:4326",
+    "native_transform": [
+      0.009999999142735305,
+      0.0,
+      -129.99999599957135,
+      0.0,
+      -0.00999999999999801,
+      55.0
+    ],
+    "leaflet_bounds": [
+      [
+        20.002684056851198,
+        -129.99999599957135
+      ],
+      [
+        54.99999999999999,
+        -59.99679182258896
+      ]
+    ],
+    "image_crs": "EPSG:3857",
+    "rendered_shape": [
+      4279,
+      6553
+    ],
+    "rendered_transform": [
+      1189.1837391849901,
+      0.0,
+      -14471533.357799884,
+      0.0,
+      -1189.1837391849901,
+      7361866.113051188
+    ]
+  },
+  "rendering": {
+    "resampling": "nearest",
+    "maximum_render_dimension": 8000
+  },
+  "category_names": {
+    "0": "None",
+    "1": "Monitor",
+    "2": "Flood Advisory",
+    "3": "FFW Base",
+    "4": "FFW Considerable",
+    "5": "FFW Catastrophic"
+  },
+  "category_statistics": {
+    "total_grid_cells": 24500000,
+    "counts": {
+      "None": 24333240,
+      "Monitor": 145515,
+      "Flood Advisory": 15824,
+      "FFW Base": 4818,
+      "FFW Considerable": 503,
+      "FFW Catastrophic": 100
+    },
+    "percentages": {
+      "None": 99.31934693877551,
+      "Monitor": 0.5939387755102041,
+      "Flood Advisory": 0.06458775510204082,
+      "FFW Base": 0.01966530612244898,
+      "FFW Considerable": 0.002053061224489796,
+      "FFW Catastrophic": 0.00040816326530612246
+    }
+  },
+  "generated_time_utc": "2026-08-03T01:16:44.150419Z",
+  "outputs": {
+    "png": "mrms_ffd_max24h.png",
+    "metadata": "mrms_ffd_max24h_metadata.json"
+  }
+}
