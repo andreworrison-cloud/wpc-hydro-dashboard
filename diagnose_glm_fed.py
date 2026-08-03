@@ -107,6 +107,7 @@ class GridSpec:
 class FileStats:
     file_name: str
     flashes_quality_controlled: int
+    events_mapped_to_good_flashes: int
     events_in_domain: int
     flash_cell_contributions: int
 
@@ -123,6 +124,7 @@ class SatelliteResult:
     processed_files: int
     completeness_fraction: float
     quality_controlled_flash_records: int
+    events_mapped_to_good_flashes: int
     events_in_domain: int
     flash_cell_contributions: int
     nonzero_grid_cells: int
@@ -323,30 +325,82 @@ def values(dataset: xr.Dataset, name: str, required: bool = True) -> np.ndarray 
     return np.asarray(dataset[name].values)
 
 
+def _unsigned_requested(variable: xr.DataArray) -> bool:
+    return str(variable.attrs.get("_Unsigned", "false")).strip().lower() == "true"
+
+
+def _reinterpret_unsigned(raw: np.ndarray, variable: xr.DataArray) -> np.ndarray:
+    """Honor the GOES-R NetCDF _Unsigned convention without changing bytes."""
+    if _unsigned_requested(variable) and raw.dtype.kind == "i":
+        return raw.view(np.dtype(f"u{raw.dtype.itemsize}"))
+    return raw
+
+
+def _missing_mask(raw: np.ndarray, variable: xr.DataArray) -> np.ndarray:
+    mask = np.zeros(raw.shape, dtype=bool)
+    if raw.dtype.kind == "f":
+        mask |= ~np.isfinite(raw)
+    for key in ("_FillValue", "missing_value"):
+        if key not in variable.attrs:
+            continue
+        candidates = np.asarray(variable.attrs[key]).reshape(-1)
+        for candidate in candidates:
+            try:
+                mask |= raw == candidate
+            except (TypeError, ValueError):
+                pass
+    return mask
+
+
+def science_values(dataset: xr.Dataset, name: str) -> np.ndarray:
+    """Decode a packed GOES-R science variable into physical units.
+
+    GOES-R LCFA event latitude and longitude are packed integers. NOAA
+    specifies that _Unsigned must be applied before scale_factor/add_offset.
+    The dataset is opened with mask_and_scale=False so identifiers remain
+    exact; this helper performs the required decoding only for science fields.
+    """
+    if name not in dataset.variables:
+        raise KeyError(f"Required LCFA variable missing: {name}")
+    variable = dataset[name]
+    raw = np.asarray(variable.values)
+    missing = _missing_mask(raw, variable)
+    unpacked = _reinterpret_unsigned(raw, variable).astype(np.float64, copy=False)
+    scale = float(np.asarray(variable.attrs.get("scale_factor", 1.0)).reshape(-1)[0])
+    offset = float(np.asarray(variable.attrs.get("add_offset", 0.0)).reshape(-1)[0])
+    decoded = unpacked * scale + offset
+    decoded = np.asarray(decoded, dtype=np.float64)
+    decoded[missing] = np.nan
+    return decoded
+
+
+def identifier_values(dataset: xr.Dataset, name: str) -> np.ndarray:
+    """Read an identifier exactly while honoring the GOES-R _Unsigned flag."""
+    if name not in dataset.variables:
+        raise KeyError(f"Required LCFA variable missing: {name}")
+    variable = dataset[name]
+    raw = np.asarray(variable.values)
+    unpacked = _reinterpret_unsigned(raw, variable)
+    return unpacked.astype(np.int64, copy=False)
+
+
 def quality_mask(dataset: xr.Dataset, name: str, length: int) -> np.ndarray:
-    raw = values(dataset, name, required=False)
-    if raw is None:
+    if name not in dataset.variables:
         return np.ones(length, dtype=bool)
-    raw = np.asarray(raw).reshape(-1)
+    raw = identifier_values(dataset, name).reshape(-1)
     if raw.size != length:
         raise ValueError(f"{name} length {raw.size} does not match expected {length}")
-    return np.isfinite(raw) & (raw == 0)
+    return raw == 0
 
 
 def map_events_to_flashes(dataset: xr.Dataset) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    event_lat = values(dataset, "event_lat").astype(np.float64, copy=False).reshape(-1)
-    event_lon = values(dataset, "event_lon").astype(np.float64, copy=False).reshape(-1)
-    event_parent_group = values(dataset, "event_parent_group_id").astype(
-        np.int64,
-        copy=False,
-    ).reshape(-1)
+    event_lat = science_values(dataset, "event_lat").reshape(-1)
+    event_lon = science_values(dataset, "event_lon").reshape(-1)
+    event_parent_group = identifier_values(dataset, "event_parent_group_id").reshape(-1)
 
-    group_id = values(dataset, "group_id").astype(np.int64, copy=False).reshape(-1)
-    group_parent_flash = values(dataset, "group_parent_flash_id").astype(
-        np.int64,
-        copy=False,
-    ).reshape(-1)
-    flash_id = values(dataset, "flash_id").astype(np.int64, copy=False).reshape(-1)
+    group_id = identifier_values(dataset, "group_id").reshape(-1)
+    group_parent_flash = identifier_values(dataset, "group_parent_flash_id").reshape(-1)
+    flash_id = identifier_values(dataset, "flash_id").reshape(-1)
 
     flash_good = quality_mask(dataset, "flash_quality_flag", flash_id.size)
     group_good = quality_mask(dataset, "group_quality_flag", group_id.size)
@@ -368,10 +422,34 @@ def map_events_to_flashes(dataset: xr.Dataset) -> tuple[np.ndarray, np.ndarray, 
     safe_positions = np.minimum(positions, sorted_group_id.size - 1)
     matches &= sorted_group_id[safe_positions] == event_parent_group
 
+    mapped_lat = event_lat[matches]
+    mapped_lon = event_lon[matches]
+    mapped_flash = sorted_group_flash[safe_positions[matches]]
+
+    if valid_flash_ids.size and mapped_lat.size == 0:
+        raise ValueError(
+            "Quality-controlled flashes were present, but no events could be linked "
+            "through the event/group/flash identifiers."
+        )
+
+    finite = np.isfinite(mapped_lat) & np.isfinite(mapped_lon)
+    plausible = (
+        finite
+        & (mapped_lat >= -90.0)
+        & (mapped_lat <= 90.0)
+        & (mapped_lon >= -180.0)
+        & (mapped_lon <= 180.0)
+    )
+    if mapped_lat.size and not np.any(plausible):
+        raise ValueError(
+            "Decoded event coordinates are outside geographic latitude/longitude "
+            "ranges. Check _Unsigned, scale_factor, and add_offset handling."
+        )
+
     return (
-        event_lat[matches],
-        event_lon[matches],
-        sorted_group_flash[safe_positions[matches]],
+        mapped_lat[plausible],
+        mapped_lon[plausible],
+        mapped_flash[plausible],
         int(valid_flash_ids.size),
     )
 
@@ -386,6 +464,7 @@ def accumulate_file_fed(path: Path, grid: GridSpec) -> tuple[np.ndarray, FileSta
     ) as dataset:
         event_lat, event_lon, event_flash, good_flash_count = map_events_to_flashes(dataset)
 
+    mapped_event_count = int(event_lat.size)
     in_domain = (
         np.isfinite(event_lat)
         & np.isfinite(event_lon)
@@ -399,7 +478,7 @@ def accumulate_file_fed(path: Path, grid: GridSpec) -> tuple[np.ndarray, FileSta
     event_flash = event_flash[in_domain]
 
     if event_lat.size == 0:
-        return counts, FileStats(path.name, good_flash_count, 0, 0)
+        return counts, FileStats(path.name, good_flash_count, mapped_event_count, 0, 0)
 
     columns = np.floor((event_lon - grid.west) / grid.resolution).astype(np.int64)
     rows = np.floor((grid.north - event_lat) / grid.resolution).astype(np.int64)
@@ -425,6 +504,7 @@ def accumulate_file_fed(path: Path, grid: GridSpec) -> tuple[np.ndarray, FileSta
     return counts, FileStats(
         file_name=path.name,
         flashes_quality_controlled=good_flash_count,
+        events_mapped_to_good_flashes=mapped_event_count,
         events_in_domain=int(event_lat.size),
         flash_cell_contributions=int(unique_pairs.size),
     )
@@ -712,6 +792,7 @@ def process_satellite(
         processed_files=processed_files,
         completeness_fraction=processed_files / EXPECTED_FILES_PER_WINDOW,
         quality_controlled_flash_records=sum(s.flashes_quality_controlled for s in file_stats),
+        events_mapped_to_good_flashes=sum(s.events_mapped_to_good_flashes for s in file_stats),
         events_in_domain=sum(s.events_in_domain for s in file_stats),
         flash_cell_contributions=sum(s.flash_cell_contributions for s in file_stats),
         nonzero_grid_cells=int(np.count_nonzero(aggregate)),
@@ -735,7 +816,8 @@ def process_satellite(
         ),
         "quality_control": (
             "flash_quality_flag == 0 and group_quality_flag == 0 when those variables "
-            "are present"
+            "are present; packed event coordinates are decoded by honoring _Unsigned "
+            "before scale_factor and add_offset"
         ),
         "important_note": (
             "This is a diagnostic LCFA-derived field, not the official NOAA gridded FED product. "
@@ -782,11 +864,62 @@ def write_summary_csv(output_path: Path, results: Sequence[SatelliteResult]) -> 
 def self_test() -> None:
     grid = GridSpec(west=-100.0, east=-99.0, south=30.0, north=31.0, resolution=0.1)
 
-    # Synthetic extent logic: flash 10 has repeated events in one cell and one event
-    # in another cell. It must count once in each cell. Flash 20 shares the first cell.
-    event_lon = np.array([-99.95, -99.94, -99.85, -99.96])
-    event_lat = np.array([30.95, 30.94, 30.95, 30.96])
-    event_flash = np.array([10, 10, 10, 20])
+    # Emulate the GOES-R packed-coordinate convention, including signed storage
+    # whose bytes must first be reinterpreted as unsigned before scaling.
+    expected_lon = np.array([-99.95, -99.94, -99.85, -99.96], dtype=np.float64)
+    expected_lat = np.array([30.95, 30.94, 30.95, 30.96], dtype=np.float64)
+    scale = 0.002
+    packed_lon_u16 = np.rint((expected_lon + 180.0) / scale).astype(np.uint16)
+    packed_lat_u16 = np.rint((expected_lat + 90.0) / scale).astype(np.uint16)
+
+    group_ids_u32 = np.array([0xF0000001, 0xF0000002, 0xF0000003], dtype=np.uint32)
+    flash_ids_u32 = np.array([0xE0000001, 0xE0000002], dtype=np.uint32)
+
+    dataset = xr.Dataset(
+        data_vars={
+            "event_lat": xr.DataArray(
+                packed_lat_u16.view(np.int16),
+                dims=("event",),
+                attrs={"_Unsigned": "true", "scale_factor": scale, "add_offset": -90.0},
+            ),
+            "event_lon": xr.DataArray(
+                packed_lon_u16.view(np.int16),
+                dims=("event",),
+                attrs={"_Unsigned": "true", "scale_factor": scale, "add_offset": -180.0},
+            ),
+            "event_parent_group_id": xr.DataArray(
+                np.array([group_ids_u32[0], group_ids_u32[0], group_ids_u32[1], group_ids_u32[2]], dtype=np.uint32).view(np.int32),
+                dims=("event",),
+                attrs={"_Unsigned": "true"},
+            ),
+            "group_id": xr.DataArray(
+                group_ids_u32.view(np.int32),
+                dims=("group",),
+                attrs={"_Unsigned": "true"},
+            ),
+            "group_parent_flash_id": xr.DataArray(
+                np.array([flash_ids_u32[0], flash_ids_u32[0], flash_ids_u32[1]], dtype=np.uint32).view(np.int32),
+                dims=("group",),
+                attrs={"_Unsigned": "true"},
+            ),
+            "flash_id": xr.DataArray(
+                flash_ids_u32.view(np.int32),
+                dims=("flash",),
+                attrs={"_Unsigned": "true"},
+            ),
+            "flash_quality_flag": xr.DataArray(np.zeros(2, dtype=np.int8), dims=("flash",)),
+            "group_quality_flag": xr.DataArray(np.zeros(3, dtype=np.int8), dims=("group",)),
+        }
+    )
+
+    event_lat, event_lon, event_flash, good_flash_count = map_events_to_flashes(dataset)
+    assert good_flash_count == 2
+    assert np.allclose(event_lat, expected_lat, atol=scale / 2)
+    assert np.allclose(event_lon, expected_lon, atol=scale / 2)
+
+    # Synthetic extent logic: the first flash has repeated events in one cell and
+    # one event in another cell. It must count once in each cell. The second flash
+    # shares the first cell.
     columns = np.floor((event_lon - grid.west) / grid.resolution).astype(np.int64)
     rows = np.floor((grid.north - event_lat) / grid.resolution).astype(np.int64)
     cells = rows * grid.width + columns
@@ -807,7 +940,7 @@ def self_test() -> None:
     assert parsed.year == 2026 and parsed.timetuple().tm_yday == 215
     assert parsed.hour == 16 and parsed.minute == 0
 
-    print("GLM FED synthetic self-test passed.")
+    print("GLM FED packed-coordinate and extent self-test passed.")
 
 
 def parse_args() -> argparse.Namespace:
