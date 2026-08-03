@@ -1,19 +1,28 @@
 name: Update WPC Data
 
 on:
-  # This allows the workflow to be triggered remotely by cron-job.org every 5 mins
+  # Triggered remotely by cron-job.org every 5 minutes.
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Do not interrupt an active update. If more than one newer dispatch is waiting,
+# GitHub keeps only the newest pending run for this real-time workflow.
+concurrency:
+  group: update-wpc-data-operational
+  cancel-in-progress: false
+
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,11 +40,38 @@ jobs:
       - name: Run FFD Contour Fetch Script
         run: python fetch_ffd.py
 
-      - name: Commit and Push Changes
+      - name: Commit and push changes
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
           git add wpc_data.geojson static/ffd_contours.txt
-          
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update WPC and FFD real-time data" && git push)
+
+          if git diff --cached --quiet; then
+            echo "WPC and FFD real-time products are unchanged."
+            exit 0
+          fi
+
+          git commit -m "Auto-update WPC and FFD real-time data"
+
+          for attempt in 1 2 3; do
+            echo "Sync/push attempt ${attempt}..."
+
+            if ! git pull --rebase origin "${BRANCH_NAME}"; then
+              git rebase --abort || true
+              sleep $((attempt * 10))
+              continue
+            fi
+
+            if git push origin "HEAD:${BRANCH_NAME}"; then
+              echo "WPC and FFD products committed successfully."
+              exit 0
+            fi
+
+            sleep $((attempt * 10))
+          done
+
+          echo "Unable to push WPC and FFD products after three attempts."
+          exit 1
