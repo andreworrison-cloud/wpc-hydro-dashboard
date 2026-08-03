@@ -70,8 +70,16 @@ map.getPane('mpd').style.zIndex = 430;
 map.createPane('ffd');
 map.getPane('ffd').style.zIndex = 440;
 
+// Hydro-product click priority is enforced with separate panes:
+// Flash Flood Warning > Flood Warning > Flood Advisory > Flood Watch.
 map.createPane('warnings');
-map.getPane('warnings').style.zIndex = 450;
+map.getPane('warnings').style.zIndex = 450; // Flood Advisories
+
+map.createPane('floodWarnings');
+map.getPane('floodWarnings').style.zIndex = 451;
+
+map.createPane('flashFloodWarnings');
+map.getPane('flashFloodWarnings').style.zIndex = 452;
 
 // --- BASEMAPS ---
 
@@ -294,7 +302,26 @@ const commonAlertOptions = (paneName) => ({
     }
 });
 
-const warningsLayer = L.geoJSON(null, commonAlertOptions('warnings'));
+const floodAdvisoryLayer = L.geoJSON(
+    null,
+    commonAlertOptions('warnings')
+);
+const floodWarningLayer = L.geoJSON(
+    null,
+    commonAlertOptions('floodWarnings')
+);
+const flashFloodWarningLayer = L.geoJSON(
+    null,
+    commonAlertOptions('flashFloodWarnings')
+);
+
+// Preserve the existing single sidebar toggle for all warnings/advisories while
+// placing each product type in its own click-priority pane.
+const warningsLayer = L.layerGroup([
+    floodAdvisoryLayer,
+    floodWarningLayer,
+    flashFloodWarningLayer
+]);
 const watchesLayer = L.geoJSON(null, commonAlertOptions('watches'));
 
 warningsLayer.addTo(map);
@@ -308,13 +335,38 @@ async function fetchNWSAlerts() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
-        warningsLayer.clearLayers();
+        flashFloodWarningLayer.clearLayers();
+        floodWarningLayer.clearLayers();
+        floodAdvisoryLayer.clearLayers();
         watchesLayer.clearLayers();
         
         if (data && data.features) {
-            const warningFeatures = data.features.filter(f => f.properties && f.properties.prod_type && !f.properties.prod_type.includes("Watch"));
-            const watchFeatures = data.features.filter(f => f.properties && f.properties.prod_type && f.properties.prod_type.includes("Watch"));
-            if (warningFeatures.length > 0) warningsLayer.addData(warningFeatures);
+            const validFeatures = data.features.filter(
+                feature => feature.properties && feature.properties.prod_type
+            );
+            const flashFloodFeatures = validFeatures.filter(
+                feature => feature.properties.prod_type === 'Flash Flood Warning'
+            );
+            const floodWarningFeatures = validFeatures.filter(
+                feature => feature.properties.prod_type === 'Flood Warning'
+            );
+            const floodAdvisoryFeatures = validFeatures.filter(
+                feature => feature.properties.prod_type === 'Flood Advisory'
+            );
+            const watchFeatures = validFeatures.filter(
+                feature => feature.properties.prod_type === 'Flood Watch' ||
+                    feature.properties.prod_type === 'Flash Flood Watch'
+            );
+
+            if (floodAdvisoryFeatures.length > 0) {
+                floodAdvisoryLayer.addData(floodAdvisoryFeatures);
+            }
+            if (floodWarningFeatures.length > 0) {
+                floodWarningLayer.addData(floodWarningFeatures);
+            }
+            if (flashFloodFeatures.length > 0) {
+                flashFloodWarningLayer.addData(flashFloodFeatures);
+            }
             if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
         }
     } catch (error) { console.error("Error fetching NWS alerts:", error); }
@@ -433,8 +485,40 @@ function getMpdStyle(feature) {
     const propStr = JSON.stringify(feature.properties).toUpperCase();
     let lineColor = "#ff00ff"; 
     if (propStr.includes("POSSIBLE")) lineColor = "#0000FF"; 
-    if (propStr.includes("LIKELY")) lineColor = "#800080";   
+    if (propStr.includes("LIKELY")) lineColor = "#C77DFF";   
     return { color: lineColor, weight: 3, dashArray: "5, 5", fillOpacity: 0.1 };
+}
+
+function formatMpdValidTime(properties) {
+    const start = properties && properties.valid_start_utc
+        ? new Date(properties.valid_start_utc)
+        : null;
+    const end = properties && properties.valid_end_utc
+        ? new Date(properties.valid_end_utc)
+        : null;
+
+    const formatOfficialTime = date => {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+        const hours = String(date.getUTCHours()).padStart(2, '0');
+        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+        const month = date.toLocaleString('en-US', {
+            month: 'short',
+            timeZone: 'UTC'
+        });
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        const year = date.getUTCFullYear();
+        return `${hours}${minutes}Z ${month} ${day} ${year}`;
+    };
+
+    const formattedStart = formatOfficialTime(start);
+    const formattedEnd = formatOfficialTime(end);
+    if (formattedStart && formattedEnd) {
+        return `${formattedStart} - ${formattedEnd}`;
+    }
+
+    return properties && properties.valid_time
+        ? properties.valid_time
+        : 'Unknown';
 }
 
 const eroLayer = L.geoJSON(null, {
@@ -459,7 +543,7 @@ const mpdLayer = L.geoJSON(null, {
         if (props && props.dataType === "MPD") {
             const mpdNum = props.mpd_number || "Unknown";
             const mpdTag = props.mpd_tag || "See WPC for details";
-            const validTime = props.valid_time || "Unknown";
+            const validTime = formatMpdValidTime(props);
             const currentYear = new Date().getUTCFullYear();
             
             const tooltipHTML = `<div style="text-align: center; font-family: sans-serif; line-height: 1.4;"><strong>MPD ${mpdNum}</strong><br>${mpdTag}<br>Valid: ${validTime}</div>`;
