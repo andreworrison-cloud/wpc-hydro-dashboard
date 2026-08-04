@@ -55,7 +55,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          # Fetch only the current branch tip; full repository history is unnecessary.
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
