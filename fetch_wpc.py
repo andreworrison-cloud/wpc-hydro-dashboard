@@ -18,6 +18,7 @@ MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
+SCRIPT_VERSION = "2026-08-04.0019-mpd-expiration-longitude-fix"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -461,6 +462,11 @@ def fetch_and_process_mpds():
         print("No active MPDs found on WPC webpage. Map will be cleared of MPDs.")
         return None
 
+    # The WPC current-MPD webpage can occasionally retain a discussion briefly
+    # after its official valid end time. Treat the bulletin's VALID period as
+    # authoritative so an upstream cleanup delay cannot leave an expired MPD on
+    # the dashboard.
+    processing_time = utc_now()
     mpd_gdfs = []
 
     for mpd_num in active_nums:
@@ -479,6 +485,14 @@ def fetch_and_process_mpds():
             print(
                 f" -> Could not parse official valid times for {mpd_num:04d}. "
                 "Skipping."
+            )
+            continue
+
+        if valid_end <= processing_time:
+            print(
+                f" -> MPD {mpd_num:04d} expired at "
+                f"{valid_end.strftime('%Y-%m-%d %H:%MZ')}; "
+                "skipping despite its presence on the WPC current-MPD page."
             )
             continue
 
@@ -570,6 +584,7 @@ def fetch_and_process_mpds():
 
 
 def main():
+    print(f"Running fetch_wpc.py version: {SCRIPT_VERSION}")
     final_gdfs = []
 
     ero_gdf = fetch_and_process_ero()
