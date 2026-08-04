@@ -2530,6 +2530,8 @@ const dashboardSections = [
 ];
 
 
+const dashboardUtilityLayers = [];
+
 const layerEntriesById = new Map();
 let selectedDashboardLayerId = null;
 let sidebarRenderQueued = false;
