@@ -80,8 +80,11 @@ LCFA_FILES_PER_MINUTE = 3
 EXPECTED_FILES_PER_SLOT = SLOT_MINUTES * LCFA_FILES_PER_MINUTE
 FILENAME_TIME_RE = re.compile(r"_s(?P<start>\d{13,16})_e(?P<end>\d{13,16})_")
 
-FIVE_MIN_BINS = [1, 2, 4, 8, 16, 32, 64, 128]
-FIVE_MIN_LABELS = ["1", "2–3", "4–7", "8–15", "16–31", "32–63", "64–127", "≥128"]
+FIVE_MIN_BINS = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+FIVE_MIN_LABELS = [
+    "1", "2–3", "4–7", "8–15", "16–31", "32–63", "64–127",
+    "128–255", "≥256",
+]
 FIVE_MIN_RGBA = [
     (0, 255, 255, 255),
     (0, 255, 0, 255),
@@ -90,6 +93,7 @@ FIVE_MIN_RGBA = [
     (255, 0, 0, 255),
     (255, 0, 255, 255),
     (199, 125, 255, 255),
+    (0, 102, 255, 255),
     (255, 255, 255, 255),
 ]
 
