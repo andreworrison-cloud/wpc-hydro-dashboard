@@ -227,6 +227,162 @@ let mrmsFfd24hReady = false;
 let mrmsCrest24hMetadata = null;
 let mrmsFfd24hMetadata = null;
 
+// --- OPERATIONAL GOES GLM CONTROLLED MOSAIC ---
+// The three primary products use an exclusive GOES-18/GOES-19 ownership
+// mask. The optional debug layers expose each native satellite contribution
+// and the ownership mask without changing the primary dashboard display.
+const GLM_MOSAIC_5MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Latest 5-Minute FED';
+const GLM_MOSAIC_30MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Rolling 30-Minute Accumulation';
+const GLM_MOSAIC_60MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Rolling 60-Minute Accumulation';
+const glmPlaceholderBounds = [[20.0, -130.0], [55.0, -60.0]];
+
+function createGLMImageOverlay(imageUrl, zIndex = 13) {
+    return L.imageOverlay(imageUrl, glmPlaceholderBounds, {
+        zIndex,
+        opacity: 0,
+        interactive: false
+    });
+}
+
+const glmMosaic5minLayer = createGLMImageOverlay('static/glm_conus_mosaic_5min.png');
+const glmMosaic30minLayer = createGLMImageOverlay('static/glm_conus_mosaic_30min.png');
+const glmMosaic60minLayer = createGLMImageOverlay('static/glm_conus_mosaic_60min.png');
+
+const glmG18_5minLayer = createGLMImageOverlay('static/glm_g18_fed_5min.png', 12);
+const glmG18_30minLayer = createGLMImageOverlay('static/glm_g18_fed_30min.png', 12);
+const glmG18_60minLayer = createGLMImageOverlay('static/glm_g18_fed_60min.png', 12);
+const glmG19_5minLayer = createGLMImageOverlay('static/glm_g19_fed_5min.png', 12);
+const glmG19_30minLayer = createGLMImageOverlay('static/glm_g19_fed_30min.png', 12);
+const glmG19_60minLayer = createGLMImageOverlay('static/glm_g19_fed_60min.png', 12);
+const glmOwnershipLayer = createGLMImageOverlay('static/glm_mosaic_source_ownership.png', 8);
+
+const GLM_LAYER_CONFIGS = [
+    {
+        id: 'glm-mosaic-5min',
+        name: GLM_MOSAIC_5MIN_LAYER_NAME,
+        layer: glmMosaic5minLayer,
+        imageUrl: 'static/glm_conus_mosaic_5min.png',
+        metadataUrl: 'static/glm_conus_mosaic_5min_metadata.json',
+        productRole: 'controlled_mosaic',
+        windowMinutes: 5,
+        legendId: 'five-minute',
+        defaultOpacity: 0.88,
+        debug: false
+    },
+    {
+        id: 'glm-mosaic-30min',
+        name: GLM_MOSAIC_30MIN_LAYER_NAME,
+        layer: glmMosaic30minLayer,
+        imageUrl: 'static/glm_conus_mosaic_30min.png',
+        metadataUrl: 'static/glm_conus_mosaic_30min_metadata.json',
+        productRole: 'controlled_mosaic',
+        windowMinutes: 30,
+        legendId: 'rolling',
+        defaultOpacity: 0.88,
+        debug: false
+    },
+    {
+        id: 'glm-mosaic-60min',
+        name: GLM_MOSAIC_60MIN_LAYER_NAME,
+        layer: glmMosaic60minLayer,
+        imageUrl: 'static/glm_conus_mosaic_60min.png',
+        metadataUrl: 'static/glm_conus_mosaic_60min_metadata.json',
+        productRole: 'controlled_mosaic',
+        windowMinutes: 60,
+        legendId: 'rolling',
+        defaultOpacity: 0.88,
+        debug: false
+    },
+    {
+        id: 'glm-debug-g18-5min',
+        name: 'GLM Debug — GOES-18 (West) — Latest 5-Minute FED',
+        layer: glmG18_5minLayer,
+        imageUrl: 'static/glm_g18_fed_5min.png',
+        metadataUrl: 'static/glm_g18_fed_5min_metadata.json',
+        productRole: 'satellite_reference_debug',
+        windowMinutes: 5,
+        legendId: 'five-minute',
+        defaultOpacity: 0.88,
+        debug: true
+    },
+    {
+        id: 'glm-debug-g18-30min',
+        name: 'GLM Debug — GOES-18 (West) — Rolling 30-Minute Accumulation',
+        layer: glmG18_30minLayer,
+        imageUrl: 'static/glm_g18_fed_30min.png',
+        metadataUrl: 'static/glm_g18_fed_30min_metadata.json',
+        productRole: 'satellite_reference_debug',
+        windowMinutes: 30,
+        legendId: 'rolling',
+        defaultOpacity: 0.88,
+        debug: true
+    },
+    {
+        id: 'glm-debug-g18-60min',
+        name: 'GLM Debug — GOES-18 (West) — Rolling 60-Minute Accumulation',
+        layer: glmG18_60minLayer,
+        imageUrl: 'static/glm_g18_fed_60min.png',
+        metadataUrl: 'static/glm_g18_fed_60min_metadata.json',
+        productRole: 'satellite_reference_debug',
+        windowMinutes: 60,
+        legendId: 'rolling',
+        defaultOpacity: 0.88,
+        debug: true
+    },
+    {
+        id: 'glm-debug-g19-5min',
+        name: 'GLM Debug — GOES-19 (East) — Latest 5-Minute FED',
+        layer: glmG19_5minLayer,
+        imageUrl: 'static/glm_g19_fed_5min.png',
+        metadataUrl: 'static/glm_g19_fed_5min_metadata.json',
+        productRole: 'satellite_reference_debug',
+        windowMinutes: 5,
+        legendId: 'five-minute',
+        defaultOpacity: 0.88,
+        debug: true
+    },
+    {
+        id: 'glm-debug-g19-30min',
+        name: 'GLM Debug — GOES-19 (East) — Rolling 30-Minute Accumulation',
+        layer: glmG19_30minLayer,
+        imageUrl: 'static/glm_g19_fed_30min.png',
+        metadataUrl: 'static/glm_g19_fed_30min_metadata.json',
+        productRole: 'satellite_reference_debug',
+        windowMinutes: 30,
+        legendId: 'rolling',
+        defaultOpacity: 0.88,
+        debug: true
+    },
+    {
+        id: 'glm-debug-g19-60min',
+        name: 'GLM Debug — GOES-19 (East) — Rolling 60-Minute Accumulation',
+        layer: glmG19_60minLayer,
+        imageUrl: 'static/glm_g19_fed_60min.png',
+        metadataUrl: 'static/glm_g19_fed_60min_metadata.json',
+        productRole: 'satellite_reference_debug',
+        windowMinutes: 60,
+        legendId: 'rolling',
+        defaultOpacity: 0.88,
+        debug: true
+    },
+    {
+        id: 'glm-debug-ownership',
+        name: 'GLM Debug — Mosaic Source Ownership',
+        layer: glmOwnershipLayer,
+        imageUrl: 'static/glm_mosaic_source_ownership.png',
+        metadataUrl: 'static/glm_mosaic_source_ownership_metadata.json',
+        productRole: 'source_ownership_debug',
+        windowMinutes: null,
+        legendId: 'ownership',
+        defaultOpacity: 0.45,
+        debug: true
+    }
+];
+
+const glmConfigByName = new Map(GLM_LAYER_CONFIGS.map(config => [config.name, config]));
+const glmMetadataByName = new Map();
+const glmReadyNames = new Set();
+
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
@@ -1090,6 +1246,145 @@ async function fetchMRMSFlash24hMetadata() {
     }
 }
 
+
+function glmCompletenessText(metadata) {
+    if (!metadata) return 'Completeness unavailable';
+    if (metadata.product_role === 'controlled_mosaic') {
+        const inputs = metadata.satellite_inputs || {};
+        return ['G18', 'G19'].map(satellite => {
+            const stats = inputs[satellite] || {};
+            const processed = Number(stats.processed_files);
+            const expected = Number(stats.expected_files);
+            const fraction = Number(stats.completeness_fraction);
+            if (!Number.isFinite(processed) || !Number.isFinite(expected) || expected <= 0) {
+                return `${satellite}: unavailable`;
+            }
+            return `${satellite}: ${processed}/${expected}` +
+                (Number.isFinite(fraction) ? ` (${Math.round(fraction * 100)}%)` : '');
+        }).join(' &nbsp;|&nbsp; ');
+    }
+    const processed = Number(metadata.processed_files);
+    const expected = Number(metadata.expected_files);
+    const fraction = Number(metadata.completeness_fraction);
+    if (!Number.isFinite(processed) || !Number.isFinite(expected) || expected <= 0) {
+        return 'Completeness unavailable';
+    }
+    return `${processed}/${expected} files` +
+        (Number.isFinite(fraction) ? ` (${Math.round(fraction * 100)}%)` : '');
+}
+
+function formatGLMTimeBox(config, metadata) {
+    if (!metadata) {
+        return `
+            <strong>${config.name}</strong><br>
+            <span style="color: #ffeb3b;">Loading latest GLM raster...</span>
+        `;
+    }
+    if (config.productRole === 'source_ownership_debug') {
+        const geometry = metadata.satellite_geometry || {};
+        const seam = Number(geometry.nominal_equal_angle_seam_longitude);
+        return `
+            <strong>${config.name}</strong><br>
+            <span style="color: #4fc3f7; font-weight: bold;">Exclusive source assignment</span><br>
+            <span style="color: #ffeb3b;">Nominal seam: ${Number.isFinite(seam) ? `${Math.abs(seam).toFixed(1)}°W` : 'Unknown'}</span><br>
+            <span style="font-size: 0.82em; color: #d0d0d0;">Generated: ${formatMetadataUTC(metadata.generated_time_utc)}</span>
+        `;
+    }
+    const start = formatMetadataUTC(metadata.window_start_utc);
+    const end = formatMetadataUTC(metadata.window_end_utc);
+    const maximum = Number(metadata.maximum_value);
+    return `
+        <strong>${config.name}</strong><br>
+        <span style="color: #ffeb3b;">${start} &mdash; ${end}</span><br>
+        <span style="font-size: 0.86em;">${glmCompletenessText(metadata)}</span><br>
+        <span style="font-size: 0.86em; color: #4fc3f7;">Maximum: ${Number.isFinite(maximum) ? maximum : 'Unknown'}</span><br>
+        <span style="font-size: 0.82em; color: #d0d0d0;">Generated: ${formatMetadataUTC(metadata.generated_time_utc)}</span>
+    `;
+}
+
+function applyGLMRasterMetadata(config, metadata) {
+    if (!metadata || metadata.metadata_mode !== 'glm_dashboard_v1') {
+        throw new Error(`${config.name}: invalid GLM metadata mode`);
+    }
+    if (metadata.product_role !== config.productRole) {
+        throw new Error(`${config.name}: unexpected product role ${metadata.product_role}`);
+    }
+    if (config.productRole === 'controlled_mosaic') {
+        const method = metadata.mosaic_method || {};
+        if (
+            method.summation !== false ||
+            method.averaging !== false ||
+            method.blending !== false ||
+            method.secondary_source_gap_fill !== false
+        ) {
+            throw new Error(`${config.name}: controlled-mosaic safeguards failed`);
+        }
+    }
+    const grid = metadata.grid || {};
+    const imageCrs = String(grid.image_crs || '').toUpperCase();
+    if (imageCrs !== 'EPSG:3857') {
+        throw new Error(`${config.name}: expected EPSG:3857 PNG, found ${imageCrs || 'none'}`);
+    }
+    const bounds = validateRasterBounds(grid.leaflet_bounds, config.name);
+    const currentOpacity = glmReadyNames.has(config.name)
+        ? Number(config.layer.options.opacity ?? config.defaultOpacity)
+        : Number(metadata.default_opacity ?? config.defaultOpacity);
+    config.layer.setBounds(bounds);
+    config.layer.setUrl(cacheBustedRasterUrl(config.imageUrl, {
+        generated_time_utc: metadata.generated_time_utc,
+        valid_time_iso: metadata.window_end_utc || metadata.generated_time_utc
+    }));
+    config.layer.setOpacity(Number.isFinite(currentOpacity) ? currentOpacity : config.defaultOpacity);
+    glmMetadataByName.set(config.name, metadata);
+    glmReadyNames.add(config.name);
+}
+
+function updateGLMTimeBox(preferredName = null) {
+    const timeBox = document.getElementById('glm-time-box');
+    if (!timeBox) return;
+    let config = preferredName ? glmConfigByName.get(preferredName) : null;
+    if (!config || !map.hasLayer(config.layer)) {
+        config = GLM_LAYER_CONFIGS.find(item => map.hasLayer(item.layer)) || null;
+    }
+    if (!config) {
+        timeBox.style.display = 'none';
+        refreshLegendDockSummary();
+        return;
+    }
+    timeBox.innerHTML = formatGLMTimeBox(config, glmMetadataByName.get(config.name));
+    timeBox.style.display = 'block';
+    refreshLegendDockSummary();
+}
+
+async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS) {
+    const cacheToken = Date.now();
+    const results = await Promise.allSettled(configs.map(async config => {
+        const response = await fetch(`${config.metadataUrl}?t=${cacheToken}`, {cache: 'no-store'});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const metadata = await response.json();
+        applyGLMRasterMetadata(config, metadata);
+        return {config, metadata};
+    }));
+
+    results.forEach((result, index) => {
+        const config = configs[index];
+        if (result.status === 'rejected') {
+            if (!glmReadyNames.has(config.name)) config.layer.setOpacity(0);
+            console.error(`GLM raster update failed for ${config.name}:`, result.reason);
+        }
+    });
+
+    const mainEnds = GLM_LAYER_CONFIGS
+        .filter(config => !config.debug)
+        .map(config => glmMetadataByName.get(config.name)?.window_end_utc)
+        .filter(Boolean);
+    if (mainEnds.length === 3 && new Set(mainEnds).size !== 1) {
+        console.error('GOES GLM primary mosaic windows are not synchronized:', mainEnds);
+        GLM_LAYER_CONFIGS.filter(config => !config.debug).forEach(config => config.layer.setOpacity(0));
+    }
+    updateGLMTimeBox();
+}
+
 async function fetchNWMMetadata() {
     try {
         const response = await fetch(
@@ -1241,6 +1536,7 @@ fetchRAPMetadata();
 fetchCAMMetadata();
 fetchEROCAMMetadata();
 fetchMRMSFlash24hMetadata();
+fetchGLMMetadata();
 fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
@@ -1255,6 +1551,9 @@ setInterval(() => {
     fetchSPoRTMetadata();
     fetchNLDASRSMMetadata();
 }, 15 * 60 * 1000); 
+
+// GLM products are generated on a 10-minute operational cadence.
+setInterval(() => fetchGLMMetadata(), 10 * 60 * 1000);
 
 function getValidTimeRange(cycleStr, windowStr) {
     if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
@@ -1423,6 +1722,7 @@ legendDockControl.onAdd = function () {
         'ffd-time-box',
         'mrms-crest-24h-time-box',
         'mrms-ffd-24h-time-box',
+        'glm-time-box',
         'nwm-time-box',
         'sport-time-box',
         'nldas-rsm-010-time-box',
@@ -1777,6 +2077,45 @@ function buildNLDASRSMHTML(title) {
 const nldasRsm010LegendHTML = buildNLDASRSMHTML('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)');
 const nldasRsm0100LegendHTML = buildNLDASRSMHTML('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)');
 
+function buildGLMLegendHTML(title, labels, colors) {
+    const bins = labels.map((label, index) => `
+        <div style="background: ${colors[index]}; flex: 1; min-width: 45px; padding: 3px 2px; border-right: 1px solid #333;">${label}</div>
+    `).join('');
+    return `
+        <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 360px;">
+            <strong style="font-size: 13px;">${title}</strong><br>
+            <span style="font-size: 10px;">LCFA-derived flash extent contributions per 0.02° grid cell</span>
+            <div style="display: flex; margin-top: 6px; border: 1px solid #333; font-size: 9px; font-weight: bold;">${bins}</div>
+        </div>
+    `;
+}
+
+const glmFiveMinuteLegendHTML = buildGLMLegendHTML(
+    'GOES GLM — Latest 5-Minute FED',
+    ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '≥128'],
+    ['#00ffff', '#00ff00', '#ffff00', '#ff9900', '#ff0000', '#ff00ff', '#c77dff', '#ffffff']
+);
+const glmRollingLegendHTML = buildGLMLegendHTML(
+    'GOES GLM — Rolling Flash Extent Accumulation',
+    ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '128–255', '256–511', '≥512'],
+    ['#00ffff', '#00ff00', '#ffff00', '#ff9900', '#ff0000', '#ff00ff', '#c77dff', '#0066ff', '#66ccff', '#ffffff']
+);
+const glmOwnershipLegendHTML = `
+    <div style="background: white; padding: 10px; border-radius: 5px; color: black; font-family: sans-serif; min-width: 260px;">
+        <strong style="font-size: 13px;">GLM Mosaic Source Ownership</strong><br>
+        <div style="margin-top: 6px;"><span style="display:inline-block;width:18px;height:12px;background:#0099ff;margin-right:6px;"></span>GOES-18 (West)</div>
+        <div style="margin-top: 4px;"><span style="display:inline-block;width:18px;height:12px;background:#ffc400;margin-right:6px;"></span>GOES-19 (East)</div>
+        <div style="font-size: 9px; margin-top: 5px;">Exclusive lower-view-angle ownership; nominal seam near 106.1°W.</div>
+    </div>
+`;
+
+function glmLegendHTMLForConfig(config) {
+    if (config.legendId === 'ownership') return glmOwnershipLegendHTML;
+    return config.legendId === 'five-minute'
+        ? glmFiveMinuteLegendHTML
+        : glmRollingLegendHTML;
+}
+
 // Global tracker for currently active layers
 let activeLayerNames = new Set();
 
@@ -1806,6 +2145,9 @@ function updateLegends() {
     if (activeLayerNames.has('NASA SPoRT-LIS VSM Percentile (0–100 cm)')) addLegendBlock(sportLegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)')) addLegendBlock(nldasRsm010LegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)')) addLegendBlock(nldasRsm0100LegendHTML);
+    GLM_LAYER_CONFIGS
+        .filter(config => activeLayerNames.has(config.name))
+        .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -1850,6 +2192,7 @@ map.on('overlayadd', function(eventLayer) {
     const ffdTimeBox = document.getElementById('ffd-time-box');
     const mrmsCrest24hTimeBox = document.getElementById('mrms-crest-24h-time-box');
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
+    const glmTimeBox = document.getElementById('glm-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -1904,6 +2247,18 @@ map.on('overlayadd', function(eventLayer) {
             mrmsFfd24hTimeBox.style.display = 'block';
         }
         fetchMRMSFlash24hMetadata();
+    }
+
+    const glmConfig = glmConfigByName.get(eventLayer.name);
+    if (glmConfig) {
+        if (glmTimeBox) {
+            glmTimeBox.innerHTML = formatGLMTimeBox(
+                glmConfig,
+                glmMetadataByName.get(glmConfig.name)
+            );
+            glmTimeBox.style.display = 'block';
+        }
+        fetchGLMMetadata([glmConfig]);
     }
 
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
@@ -2004,7 +2359,7 @@ map.on('overlayadd', function(eventLayer) {
         `;
     }
 
-    if (eventLayer.name.includes('GOES-')) {
+    if (eventLayer.name.includes('GOES-') && !glmConfigByName.has(eventLayer.name)) {
         radarTimeBox.style.display = 'block';
         radarTimeBox.innerHTML = `
             <strong>${eventLayer.name}</strong><br>
@@ -2028,6 +2383,7 @@ map.on('overlayremove', function(eventLayer) {
     const ffdTimeBox = document.getElementById('ffd-time-box');
     const mrmsCrest24hTimeBox = document.getElementById('mrms-crest-24h-time-box');
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
+    const glmTimeBox = document.getElementById('glm-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -2055,6 +2411,10 @@ map.on('overlayremove', function(eventLayer) {
         if (mrmsFfd24hTimeBox) mrmsFfd24hTimeBox.style.display = 'none';
     }
 
+    if (glmConfigByName.has(eventLayer.name)) {
+        window.setTimeout(() => updateGLMTimeBox(), 0);
+    }
+
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
         if (nwmTimeBox) nwmTimeBox.style.display = 'none';
     }
@@ -2076,8 +2436,8 @@ map.on('overlayremove', function(eventLayer) {
         if (!hasCAM) camTimeBox.style.display = 'none';
     }
     
-    if (eventLayer.name.includes('NEXRAD Radar') || eventLayer.name.includes('GOES-')) {
-        const hasSatRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar') || name.includes('GOES-'));
+    if (eventLayer.name.includes('NEXRAD Radar') || (eventLayer.name.includes('GOES-') && !glmConfigByName.has(eventLayer.name))) {
+        const hasSatRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar') || (name.includes('GOES-') && !glmConfigByName.has(name)));
         if (!hasSatRadar) radarTimeBox.style.display = 'none';
     }
 
@@ -2094,6 +2454,14 @@ const baseMapRegistry = [
     {id: 'esri-imagery', label: 'Esri World Imagery (Satellite)', layer: esriWorldImagery},
     {id: 'esri-topo', label: 'Esri World Topographic', layer: esriWorldTopo}
 ];
+
+function enforceExclusiveGLMSelection(activeEntry) {
+    getAllDashboardLayerEntries().forEach(entry => {
+        if (entry !== activeEntry && entry.id && entry.id.startsWith('glm-') && map.hasLayer(entry.layer)) {
+            setDashboardLayerActive(entry, false);
+        }
+    });
+}
 
 const dashboardSections = [
     {
@@ -2124,7 +2492,10 @@ const dashboardSections = [
             {id: 'goes-east-ir', label: 'GOES-East: Clean IR (Ch. 13)', layer: goesEastIR, kind: 'raster'},
             {id: 'goes-west-vis', label: 'GOES-West: Visible (Ch. 2)', layer: goesWestVis, kind: 'raster'},
             {id: 'goes-west-wv', label: 'GOES-West: Mid-Level WV (Ch. 9)', layer: goesWestWV, kind: 'raster'},
-            {id: 'goes-west-ir', label: 'GOES-West: Clean IR (Ch. 13)', layer: goesWestIR, kind: 'raster'}
+            {id: 'goes-west-ir', label: 'GOES-West: Clean IR (Ch. 13)', layer: goesWestIR, kind: 'raster'},
+            {id: 'glm-mosaic-5min', label: GLM_MOSAIC_5MIN_LAYER_NAME, layer: glmMosaic5minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection},
+            {id: 'glm-mosaic-30min', label: GLM_MOSAIC_30MIN_LAYER_NAME, layer: glmMosaic30minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection},
+            {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection}
         ]
     },
     {
@@ -2249,6 +2620,16 @@ const dashboardSections = [
     }
 ];
 
+const dashboardUtilityLayers = [
+    {id: 'glm-debug-g18-5min', label: 'GLM Debug — GOES-18 (West) — Latest 5-Minute FED', layer: glmG18_5minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite west'},
+    {id: 'glm-debug-g18-30min', label: 'GLM Debug — GOES-18 (West) — Rolling 30-Minute Accumulation', layer: glmG18_30minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite west'},
+    {id: 'glm-debug-g18-60min', label: 'GLM Debug — GOES-18 (West) — Rolling 60-Minute Accumulation', layer: glmG18_60minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite west'},
+    {id: 'glm-debug-g19-5min', label: 'GLM Debug — GOES-19 (East) — Latest 5-Minute FED', layer: glmG19_5minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite east'},
+    {id: 'glm-debug-g19-30min', label: 'GLM Debug — GOES-19 (East) — Rolling 30-Minute Accumulation', layer: glmG19_30minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite east'},
+    {id: 'glm-debug-g19-60min', label: 'GLM Debug — GOES-19 (East) — Rolling 60-Minute Accumulation', layer: glmG19_60minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite east'},
+    {id: 'glm-debug-ownership', label: 'GLM Debug — Mosaic Source Ownership', layer: glmOwnershipLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning seam ownership source mask'}
+];
+
 const layerEntriesById = new Map();
 let selectedDashboardLayerId = null;
 let sidebarRenderQueued = false;
@@ -2263,7 +2644,10 @@ function cleanLayerLabel(label) {
 }
 
 function getAllDashboardLayerEntries() {
-    return dashboardSections.flatMap(section => section.layers);
+    return [
+        ...dashboardSections.flatMap(section => section.layers),
+        ...dashboardUtilityLayers
+    ];
 }
 
 function rebuildLayerEntryIndex() {
@@ -2423,6 +2807,16 @@ function renderUtilitySection(container) {
             <button id="restore-dashboard-defaults" class="sidebar-tool-button" type="button">Restore defaults</button>
         </div>
     `;
+
+    const glmDebugGroup = document.createElement('div');
+    glmDebugGroup.className = 'utility-field';
+    const glmDebugHeading = document.createElement('div');
+    glmDebugHeading.style.fontWeight = '700';
+    glmDebugHeading.style.marginBottom = '5px';
+    glmDebugHeading.textContent = 'GLM Debug Layers';
+    glmDebugGroup.append(glmDebugHeading);
+    dashboardUtilityLayers.forEach(entry => glmDebugGroup.append(renderLayerRow(entry)));
+    body.append(glmDebugGroup);
 
     section.append(summary, body);
     container.append(section);
