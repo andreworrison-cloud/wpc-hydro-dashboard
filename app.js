@@ -456,24 +456,24 @@ const glmReadyNames = new Set();
 const GLM_TREND_SESSION_KEY = 'wpc-glm-trend-domain-v1';
 const GLM_TREND_STATE_PRESENTATION = {
     rapidly_increasing: {
-        label: 'Rapidly Increasing', symbol: '▲', color: '#ff6b45',
-        background: 'rgba(255, 107, 69, 0.14)'
+        label: 'Rapidly Increasing', symbol: '▲', color: '#ff4848',
+        background: 'rgba(255, 72, 72, 0.15)'
     },
     increasing: {
-        label: 'Increasing', symbol: '↗', color: '#ffbd3f',
-        background: 'rgba(255, 189, 63, 0.13)'
+        label: 'Increasing', symbol: '↗', color: '#ffaa40',
+        background: 'rgba(255, 170, 64, 0.14)'
     },
     steady: {
-        label: 'Steady', symbol: '→', color: '#4fc3f7',
-        background: 'rgba(79, 195, 247, 0.13)'
+        label: 'Steady', symbol: '→', color: '#ffe878',
+        background: 'rgba(255, 232, 120, 0.13)'
     },
     decreasing: {
-        label: 'Decreasing', symbol: '↘', color: '#9aa9bb',
-        background: 'rgba(154, 169, 187, 0.12)'
+        label: 'Decreasing', symbol: '↘', color: '#4ceaff',
+        background: 'rgba(76, 234, 255, 0.13)'
     },
     rapidly_decreasing: {
-        label: 'Rapidly Decreasing', symbol: '▼', color: '#7e8cff',
-        background: 'rgba(126, 140, 255, 0.13)'
+        label: 'Rapidly Decreasing', symbol: '▼', color: '#3876ff',
+        background: 'rgba(56, 118, 255, 0.14)'
     },
     low_activity: {
         label: 'Low Activity', symbol: '•', color: '#91a6b6',
@@ -1696,13 +1696,13 @@ async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS) {
         }
     });
 
-    const mainEnds = GLM_LAYER_CONFIGS
-        .filter(config => !config.debug)
+    const operationalConfigs = GLM_LAYER_CONFIGS.filter(config => !config.debug);
+    const mainEnds = operationalConfigs
         .map(config => glmMetadataByName.get(config.name)?.window_end_utc)
         .filter(Boolean);
-    if (mainEnds.length === 3 && new Set(mainEnds).size !== 1) {
-        console.error('GOES GLM primary mosaic windows are not synchronized:', mainEnds);
-        GLM_LAYER_CONFIGS.filter(config => !config.debug).forEach(config => config.layer.setOpacity(0));
+    if (mainEnds.length === operationalConfigs.length && new Set(mainEnds).size !== 1) {
+        console.error('GOES GLM operational products are not synchronized:', mainEnds);
+        operationalConfigs.forEach(config => config.layer.setOpacity(0));
     }
     updateGLMTimeBox();
     updateGLMTrendCard();
