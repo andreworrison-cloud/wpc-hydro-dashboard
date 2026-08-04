@@ -137,6 +137,78 @@ SOURCE_RGBA = [
     (255, 196, 0, 92),
 ]
 
+# UFVS rectangular domains used consistently across the user's verification
+# and climatology work. Boundaries are evaluated as half-open intervals so
+# adjacent domains do not double-count grid cells.
+UFVS_TREND_DOMAINS = [
+    {
+        "id": "west-coast",
+        "label": "West Coast",
+        "west": -125.0,
+        "east": -117.0,
+        "south": 32.0,
+        "north": 49.0,
+    },
+    {
+        "id": "southwest",
+        "label": "Southwest",
+        "west": -117.0,
+        "east": -104.0,
+        "south": 28.0,
+        "north": 42.0,
+    },
+    {
+        "id": "interior-mountain-west",
+        "label": "Interior Mountain West",
+        "west": -117.0,
+        "east": -104.0,
+        "south": 42.0,
+        "north": 49.0,
+    },
+    {
+        "id": "northern-plains",
+        "label": "Northern Plains",
+        "west": -104.0,
+        "east": -85.0,
+        "south": 38.0,
+        "north": 49.0,
+    },
+    {
+        "id": "southern-plains",
+        "label": "Southern Plains",
+        "west": -104.0,
+        "east": -85.0,
+        "south": 25.0,
+        "north": 38.0,
+    },
+    {
+        "id": "southeast",
+        "label": "Southeast",
+        "west": -85.0,
+        "east": -65.0,
+        "south": 24.0,
+        "north": 38.0,
+    },
+    {
+        "id": "northeast",
+        "label": "Northeast",
+        "west": -85.0,
+        "east": -65.0,
+        "south": 38.0,
+        "north": 49.0,
+    },
+]
+
+TREND_HISTORY_MINUTES = 60
+TREND_RECENT_SLOT_COUNT = 3
+TREND_PRIOR_SLOT_COUNT = 3
+TREND_LOW_ACTIVITY_CONTRIBUTIONS = 5.0
+TREND_LOW_ACTIVITY_ACTIVE_CELLS = 5.0
+TREND_INCREASE_THRESHOLD_PERCENT = 20.0
+TREND_RAPID_INCREASE_THRESHOLD_PERCENT = 60.0
+TREND_DECREASE_THRESHOLD_PERCENT = -20.0
+TREND_RAPID_DECREASE_THRESHOLD_PERCENT = -60.0
+
 
 @dataclass(frozen=True)
 class GridSpec:
@@ -1469,6 +1541,320 @@ def create_source_ownership_products(
     return metadata
 
 
+
+def grid_slice_for_bounds(
+    grid: GridSpec,
+    west: float,
+    east: float,
+    south: float,
+    north: float,
+) -> tuple[int, int, int, int]:
+    """Return a clipped half-open row/column slice for geographic bounds."""
+    column_start = int(round((west - grid.west) / grid.resolution))
+    column_stop = int(round((east - grid.west) / grid.resolution))
+    row_start = int(round((grid.north - north) / grid.resolution))
+    row_stop = int(round((grid.north - south) / grid.resolution))
+    return (
+        max(0, min(grid.height, row_start)),
+        max(0, min(grid.height, row_stop)),
+        max(0, min(grid.width, column_start)),
+        max(0, min(grid.width, column_stop)),
+    )
+
+
+def classify_convective_trend(series: Sequence[dict]) -> dict:
+    """Classify the newest 15 minutes against the preceding 15 minutes.
+
+    The symmetric percent change is bounded from -200 to +200 and behaves
+    well when convection initiates from a near-zero baseline.
+    """
+    recent_window = list(series[-TREND_RECENT_SLOT_COUNT:])
+    prior_end = len(series) - TREND_RECENT_SLOT_COUNT
+    prior_start = max(0, prior_end - TREND_PRIOR_SLOT_COUNT)
+    prior_window = list(series[prior_start:prior_end])
+
+    recent = [item for item in recent_window if item.get("available")]
+    prior = [item for item in prior_window if item.get("available")]
+    required = 2
+
+    latest = next(
+        (item for item in reversed(series) if item.get("available")),
+        None,
+    )
+    valid = [item for item in series if item.get("available")]
+    peak = max(
+        valid,
+        key=lambda item: int(item.get("flash_extent_contributions") or 0),
+        default=None,
+    )
+
+    base_payload = {
+        "available_slots": len(valid),
+        "expected_slots": len(series),
+        "latest_value": (
+            int(latest["flash_extent_contributions"]) if latest else None
+        ),
+        "latest_active_grid_cells": (
+            int(latest["active_grid_cells"]) if latest else None
+        ),
+        "latest_maximum_cell_value": (
+            int(latest["maximum_cell_value"]) if latest else None
+        ),
+        "peak_value_last_60min": (
+            int(peak["flash_extent_contributions"]) if peak else None
+        ),
+        "peak_time_utc": peak.get("slot_end_utc") if peak else None,
+    }
+
+    if len(recent) < required or len(prior) < required:
+        return {
+            **base_payload,
+            "classification": "insufficient_data",
+            "classification_label": "Insufficient Data",
+            "recent_15min_average": None,
+            "prior_15min_average": None,
+            "recent_15min_active_cell_average": None,
+            "prior_15min_active_cell_average": None,
+            "symmetric_change_percent": None,
+        }
+
+    recent_average = float(np.mean([
+        item["flash_extent_contributions"] for item in recent
+    ]))
+    prior_average = float(np.mean([
+        item["flash_extent_contributions"] for item in prior
+    ]))
+    recent_cell_average = float(np.mean([
+        item["active_grid_cells"] for item in recent
+    ]))
+    prior_cell_average = float(np.mean([
+        item["active_grid_cells"] for item in prior
+    ]))
+
+    denominator = recent_average + prior_average
+    change = (
+        200.0 * (recent_average - prior_average) / denominator
+        if denominator > 0.0
+        else 0.0
+    )
+
+    both_periods_low = (
+        max(recent_average, prior_average) < TREND_LOW_ACTIVITY_CONTRIBUTIONS
+        and max(recent_cell_average, prior_cell_average)
+        < TREND_LOW_ACTIVITY_ACTIVE_CELLS
+    )
+    if both_periods_low:
+        classification = "low_activity"
+        label = "Low Activity"
+    elif change >= TREND_RAPID_INCREASE_THRESHOLD_PERCENT:
+        classification = "rapidly_increasing"
+        label = "Rapidly Increasing"
+    elif change >= TREND_INCREASE_THRESHOLD_PERCENT:
+        classification = "increasing"
+        label = "Increasing"
+    elif change <= TREND_RAPID_DECREASE_THRESHOLD_PERCENT:
+        classification = "rapidly_decreasing"
+        label = "Rapidly Decreasing"
+    elif change <= TREND_DECREASE_THRESHOLD_PERCENT:
+        classification = "decreasing"
+        label = "Decreasing"
+    else:
+        classification = "steady"
+        label = "Steady"
+
+    return {
+        **base_payload,
+        "classification": classification,
+        "classification_label": label,
+        "recent_15min_average": round(recent_average, 1),
+        "prior_15min_average": round(prior_average, 1),
+        "recent_15min_active_cell_average": round(recent_cell_average, 1),
+        "prior_15min_active_cell_average": round(prior_cell_average, 1),
+        "symmetric_change_percent": round(change, 1),
+    }
+
+
+def build_convective_trend_analysis(
+    end_time: datetime,
+    available_times: set[datetime],
+    cache_root: Path,
+    owner: np.ndarray,
+    grid: GridSpec,
+) -> dict:
+    """Build lightweight 60-minute controlled-mosaic trend diagnostics."""
+    slot_times = window_slot_times(end_time, TREND_HISTORY_MINUTES)
+    domain_order = ["conus"] + [item["id"] for item in UFVS_TREND_DOMAINS]
+    domain_series: dict[str, list[dict]] = {
+        domain_id: [] for domain_id in domain_order
+    }
+    domain_slices = {
+        item["id"]: grid_slice_for_bounds(
+            grid,
+            item["west"],
+            item["east"],
+            item["south"],
+            item["north"],
+        )
+        for item in UFVS_TREND_DOMAINS
+    }
+    owner_flat = owner.reshape(-1)
+
+    for slot_end in slot_times:
+        if slot_end not in available_times:
+            for domain_id in domain_order:
+                domain_series[domain_id].append({
+                    "slot_end_utc": iso_z(slot_end),
+                    "available": False,
+                    "flash_extent_contributions": None,
+                    "active_grid_cells": None,
+                    "maximum_cell_value": None,
+                })
+            continue
+
+        slot_totals = {
+            item["id"]: {
+                "flash_extent_contributions": 0,
+                "active_grid_cells": 0,
+                "maximum_cell_value": 0,
+            }
+            for item in UFVS_TREND_DOMAINS
+        }
+
+        for satellite, source_code in (("G18", 18), ("G19", 19)):
+            slot = load_sparse_slot(cache_root, satellite, slot_end)
+            indices = slot["fed_indices"].astype(np.int64, copy=False)
+            values = slot["fed_values"].astype(np.uint32, copy=False)
+            owned = owner_flat[indices] == source_code
+            indices = indices[owned]
+            values = values[owned]
+            if indices.size == 0:
+                continue
+
+            rows = indices // grid.width
+            columns = indices % grid.width
+            for item in UFVS_TREND_DOMAINS:
+                row_start, row_stop, column_start, column_stop = domain_slices[item["id"]]
+                within = (
+                    (rows >= row_start)
+                    & (rows < row_stop)
+                    & (columns >= column_start)
+                    & (columns < column_stop)
+                )
+                if not np.any(within):
+                    continue
+                domain_values = values[within]
+                stats = slot_totals[item["id"]]
+                stats["flash_extent_contributions"] += int(
+                    domain_values.sum(dtype=np.uint64)
+                )
+                stats["active_grid_cells"] += int(domain_values.size)
+                stats["maximum_cell_value"] = max(
+                    stats["maximum_cell_value"],
+                    int(domain_values.max(initial=0)),
+                )
+
+        conus_totals = {
+            "flash_extent_contributions": sum(
+                stats["flash_extent_contributions"]
+                for stats in slot_totals.values()
+            ),
+            "active_grid_cells": sum(
+                stats["active_grid_cells"] for stats in slot_totals.values()
+            ),
+            "maximum_cell_value": max(
+                (stats["maximum_cell_value"] for stats in slot_totals.values()),
+                default=0,
+            ),
+        }
+        all_totals = {"conus": conus_totals, **slot_totals}
+        for domain_id in domain_order:
+            domain_series[domain_id].append({
+                "slot_end_utc": iso_z(slot_end),
+                "available": True,
+                **all_totals[domain_id],
+            })
+
+    domain_definitions = {
+        "conus": {
+            "id": "conus",
+            "label": "CONUS",
+            "bounds": None,
+            "definition": "Union of the seven UFVS rectangular domains",
+        }
+    }
+    for item in UFVS_TREND_DOMAINS:
+        domain_definitions[item["id"]] = {
+            "id": item["id"],
+            "label": item["label"],
+            "bounds": {
+                "west": item["west"],
+                "east": item["east"],
+                "south": item["south"],
+                "north": item["north"],
+            },
+        }
+
+    domains = {}
+    for domain_id in domain_order:
+        domains[domain_id] = {
+            **domain_definitions[domain_id],
+            "series": domain_series[domain_id],
+            **classify_convective_trend(domain_series[domain_id]),
+        }
+
+    regional_ids = [item["id"] for item in UFVS_TREND_DOMAINS]
+    increasing = [
+        domain_id for domain_id in regional_ids
+        if domains[domain_id]["classification"]
+        in {"increasing", "rapidly_increasing"}
+        and domains[domain_id]["symmetric_change_percent"] is not None
+    ]
+    leading_increase_domain_id = max(
+        increasing,
+        key=lambda domain_id: domains[domain_id]["symmetric_change_percent"],
+        default=None,
+    )
+    active = [
+        domain_id for domain_id in regional_ids
+        if domains[domain_id]["recent_15min_average"] is not None
+    ]
+    highest_activity_domain_id = max(
+        active,
+        key=lambda domain_id: domains[domain_id]["recent_15min_average"],
+        default=None,
+    )
+
+    return {
+        "metadata_mode": "glm_convective_trend_v1",
+        "product": "GOES GLM controlled-mosaic convective trend diagnostic",
+        "window_end_utc": iso_z(end_time),
+        "history_minutes": TREND_HISTORY_MINUTES,
+        "slot_minutes": SLOT_MINUTES,
+        "metric": "five-minute controlled-mosaic flash-extent contributions",
+        "metric_units": "flash extent contributions per five minutes",
+        "comparison": (
+            "Mean of the newest three five-minute slots versus the preceding "
+            "three slots using symmetric percent change"
+        ),
+        "classification_thresholds_percent": {
+            "rapidly_increasing": TREND_RAPID_INCREASE_THRESHOLD_PERCENT,
+            "increasing": TREND_INCREASE_THRESHOLD_PERCENT,
+            "decreasing": TREND_DECREASE_THRESHOLD_PERCENT,
+            "rapidly_decreasing": TREND_RAPID_DECREASE_THRESHOLD_PERCENT,
+        },
+        "low_activity_thresholds": {
+            "flash_extent_contributions": TREND_LOW_ACTIVITY_CONTRIBUTIONS,
+            "active_grid_cells": TREND_LOW_ACTIVITY_ACTIVE_CELLS,
+        },
+        "domain_framework": "UFVS seven-domain rectangular framework",
+        "default_domain_id": "conus",
+        "domain_order": domain_order,
+        "leading_increase_domain_id": leading_increase_domain_id,
+        "highest_activity_domain_id": highest_activity_domain_id,
+        "domains": domains,
+        "generated_time_utc": iso_z(utc_now()),
+    }
+
 def create_controlled_mosaic_product(
     window_minutes: int,
     end_time: datetime,
@@ -1481,6 +1867,7 @@ def create_controlled_mosaic_product(
     grid: GridSpec,
     output_dir: Path,
     args: argparse.Namespace,
+    convective_trend: dict | None = None,
 ) -> tuple[dict, np.ndarray]:
     mosaic = build_controlled_mosaic(g18, g19, owner)
     bins, labels, colors, legend_id = legend_for_window(window_minutes)
@@ -1559,6 +1946,8 @@ def create_controlled_mosaic_product(
         "render_bin_counts": bin_counts(mosaic, bins, labels),
         "generated_time_utc": iso_z(utc_now()),
     }
+    if window_minutes == 5 and convective_trend is not None:
+        metadata["convective_trend"] = convective_trend
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata, mosaic
 
@@ -1850,6 +2239,24 @@ def self_test() -> None:
     simple = build_controlled_mosaic(simple_g18, simple_g19, simple_owner)
     assert np.array_equal(simple, np.array([[1, 0, 7, 0]], dtype=np.uint32))
 
+    # Convective-trend classification and UFVS grid-slice regression tests.
+    rising_series = []
+    for offset, value in enumerate([10, 10, 10, 20, 20, 20]):
+        rising_series.append({
+            "slot_end_utc": iso_z(end + timedelta(minutes=offset * 5)),
+            "available": True,
+            "flash_extent_contributions": value,
+            "active_grid_cells": value,
+            "maximum_cell_value": value,
+        })
+    rising = classify_convective_trend(rising_series)
+    assert rising["classification"] == "rapidly_increasing"
+    assert rising["symmetric_change_percent"] == 66.7
+    row_start, row_stop, column_start, column_stop = grid_slice_for_bounds(
+        grid, -120.0, -110.0, 30.0, 35.0,
+    )
+    assert (row_start, row_stop, column_start, column_stop) == (5, 10, 0, 10)
+
     # Renderer dtype regression: the operational failure occurred when the
     # uint8 FED-footprint debug layer was compared directly with 65535.
     with tempfile.TemporaryDirectory(prefix="glm-render-selftest-") as temp_name:
@@ -2003,6 +2410,12 @@ def main() -> int:
                 owner, geometry, grid, output_dir, args,
             )
 
+        trend_started = time.perf_counter()
+        convective_trend = build_convective_trend_analysis(
+            target_end, common_set, cache_root, owner, grid,
+        )
+        stage_timings["convective_trends"] = time.perf_counter() - trend_started
+
         mosaic_metadata: list[dict] = []
         mosaic_arrays: dict[int, np.ndarray] = {}
         for window in WINDOWS_MINUTES:
@@ -2011,6 +2424,7 @@ def main() -> int:
                 arrays[("G18", window)], arrays[("G19", window)],
                 results[("G18", window)], results[("G19", window)],
                 owner, geometry, grid, output_dir, args,
+                convective_trend=convective_trend,
             )
             mosaic_metadata.append(metadata)
             mosaic_arrays[window] = mosaic

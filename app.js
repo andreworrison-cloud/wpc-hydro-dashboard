@@ -4,6 +4,152 @@ const customStyle = document.createElement('style');
 customStyle.innerHTML = `
     .leaflet-popup-pane { z-index: 7000 !important; }
     .leaflet-tooltip-pane { z-index: 6500 !important; }
+
+    .glm-trend-card {
+        margin: 8px 8px 10px;
+        overflow: hidden;
+        border: 1px solid rgba(79, 195, 247, 0.46);
+        border-radius: 9px;
+        background:
+            linear-gradient(145deg, rgba(18, 47, 68, 0.98), rgba(12, 24, 38, 0.98));
+        color: #f5fbff;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        font-family: Arial, sans-serif;
+    }
+    .glm-trend-card__header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(118px, 0.9fr);
+        gap: 8px;
+        align-items: center;
+        padding: 9px 10px 7px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+        background: rgba(22, 61, 84, 0.60);
+    }
+    .glm-trend-card__kicker {
+        margin-bottom: 2px;
+        color: #7fd7ff;
+        font-size: 8px;
+        font-weight: 800;
+        letter-spacing: 0.10em;
+        text-transform: uppercase;
+    }
+    .glm-trend-card__title {
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+    .glm-trend-card__select {
+        width: 100%;
+        min-width: 0;
+        padding: 5px 24px 5px 7px;
+        border: 1px solid rgba(127, 215, 255, 0.42);
+        border-radius: 5px;
+        background: #101f2e;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+    }
+    .glm-trend-card__body { padding: 9px 10px 10px; }
+    .glm-trend-card__state-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 7px;
+    }
+    .glm-trend-card__state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 8px;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 900;
+        line-height: 1;
+        letter-spacing: 0.01em;
+    }
+    .glm-trend-card__change {
+        color: #fff;
+        font-size: 18px;
+        font-weight: 900;
+        line-height: 1;
+        text-align: right;
+    }
+    .glm-trend-card__change-label {
+        display: block;
+        margin-top: 2px;
+        color: #a9bac8;
+        font-size: 8px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .glm-trend-card__sparkline {
+        padding: 4px 5px 1px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.18);
+    }
+    .glm-trend-card__axis {
+        display: flex;
+        justify-content: space-between;
+        margin-top: -1px;
+        color: #91a6b6;
+        font-size: 8px;
+        font-weight: 700;
+    }
+    .glm-trend-card__metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+        margin-top: 8px;
+    }
+    .glm-trend-card__metric {
+        min-width: 0;
+        padding: 6px 5px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.035);
+        text-align: center;
+    }
+    .glm-trend-card__metric-value {
+        overflow: hidden;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 900;
+        line-height: 1.05;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .glm-trend-card__metric-label {
+        margin-top: 3px;
+        color: #9fb1bf;
+        font-size: 7px;
+        font-weight: 800;
+        line-height: 1.1;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+    }
+    .glm-trend-card__regional {
+        margin-top: 7px;
+        padding-top: 7px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        color: #c8d9e5;
+        font-size: 9px;
+        line-height: 1.25;
+    }
+    .glm-trend-card__regional strong { color: #7fd7ff; }
+    .glm-trend-card__footnote {
+        margin-top: 6px;
+        color: #8298a8;
+        font-size: 8px;
+        line-height: 1.25;
+    }
+    @media (max-width: 420px) {
+        .glm-trend-card__header {
+            grid-template-columns: 1fr;
+        }
+    }
 `;
 document.head.appendChild(customStyle);
 
@@ -291,6 +437,37 @@ const GLM_LAYER_CONFIGS = [
 const glmConfigByName = new Map(GLM_LAYER_CONFIGS.map(config => [config.name, config]));
 const glmMetadataByName = new Map();
 const glmReadyNames = new Set();
+const GLM_TREND_SESSION_KEY = 'wpc-glm-trend-domain-v1';
+const GLM_TREND_STATE_PRESENTATION = {
+    rapidly_increasing: {
+        label: 'Rapidly Increasing', symbol: '▲', color: '#ff6b45',
+        background: 'rgba(255, 107, 69, 0.14)'
+    },
+    increasing: {
+        label: 'Increasing', symbol: '↗', color: '#ffbd3f',
+        background: 'rgba(255, 189, 63, 0.13)'
+    },
+    steady: {
+        label: 'Steady', symbol: '→', color: '#4fc3f7',
+        background: 'rgba(79, 195, 247, 0.13)'
+    },
+    decreasing: {
+        label: 'Decreasing', symbol: '↘', color: '#9aa9bb',
+        background: 'rgba(154, 169, 187, 0.12)'
+    },
+    rapidly_decreasing: {
+        label: 'Rapidly Decreasing', symbol: '▼', color: '#7e8cff',
+        background: 'rgba(126, 140, 255, 0.13)'
+    },
+    low_activity: {
+        label: 'Low Activity', symbol: '•', color: '#91a6b6',
+        background: 'rgba(145, 166, 182, 0.10)'
+    },
+    insufficient_data: {
+        label: 'Insufficient Data', symbol: '—', color: '#b0bec5',
+        background: 'rgba(176, 190, 197, 0.10)'
+    }
+};
 
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
@@ -1266,6 +1443,210 @@ function updateGLMTimeBox(preferredName = null) {
     refreshLegendDockSummary();
 }
 
+
+function getGLMTrendPayload() {
+    const metadata = glmMetadataByName.get(GLM_MOSAIC_5MIN_LAYER_NAME);
+    const trend = metadata?.convective_trend;
+    if (!trend || trend.metadata_mode !== 'glm_convective_trend_v1') return null;
+    return trend;
+}
+
+function readGLMTrendDomain(payload) {
+    let stored = '';
+    try {
+        stored = window.sessionStorage.getItem(GLM_TREND_SESSION_KEY) || '';
+    } catch (error) {
+        stored = '';
+    }
+    if (stored && payload?.domains?.[stored]) return stored;
+    const fallback = payload?.default_domain_id || 'conus';
+    return payload?.domains?.[fallback] ? fallback : Object.keys(payload?.domains || {})[0];
+}
+
+function writeGLMTrendDomain(domainId) {
+    try {
+        window.sessionStorage.setItem(GLM_TREND_SESSION_KEY, domainId);
+    } catch (error) {
+        // Session storage is optional; the selected domain still works in-page.
+    }
+}
+
+function formatGLMTrendInteger(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number).toLocaleString() : '—';
+}
+
+function formatGLMTrendPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '—';
+    const rounded = Math.round(number);
+    return `${rounded > 0 ? '+' : ''}${rounded}%`;
+}
+
+function buildGLMTrendSparkline(series, color) {
+    const width = 280;
+    const height = 68;
+    const paddingX = 4;
+    const paddingY = 7;
+    const values = (series || []).map(item => {
+        const value = Number(item?.flash_extent_contributions);
+        return item?.available && Number.isFinite(value) ? value : null;
+    });
+    const finite = values.filter(value => value !== null);
+    if (!finite.length) {
+        return '<div style="padding:22px 0;color:#91a6b6;font-size:9px;text-align:center;">Trend history unavailable</div>';
+    }
+
+    const minimum = Math.min(...finite);
+    const maximum = Math.max(...finite);
+    const span = Math.max(1, maximum - minimum);
+    const xFor = index => paddingX + (
+        (width - (2 * paddingX)) * index / Math.max(1, values.length - 1)
+    );
+    const yFor = value => paddingY + (
+        (height - (2 * paddingY)) * (1 - ((value - minimum) / span))
+    );
+
+    const segments = [];
+    let current = [];
+    values.forEach((value, index) => {
+        if (value === null) {
+            if (current.length) segments.push(current);
+            current = [];
+            return;
+        }
+        current.push(`${xFor(index).toFixed(1)},${yFor(value).toFixed(1)}`);
+    });
+    if (current.length) segments.push(current);
+
+    const lines = segments.map(points => (
+        `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" ` +
+        'stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
+    )).join('');
+    const points = values.map((value, index) => value === null ? '' : (
+        `<circle cx="${xFor(index).toFixed(1)}" cy="${yFor(value).toFixed(1)}" ` +
+        `r="${index === values.length - 1 ? 3.1 : 1.7}" fill="${color}" />`
+    )).join('');
+
+    return `
+        <svg viewBox="0 0 ${width} ${height}" width="100%" height="68" role="img" aria-label="Sixty-minute GLM convective trend history">
+            <line x1="4" y1="34" x2="276" y2="34" stroke="rgba(255,255,255,0.09)" stroke-width="1" />
+            ${lines}${points}
+        </svg>
+    `;
+}
+
+function updateGLMTrendCard() {
+    const card = document.getElementById('glm-trend-card');
+    if (!card) return;
+    const hasActiveGLM = GLM_LAYER_CONFIGS.some(config => map.hasLayer(config.layer));
+    if (!hasActiveGLM) {
+        card.style.display = 'none';
+        card.innerHTML = '';
+        refreshLegendDockSummary();
+        return;
+    }
+
+    card.style.display = 'block';
+    const payload = getGLMTrendPayload();
+    if (!payload) {
+        card.innerHTML = `
+            <div class="glm-trend-card__header">
+                <div>
+                    <div class="glm-trend-card__kicker">Real-Time Diagnostic</div>
+                    <div class="glm-trend-card__title">GLM Convective Trend</div>
+                </div>
+            </div>
+            <div class="glm-trend-card__body" style="color:#ffdf7e;font-size:10px;line-height:1.35;">
+                Trend metadata will populate after the next GLM generator update.
+            </div>
+        `;
+        refreshLegendDockSummary();
+        return;
+    }
+
+    const selectedId = readGLMTrendDomain(payload);
+    const selected = payload.domains?.[selectedId];
+    if (!selected) {
+        card.innerHTML = '<div class="glm-trend-card__body">GLM trend domain unavailable.</div>';
+        refreshLegendDockSummary();
+        return;
+    }
+
+    const presentation = GLM_TREND_STATE_PRESENTATION[selected.classification]
+        || GLM_TREND_STATE_PRESENTATION.insufficient_data;
+    const options = (payload.domain_order || Object.keys(payload.domains)).map(domainId => {
+        const domain = payload.domains[domainId];
+        return `<option value="${escapeGLMLegendText(domainId)}"${domainId === selectedId ? ' selected' : ''}>${escapeGLMLegendText(domain.label)}</option>`;
+    }).join('');
+
+    const leaderId = payload.leading_increase_domain_id;
+    const leader = leaderId ? payload.domains?.[leaderId] : null;
+    const highestId = payload.highest_activity_domain_id;
+    const highest = highestId ? payload.domains?.[highestId] : null;
+    let regionalLine = '<strong>Regional signal:</strong> No UFVS domain is currently classified as increasing.';
+    if (leader) {
+        regionalLine = `<strong>Strongest acceleration:</strong> ${escapeGLMLegendText(leader.label)} (${formatGLMTrendPercent(leader.symmetric_change_percent)}).`;
+    } else if (highest) {
+        regionalLine = `<strong>Highest recent activity:</strong> ${escapeGLMLegendText(highest.label)}.`;
+    }
+
+    card.innerHTML = `
+        <div class="glm-trend-card__header">
+            <div>
+                <div class="glm-trend-card__kicker">Real-Time Diagnostic</div>
+                <div class="glm-trend-card__title">GLM Convective Trend</div>
+            </div>
+            <select id="glm-trend-domain-select" class="glm-trend-card__select" aria-label="Select GLM trend domain">
+                ${options}
+            </select>
+        </div>
+        <div class="glm-trend-card__body">
+            <div class="glm-trend-card__state-row">
+                <span class="glm-trend-card__state" style="color:${presentation.color};background:${presentation.background};">
+                    <span aria-hidden="true">${presentation.symbol}</span>
+                    ${escapeGLMLegendText(presentation.label)}
+                </span>
+                <div class="glm-trend-card__change">
+                    ${formatGLMTrendPercent(selected.symmetric_change_percent)}
+                    <span class="glm-trend-card__change-label">15-min change</span>
+                </div>
+            </div>
+            <div class="glm-trend-card__sparkline">
+                ${buildGLMTrendSparkline(selected.series, presentation.color)}
+                <div class="glm-trend-card__axis"><span>−60 min</span><span>Latest 5 min</span></div>
+            </div>
+            <div class="glm-trend-card__metrics">
+                <div class="glm-trend-card__metric">
+                    <div class="glm-trend-card__metric-value">${formatGLMTrendInteger(selected.latest_value)}</div>
+                    <div class="glm-trend-card__metric-label">Current 5-min contributions</div>
+                </div>
+                <div class="glm-trend-card__metric">
+                    <div class="glm-trend-card__metric-value">${formatGLMTrendInteger(selected.latest_active_grid_cells)}</div>
+                    <div class="glm-trend-card__metric-label">Active grid cells</div>
+                </div>
+                <div class="glm-trend-card__metric">
+                    <div class="glm-trend-card__metric-value">${formatGLMTrendInteger(selected.peak_value_last_60min)}</div>
+                    <div class="glm-trend-card__metric-label">60-min peak</div>
+                </div>
+            </div>
+            <div class="glm-trend-card__regional">${regionalLine}</div>
+            <div class="glm-trend-card__footnote">
+                Controlled-mosaic five-minute flash-extent contributions. Classification compares the newest 15-minute mean with the preceding 15-minute mean. Valid through ${formatMetadataUTC(payload.window_end_utc)}.
+            </div>
+        </div>
+    `;
+
+    const selector = card.querySelector('#glm-trend-domain-select');
+    if (selector) {
+        selector.addEventListener('change', event => {
+            writeGLMTrendDomain(event.target.value);
+            updateGLMTrendCard();
+        });
+    }
+    refreshLegendDockSummary();
+}
+
 async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS) {
     const cacheToken = Date.now();
     const results = await Promise.allSettled(configs.map(async config => {
@@ -1293,6 +1674,7 @@ async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS) {
         GLM_LAYER_CONFIGS.filter(config => !config.debug).forEach(config => config.layer.setOpacity(0));
     }
     updateGLMTimeBox();
+    updateGLMTrendCard();
     if (typeof updateLegends === 'function') updateLegends();
 }
 
@@ -1573,6 +1955,10 @@ function refreshLegendDockSummary() {
     const visibleTimeCount = Array.from(
         dock.querySelectorAll('.legend-dock-time-box')
     ).filter(box => window.getComputedStyle(box).display !== 'none').length;
+    const trendCard = document.getElementById('glm-trend-card');
+    const visibleTrendCount = trendCard && window.getComputedStyle(trendCard).display !== 'none'
+        ? 1
+        : 0;
 
     const count = document.getElementById('legend-dock-count');
     if (count) {
@@ -1585,7 +1971,7 @@ function refreshLegendDockSummary() {
 
     dock.classList.toggle(
         'has-content',
-        legendCount > 0 || visibleTimeCount > 0
+        legendCount > 0 || visibleTimeCount > 0 || visibleTrendCount > 0
     );
 }
 
@@ -1620,6 +2006,7 @@ legendDockControl.onAdd = function () {
         </button>
         <div id="legend-dock-body" class="legend-dock-body">
             <div id="legend-time-stack" class="legend-time-stack"></div>
+            <div id="glm-trend-card" class="glm-trend-card" style="display:none;" aria-live="polite"></div>
             <div id="legend-container" class="legend-container"></div>
         </div>
     `;
@@ -1652,6 +2039,7 @@ legendDockControl.onAdd = function () {
 };
 legendDockControl.addTo(map);
 initializeLegendDockState();
+updateGLMTrendCard();
 
 if (typeof legendDockCompactMedia.addEventListener === 'function') {
     legendDockCompactMedia.addEventListener('change', () => {
@@ -2248,6 +2636,7 @@ map.on('overlayadd', function(eventLayer) {
             );
             glmTimeBox.style.display = 'block';
         }
+        updateGLMTrendCard();
         fetchGLMMetadata([glmConfig]);
     }
 
@@ -2402,7 +2791,10 @@ map.on('overlayremove', function(eventLayer) {
     }
 
     if (glmConfigByName.has(eventLayer.name)) {
-        window.setTimeout(() => updateGLMTimeBox(), 0);
+        window.setTimeout(() => {
+            updateGLMTimeBox();
+            updateGLMTrendCard();
+        }, 0);
     }
 
     if (eventLayer.name === 'NWM Soil Saturation (0-40cm)') {
