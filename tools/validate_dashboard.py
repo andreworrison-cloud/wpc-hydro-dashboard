@@ -180,6 +180,13 @@ required_glm_fragments = [
     "grid-template-columns: repeat(2, minmax(0, 1fr))",
     "enforceExclusiveGLMSelection",
     "exclusiveGroup: 'glm-primary'",
+    "glm_convective_trend_v1",
+    "glm-trend-card",
+    "GLM_TREND_SESSION_KEY",
+    "buildGLMTrendSparkline",
+    "updateGLMTrendCard",
+    "Rapidly Increasing",
+    "Strongest acceleration",
 ]
 for fragment in required_glm_fragments:
     if fragment not in app:
@@ -197,6 +204,13 @@ required_glm_generator_fragments = [
     '"bins": list(bins)',
     '"labels": list(labels)',
     '"rgba": [list(color) for color in colors]',
+    "UFVS_TREND_DOMAINS = [",
+    "TREND_HISTORY_MINUTES = 60",
+    "TREND_RECENT_SLOT_COUNT = 3",
+    "build_convective_trend_analysis",
+    "classify_convective_trend",
+    '"metadata_mode": "glm_convective_trend_v1"',
+    'metadata["convective_trend"] = convective_trend',
 ]
 for fragment in required_glm_generator_fragments:
     if fragment not in glm_generator:
@@ -266,5 +280,6 @@ if errors:
 print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
-    "antecedent order, MRMS/NLDAS/GLM mappings, and required labels preserved."
+    "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
+    "and the GLM trend diagnostic preserved."
 )
