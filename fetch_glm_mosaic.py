@@ -208,6 +208,27 @@ TREND_INCREASE_THRESHOLD_PERCENT = 20.0
 TREND_RAPID_INCREASE_THRESHOLD_PERCENT = 60.0
 TREND_DECREASE_THRESHOLD_PERCENT = -20.0
 TREND_RAPID_DECREASE_THRESHOLD_PERCENT = -60.0
+TREND_MAP_BINS = [1, 2, 3, 4, 5]
+TREND_MAP_LABELS = [
+    "Rapidly Decreasing",
+    "Decreasing",
+    "Steady",
+    "Increasing",
+    "Rapidly Increasing",
+]
+TREND_MAP_RGBA = [
+    (56, 118, 255, 224),
+    (76, 234, 255, 220),
+    (255, 232, 120, 214),
+    (255, 170, 64, 224),
+    (255, 72, 72, 232),
+]
+TREND_MAP_DISPLAY_LABEL = "GOES GLM Controlled Mosaic — Convective Trend (15 min)"
+TREND_MAP_UNITS = "categorical 15-minute convective trend class"
+TREND_MAP_LOW_SIGNAL_THRESHOLD = 4.0
+TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE = 2.0
+TREND_MAP_SMOOTHING_PASSES = 1
+TREND_MAP_MIN_NEIGHBOR_SUPPORT = 3
 
 
 @dataclass(frozen=True)
@@ -1855,6 +1876,184 @@ def build_convective_trend_analysis(
         "generated_time_utc": iso_z(utc_now()),
     }
 
+def _controlled_slot_mosaic(
+    slot_end: datetime,
+    cache_root: Path,
+    available_times: set[datetime],
+    owner: np.ndarray,
+    grid: GridSpec,
+) -> np.ndarray | None:
+    if slot_end not in available_times:
+        return None
+    per_satellite: dict[str, np.ndarray] = {}
+    for satellite in ("G18", "G19"):
+        slot = load_sparse_slot(cache_root, satellite, slot_end)
+        per_satellite[satellite] = reconstruct_sparse(
+            slot["fed_indices"],
+            slot["fed_values"].astype(np.uint32, copy=False),
+            grid,
+            dtype=np.uint32,
+        )
+    return build_controlled_mosaic(per_satellite["G18"], per_satellite["G19"], owner)
+
+
+def _majority_filter_classes(array: np.ndarray, class_codes: Sequence[int]) -> np.ndarray:
+    source = np.asarray(array, dtype=np.uint8)
+    padded = np.pad(source, 1, mode="constant", constant_values=0)
+    counts = np.zeros((len(class_codes),) + source.shape, dtype=np.uint8)
+    for index, code in enumerate(class_codes):
+        mask = padded == code
+        total = np.zeros(source.shape, dtype=np.uint8)
+        for dy in range(3):
+            for dx in range(3):
+                total += mask[dy:dy + source.shape[0], dx:dx + source.shape[1]].astype(np.uint8)
+        counts[index] = total
+
+    best_index = counts.argmax(axis=0)
+    best_count = counts.max(axis=0)
+    result = source.copy()
+    for index, code in enumerate(class_codes):
+        use = (best_index == index) & (best_count >= 2)
+        result[use] = np.uint8(code)
+    return result
+
+
+def _suppress_isolated_classes(array: np.ndarray, minimum_support: int) -> np.ndarray:
+    source = np.asarray(array, dtype=np.uint8)
+    padded = np.pad(source, 1, mode="constant", constant_values=0)
+    result = source.copy()
+    nonzero = np.unique(source[source > 0]).tolist()
+    for code in nonzero:
+        mask = padded == code
+        support = np.zeros(source.shape, dtype=np.uint8)
+        for dy in range(3):
+            for dx in range(3):
+                support += mask[dy:dy + source.shape[0], dx:dx + source.shape[1]].astype(np.uint8)
+        result[(source == code) & (support < minimum_support)] = 0
+    return result
+
+
+def build_convective_trend_map_product(
+    end_time: datetime,
+    available_times: set[datetime],
+    cache_root: Path,
+    owner: np.ndarray,
+    grid: GridSpec,
+    output_dir: Path,
+    args: argparse.Namespace,
+    convective_trend: dict,
+) -> dict:
+    slot_times = window_slot_times(end_time, TREND_HISTORY_MINUTES)
+    recent_times = slot_times[-TREND_RECENT_SLOT_COUNT:]
+    prior_times = slot_times[-(TREND_RECENT_SLOT_COUNT + TREND_PRIOR_SLOT_COUNT):-TREND_RECENT_SLOT_COUNT]
+
+    recent_sum = np.zeros((grid.height, grid.width), dtype=np.float32)
+    prior_sum = np.zeros((grid.height, grid.width), dtype=np.float32)
+    recent_available = 0
+    prior_available = 0
+
+    for slot_end in prior_times:
+        mosaic = _controlled_slot_mosaic(slot_end, cache_root, available_times, owner, grid)
+        if mosaic is None:
+            continue
+        prior_sum += mosaic.astype(np.float32, copy=False)
+        prior_available += 1
+    for slot_end in recent_times:
+        mosaic = _controlled_slot_mosaic(slot_end, cache_root, available_times, owner, grid)
+        if mosaic is None:
+            continue
+        recent_sum += mosaic.astype(np.float32, copy=False)
+        recent_available += 1
+
+    classified = np.zeros((grid.height, grid.width), dtype=np.uint8)
+    recent_avg = recent_sum / max(1, recent_available)
+    prior_avg = prior_sum / max(1, prior_available)
+    denom = recent_avg + prior_avg
+    change = np.zeros_like(recent_avg, dtype=np.float32)
+    nonzero = denom > 0.0
+    change[nonzero] = 200.0 * (recent_avg[nonzero] - prior_avg[nonzero]) / denom[nonzero]
+
+    if recent_available >= 2 and prior_available >= 2:
+        significant = (
+            ((recent_sum + prior_sum) >= TREND_MAP_LOW_SIGNAL_THRESHOLD)
+            | (np.maximum(recent_avg, prior_avg) >= TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE)
+        )
+        classified[significant & (change <= TREND_RAPID_DECREASE_THRESHOLD_PERCENT)] = 1
+        classified[significant & (change > TREND_RAPID_DECREASE_THRESHOLD_PERCENT) & (change <= TREND_DECREASE_THRESHOLD_PERCENT)] = 2
+        classified[significant & (change > TREND_DECREASE_THRESHOLD_PERCENT) & (change < TREND_INCREASE_THRESHOLD_PERCENT)] = 3
+        classified[significant & (change >= TREND_INCREASE_THRESHOLD_PERCENT) & (change < TREND_RAPID_INCREASE_THRESHOLD_PERCENT)] = 4
+        classified[significant & (change >= TREND_RAPID_INCREASE_THRESHOLD_PERCENT)] = 5
+        for _ in range(max(0, int(TREND_MAP_SMOOTHING_PASSES))):
+            classified = _majority_filter_classes(classified, TREND_MAP_BINS)
+        classified = _suppress_isolated_classes(classified, TREND_MAP_MIN_NEIGHBOR_SUPPORT)
+
+    temp_png = output_dir / 'glm_convective_trend_15min_embedded.png'
+    bounds, shape, transform = render_web_mercator(
+        classified,
+        grid,
+        temp_png,
+        args.maximum_render_dimension,
+        TREND_MAP_BINS,
+        TREND_MAP_RGBA,
+        display_radius_pixels=1,
+    )
+    embedded_png_base64 = base64.b64encode(temp_png.read_bytes()).decode('ascii')
+
+    category_counts = bin_counts(classified, TREND_MAP_BINS, TREND_MAP_LABELS)
+    metadata = {
+        'metadata_mode': 'glm_dashboard_v1',
+        'product_role': 'convective_trend_map',
+        'window_minutes': 15,
+        'product_kind': '15-minute convective trend classification',
+        'display_label': TREND_MAP_DISPLAY_LABEL,
+        'window_start_utc': iso_z(end_time - timedelta(minutes=15)),
+        'window_end_utc': iso_z(end_time),
+        'maximum_value': int(classified.max(initial=0)),
+        'nonzero_grid_cells': int(np.count_nonzero(classified)),
+        'flash_cell_contributions': int(np.count_nonzero(classified)),
+        'source_product': PRODUCT_PREFIX,
+        'units': TREND_MAP_UNITS,
+        'legend_id': 'convective-trend-map',
+        'default_opacity': 0.96,
+        'grid': compact_grid_metadata(grid, bounds, shape, transform),
+        'rendering': {
+            'resampling': 'nearest',
+            'display_footprint_radius_pixels': 1,
+            'display_only_enhancement': True,
+            'bins': list(TREND_MAP_BINS),
+            'labels': list(TREND_MAP_LABELS),
+            'rgba': [list(color) for color in TREND_MAP_RGBA],
+        },
+        'embedded_png_base64': embedded_png_base64,
+        'comparison': 'Newest 15-minute mean versus previous 15-minute mean using symmetric percent change',
+        'classification_thresholds_percent': {
+            'rapidly_increasing': TREND_RAPID_INCREASE_THRESHOLD_PERCENT,
+            'increasing': TREND_INCREASE_THRESHOLD_PERCENT,
+            'decreasing': TREND_DECREASE_THRESHOLD_PERCENT,
+            'rapidly_decreasing': TREND_RAPID_DECREASE_THRESHOLD_PERCENT,
+        },
+        'low_signal_thresholds': {
+            'combined_contributions': TREND_MAP_LOW_SIGNAL_THRESHOLD,
+            'recent_or_prior_mean_value': TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE,
+        },
+        'smoothing': {
+            'majority_filter_neighborhood': '3x3',
+            'majority_filter_passes': int(TREND_MAP_SMOOTHING_PASSES),
+            'minimum_neighbor_support': int(TREND_MAP_MIN_NEIGHBOR_SUPPORT),
+        },
+        'input_slot_summary': {
+            'recent_required_slots': TREND_RECENT_SLOT_COUNT,
+            'recent_available_slots': recent_available,
+            'prior_required_slots': TREND_PRIOR_SLOT_COUNT,
+            'prior_available_slots': prior_available,
+        },
+        'classification_counts': category_counts,
+        'generated_time_utc': iso_z(utc_now()),
+        'convective_trend': convective_trend,
+    }
+    temp_png.unlink(missing_ok=True)
+    return metadata
+
 def create_controlled_mosaic_product(
     window_minutes: int,
     end_time: datetime,
@@ -2428,6 +2627,13 @@ def main() -> int:
             )
             mosaic_metadata.append(metadata)
             mosaic_arrays[window] = mosaic
+        trend_map_metadata = build_convective_trend_map_product(
+            target_end, common_set, cache_root, owner, grid, output_dir, args,
+            convective_trend,
+        )
+        (output_dir / 'glm_convective_trend_15min_metadata.json').write_text(
+            json.dumps(trend_map_metadata, indent=2), encoding='utf-8'
+        )
         if np.any(mosaic_arrays[60] < mosaic_arrays[30]) or np.any(mosaic_arrays[30] < mosaic_arrays[5]):
             raise RuntimeError("Rolling mosaic monotonicity validation failed")
         stage_timings["render_primary_mosaics"] = time.perf_counter() - stage_started
@@ -2508,6 +2714,7 @@ def main() -> int:
                 "artifact_debug_html": debug_html.name if debug_html else None,
             },
             "mosaic_products": mosaic_metadata,
+            "convective_trend_map": {"metadata_json": "glm_convective_trend_15min_metadata.json", "display_label": TREND_MAP_DISPLAY_LABEL, "window_end_utc": iso_z(target_end)},
             "satellite_reference_products": [asdict(result) for result in ordered_results] if args.publish_debug_layers else [],
             "source_ownership": ownership_metadata,
             "publish_debug_layers": args.publish_debug_layers,

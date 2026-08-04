@@ -380,6 +380,8 @@ let mrmsFfd24hMetadata = null;
 const GLM_MOSAIC_5MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Latest 5-Minute FED';
 const GLM_MOSAIC_30MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Rolling 30-Minute Accumulation';
 const GLM_MOSAIC_60MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Rolling 60-Minute Accumulation';
+const GLM_TREND_MAP_15MIN_LAYER_NAME = 'GOES GLM Controlled Mosaic — Convective Trend (15 min)';
+const GLM_TRANSPARENT_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const glmPlaceholderBounds = [[20.0, -130.0], [55.0, -60.0]];
 
 function createGLMImageOverlay(imageUrl, zIndex = 13) {
@@ -393,6 +395,7 @@ function createGLMImageOverlay(imageUrl, zIndex = 13) {
 const glmMosaic5minLayer = createGLMImageOverlay('static/glm_conus_mosaic_5min.png');
 const glmMosaic30minLayer = createGLMImageOverlay('static/glm_conus_mosaic_30min.png');
 const glmMosaic60minLayer = createGLMImageOverlay('static/glm_conus_mosaic_60min.png');
+const glmTrendMap15minLayer = createGLMImageOverlay(GLM_TRANSPARENT_PLACEHOLDER);
 
 
 const GLM_LAYER_CONFIGS = [
@@ -431,6 +434,19 @@ const GLM_LAYER_CONFIGS = [
         legendId: 'rolling',
         defaultOpacity: 1.0,
         debug: false
+    },
+    {
+        id: 'glm-convective-trend-15min',
+        name: GLM_TREND_MAP_15MIN_LAYER_NAME,
+        layer: glmTrendMap15minLayer,
+        imageUrl: GLM_TRANSPARENT_PLACEHOLDER,
+        metadataUrl: 'static/glm_convective_trend_15min_metadata.json',
+        productRole: 'convective_trend_map',
+        windowMinutes: 15,
+        legendId: 'trend-map',
+        defaultOpacity: 0.96,
+        debug: false,
+        embeddedImageField: 'embedded_png_base64'
     }
 ];
 
@@ -1349,6 +1365,12 @@ function glmCompletenessText(metadata) {
                 (Number.isFinite(fraction) ? ` (${Math.round(fraction * 100)}%)` : '');
         }).join(' &nbsp;|&nbsp; ');
     }
+    if (metadata.product_role === 'convective_trend_map') {
+        const summary = metadata.input_slot_summary || {};
+        const recent = `${Number(summary.recent_available_slots) || 0}/${Number(summary.recent_required_slots) || 0}`;
+        const prior = `${Number(summary.prior_available_slots) || 0}/${Number(summary.prior_required_slots) || 0}`;
+        return `Recent slots: ${recent} &nbsp;|&nbsp; Prior slots: ${prior}`;
+    }
     const processed = Number(metadata.processed_files);
     const expected = Number(metadata.expected_files);
     const fraction = Number(metadata.completeness_fraction);
@@ -1417,10 +1439,18 @@ function applyGLMRasterMetadata(config, metadata) {
         ? Number(config.layer.options.opacity ?? config.defaultOpacity)
         : Number(metadata.default_opacity ?? config.defaultOpacity);
     config.layer.setBounds(bounds);
-    config.layer.setUrl(cacheBustedRasterUrl(config.imageUrl, {
+    let rasterUrl = cacheBustedRasterUrl(config.imageUrl, {
         generated_time_utc: metadata.generated_time_utc,
         valid_time_iso: metadata.window_end_utc || metadata.generated_time_utc
-    }));
+    });
+    if (config.embeddedImageField) {
+        const encoded = metadata?.[config.embeddedImageField];
+        if (typeof encoded !== 'string' || encoded.length < 100) {
+            throw new Error(`${config.name}: embedded trend PNG missing from metadata`);
+        }
+        rasterUrl = `data:image/png;base64,${encoded}`;
+    }
+    config.layer.setUrl(rasterUrl);
     config.layer.setOpacity(Number.isFinite(currentOpacity) ? currentOpacity : config.defaultOpacity);
     glmMetadataByName.set(config.name, metadata);
     glmReadyNames.add(config.name);
@@ -1445,10 +1475,11 @@ function updateGLMTimeBox(preferredName = null) {
 
 
 function getGLMTrendPayload() {
-    const metadata = glmMetadataByName.get(GLM_MOSAIC_5MIN_LAYER_NAME);
-    const trend = metadata?.convective_trend;
-    if (!trend || trend.metadata_mode !== 'glm_convective_trend_v1') return null;
-    return trend;
+    for (const config of GLM_LAYER_CONFIGS) {
+        const trend = glmMetadataByName.get(config.name)?.convective_trend;
+        if (trend && trend.metadata_mode === 'glm_convective_trend_v1') return trend;
+    }
+    return null;
 }
 
 function readGLMTrendDomain(payload) {
@@ -2395,6 +2426,14 @@ const GLM_FALLBACK_RENDERING = {
             [255, 255, 255, 255]
         ],
         units: 'flash extent contributions per 0.02-degree grid cell'
+    },
+    trendMap: {
+        labels: ['Rapidly Decreasing', 'Decreasing', 'Steady', 'Increasing', 'Rapidly Increasing'],
+        rgba: [
+            [56, 118, 255, 224], [76, 234, 255, 220], [255, 232, 120, 214],
+            [255, 170, 64, 224], [255, 72, 72, 232]
+        ],
+        units: 'categorical 15-minute convective trend class'
     }
 };
 
@@ -2472,9 +2511,9 @@ function buildGLMLegendHTML(title, labels, rgba, subtitle) {
 }
 
 function glmLegendHTMLFromMetadata(config, metadata) {
-    const fallback = config.windowMinutes === 5
-        ? GLM_FALLBACK_RENDERING[5]
-        : GLM_FALLBACK_RENDERING.rolling;
+    const fallback = config.legendId === 'trend-map'
+        ? GLM_FALLBACK_RENDERING.trendMap
+        : (config.windowMinutes === 5 ? GLM_FALLBACK_RENDERING[5] : GLM_FALLBACK_RENDERING.rolling);
 
     let rendering = fallback;
     if (metadata) {
@@ -2877,7 +2916,8 @@ const dashboardSections = [
             {id: 'goes-west-ir', label: 'GOES-West: Clean IR (Ch. 13)', layer: goesWestIR, kind: 'raster'},
             {id: 'glm-mosaic-5min', label: GLM_MOSAIC_5MIN_LAYER_NAME, layer: glmMosaic5minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
             {id: 'glm-mosaic-30min', label: GLM_MOSAIC_30MIN_LAYER_NAME, layer: glmMosaic30minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
-            {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection}
+            {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
+            {id: 'glm-convective-trend-15min', label: GLM_TREND_MAP_15MIN_LAYER_NAME, layer: glmTrendMap15minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection}
         ]
     },
     {
