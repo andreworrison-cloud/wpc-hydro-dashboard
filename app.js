@@ -1663,7 +1663,7 @@ function updateGLMTrendCard() {
             </div>
             <div class="glm-trend-card__regional">${regionalLine}</div>
             <div class="glm-trend-card__footnote">
-                Controlled-mosaic five-minute flash-extent contributions. Classification compares the newest 15-minute mean with the preceding 15-minute mean. Valid through ${formatMetadataUTC(payload.window_end_utc)}.
+                Controlled-mosaic five-minute flash-extent contributions. The map layer shows local gridcell trend classifications, while this card summarizes the selected domain. Classification compares the newest 15-minute mean with the preceding 15-minute mean. Valid through ${formatMetadataUTC(payload.window_end_utc)}.
             </div>
         </div>
     `;
