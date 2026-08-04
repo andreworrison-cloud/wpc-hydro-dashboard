@@ -192,8 +192,22 @@ jobs:
           if trend.get('window_end_utc') != next(iter(endings)):
               raise SystemExit('GLM trend-map and primary metadata ending times differ')
           rendering = trend.get('rendering') or {}
-          if len(rendering.get('labels') or []) != 5 or len(rendering.get('rgba') or []) != 5:
-              raise SystemExit('GLM trend-map rendering contract failed')
+          expected_trend_labels = [
+              'Past-Hour Lightning Context',
+              'Rapidly Decreasing',
+              'Decreasing',
+              'Steady',
+              'Increasing',
+              'Rapidly Increasing',
+          ]
+          labels = rendering.get('labels') or []
+          rgba = rendering.get('rgba') or []
+          bins = rendering.get('bins') or []
+          if labels != expected_trend_labels or len(rgba) != 6 or len(bins) != 6:
+              raise SystemExit(
+                  'GLM trend-map rendering contract failed: expected six categories '
+                  'including Past-Hour Lightning Context'
+              )
           import base64, io
           encoded = trend.get('embedded_png_base64') or ''
           try:
