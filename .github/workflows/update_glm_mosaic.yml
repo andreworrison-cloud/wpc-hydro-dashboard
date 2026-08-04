@@ -49,7 +49,8 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
-      GLM_CACHE_DIR: .glm_mosaic_cache
+      # Run-local only: rebuild the synchronized 60-minute window each execution.
+      GLM_CACHE_DIR: ${{ runner.temp }}/glm_mosaic_cache
       GLM_OUTPUT_DIR: glm_operational_staging
 
     steps:
@@ -62,37 +63,26 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-          cache: pip
-
-      - name: Restore rolling GLM five-minute cache
-        id: restore-glm-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: ${{ env.GLM_CACHE_DIR }}
-          key: ${{ runner.os }}-glm-mosaic-operational-v4-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            ${{ runner.os }}-glm-mosaic-operational-v4-
-            ${{ runner.os }}-glm-mosaic-incremental-v3-
-            ${{ runner.os }}-glm-mosaic-incremental-v2-
-
-      - name: Report cache restore
-        shell: bash
-        run: |
-          echo "Exact cache hit: ${{ steps.restore-glm-cache.outputs.cache-hit }}"
-          du -sh "$GLM_CACHE_DIR" 2>/dev/null || echo "No prior GLM cache was restored."
-          find "$GLM_CACHE_DIR" -type f 2>/dev/null | wc -l | xargs echo "Restored cache files:"
 
       - name: Install Python dependencies
+        shell: bash
         run: |
-          python -m pip install --upgrade --quiet pip
-          pip install --quiet --prefer-binary \
+          set -euo pipefail
+          start=$(date +%s)
+          python -m pip install \
+            --quiet \
+            --no-input \
+            --no-compile \
+            --only-binary=:all: \
             boto3 \
-            botocore \
             'numpy<3' \
             xarray \
             netCDF4 \
             rasterio \
             Pillow
+          elapsed=$(( $(date +%s) - start ))
+          printf 'dependency_install_seconds=%s\n' "$elapsed" >> "$RUNNER_TEMP/glm_workflow_timings.env"
+          echo "Dependency installation completed in ${elapsed} seconds."
 
       - name: Validate generator syntax
         run: python -m py_compile fetch_glm_mosaic.py
@@ -120,13 +110,6 @@ jobs:
             --cache-dir "$GLM_CACHE_DIR" \
             --output-dir "$GLM_OUTPUT_DIR" \
             "$debug_flag"
-
-      - name: Save rolling GLM five-minute cache
-        if: ${{ always() && hashFiles('.glm_mosaic_cache/**/*') != '' }}
-        uses: actions/cache/save@v5
-        with:
-          path: ${{ env.GLM_CACHE_DIR }}
-          key: ${{ runner.os }}-glm-mosaic-operational-v4-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Validate dashboard publication package
         env:
@@ -199,7 +182,7 @@ jobs:
               raise SystemExit('Manifest execution mode does not match workflow input')
           cache = manifest.get('incremental_cache') or {}
           if int(cache.get('retained_slot_count',0)) < 1:
-              raise SystemExit('Incremental cache did not retain any synchronized slot')
+              raise SystemExit('Run-local slot cache did not retain any synchronized slot')
           if manifest.get('window_end_utc') != next(iter(endings)):
               raise SystemExit('Manifest and primary metadata ending times differ')
           print(
@@ -207,26 +190,6 @@ jobs:
               f"cache hits={cache.get('cache_hits_this_run')}, built={cache.get('new_slots_built_this_run')}."
           )
           PY
-
-      - name: Write workflow summary
-        if: ${{ always() && hashFiles('glm_operational_staging/glm_mosaic_manifest.json') != '' }}
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          m = json.loads(Path('glm_operational_staging/glm_mosaic_manifest.json').read_text())
-          cache = m.get('incremental_cache') or {}
-          timing = m.get('timing_seconds') or {}
-          with open(Path.home() / 'workflow-summary.md', 'w') as f:
-              f.write('## GOES GLM Operational Run\n\n')
-              f.write(f"- Valid through: `{m.get('window_end_utc')}`\n")
-              f.write(f"- Mode: `{m.get('execution_mode')}`\n")
-              f.write(f"- Cache hits: **{cache.get('cache_hits_this_run')}**\n")
-              f.write(f"- New slots built: **{cache.get('new_slots_built_this_run')}**\n")
-              for key, value in timing.items():
-                  f.write(f"- {key}: {value} seconds\n")
-          PY
-          cat "$HOME/workflow-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload requested GLM artifact
         if: ${{ inputs.upload_artifact || inputs.publish_debug_layers }}
@@ -244,6 +207,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          publish_start=$(date +%s)
           branch="${GITHUB_REF_NAME}"
           root="$GLM_OUTPUT_DIR"
 
@@ -282,13 +246,19 @@ jobs:
 
           if git diff --cached --quiet; then
             echo 'No GLM product changes to commit.'
+            elapsed=$(( $(date +%s) - publish_start ))
+            printf 'publish_seconds=%s\n' "$elapsed" >> "$RUNNER_TEMP/glm_workflow_timings.env"
             exit 0
           fi
           valid_end=$(python -c "import json; print(json.load(open('$root/glm_mosaic_manifest.json'))['window_end_utc'])")
           git commit -m "Update GOES GLM mosaic through ${valid_end}"
 
           for attempt in 1 2 3; do
-            if git push origin "HEAD:${branch}"; then exit 0; fi
+            if git push origin "HEAD:${branch}"; then
+              elapsed=$(( $(date +%s) - publish_start ))
+              printf 'publish_seconds=%s\n' "$elapsed" >> "$RUNNER_TEMP/glm_workflow_timings.env"
+              exit 0
+            fi
             if [[ "$attempt" -eq 3 ]]; then
               echo 'GLM push failed after three attempts.' >&2
               exit 1
@@ -296,3 +266,39 @@ jobs:
             sleep $((attempt * 10))
             git pull --rebase origin "$branch"
           done
+
+      - name: Write workflow summary
+        if: ${{ always() && hashFiles('glm_operational_staging/glm_mosaic_manifest.json') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          m = json.loads(Path('glm_operational_staging/glm_mosaic_manifest.json').read_text())
+          cache = m.get('incremental_cache') or {}
+          timing = m.get('timing_seconds') or {}
+          workflow = {}
+          timing_file = Path(os.environ['RUNNER_TEMP']) / 'glm_workflow_timings.env'
+          if timing_file.exists():
+              for line in timing_file.read_text().splitlines():
+                  if '=' in line:
+                      key, value = line.split('=', 1)
+                      workflow[key] = value
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('## GOES GLM Operational Run\n\n')
+              f.write('- Workflow architecture: `stateless_per_run`\n')
+              f.write(f"- Valid through: `{m.get('window_end_utc')}`\n")
+              f.write(f"- Mode: `{m.get('execution_mode')}`\n")
+              f.write(f"- Run-local cache hits: **{cache.get('cache_hits_this_run')}**\n")
+              f.write(f"- New slots built: **{cache.get('new_slots_built_this_run')}**\n")
+              for key, value in timing.items():
+                  f.write(f'- Python {key}: {value} seconds\n')
+              if 'dependency_install_seconds' in workflow:
+                  f.write(f"- Dependency installation: **{workflow['dependency_install_seconds']} seconds**\n")
+              if 'publish_seconds' in workflow:
+                  f.write(f"- Git publication: **{workflow['publish_seconds']} seconds**\n")
+          PY
