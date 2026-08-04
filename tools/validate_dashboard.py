@@ -52,6 +52,7 @@ required_labels = [
     "GOES GLM Controlled Mosaic — Latest 5-Minute FED",
     "GOES GLM Controlled Mosaic — Rolling 30-Minute Accumulation",
     "GOES GLM Controlled Mosaic — Rolling 60-Minute Accumulation",
+    "GOES GLM Controlled Mosaic — Convective Trend (15 min)",
     "NWM Soil Saturation (0-40cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
@@ -98,6 +99,7 @@ if radar_start >= 0 and antecedent_start > radar_start:
         "{id: 'glm-mosaic-5min'",
         "{id: 'glm-mosaic-30min'",
         "{id: 'glm-mosaic-60min'",
+        "{id: 'glm-convective-trend-15min'",
     ]
     glm_radar_positions = [radar_block.find(label) for label in glm_radar_labels]
     if any(position < 0 for position in glm_radar_positions):
@@ -170,6 +172,7 @@ required_glm_fragments = [
     "static/glm_conus_mosaic_5min.png",
     "static/glm_conus_mosaic_30min.png",
     "static/glm_conus_mosaic_60min.png",
+    "static/glm_convective_trend_15min_metadata.json",
     "glm_dashboard_v1",
     "fetchGLMMetadata",
     "glm-time-box",
@@ -187,6 +190,9 @@ required_glm_fragments = [
     "updateGLMTrendCard",
     "Rapidly Increasing",
     "Strongest acceleration",
+    "GOES GLM Controlled Mosaic — Convective Trend (15 min)",
+    "embedded_png_base64",
+    "glm-convective-trend-15min",
 ]
 for fragment in required_glm_fragments:
     if fragment not in app:
@@ -231,7 +237,7 @@ duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
 
-expected_layer_count = 103
+expected_layer_count = 104
 if len(ids) != expected_layer_count:
     errors.append(
         f"Expected {expected_layer_count} registered layers, found {len(ids)}."
@@ -281,5 +287,5 @@ print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
     "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
-    "and the GLM trend diagnostic preserved."
+    "and the GLM trend diagnostic/trend map preserved."
 )
