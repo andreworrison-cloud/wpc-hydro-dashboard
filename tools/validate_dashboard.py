@@ -225,13 +225,48 @@ required_ufvs_utility_fragments = [
     "label: 'Southwest', west: -117.0, east: -104.0, south: 28.0, north: 42.0",
     "label: 'Interior Mountain West', west: -117.0, east: -104.0, south: 42.0, north: 49.0",
     "label: 'Northern Plains', west: -104.0, east: -85.0, south: 38.0, north: 49.0",
-    "label: 'Southern Plains', west: -104.0, east: -85.0, south: 25.0, north: 38.0",
-    "label: 'Southeast', west: -85.0, east: -65.0, south: 24.0, north: 38.0",
-    "label: 'Northeast', west: -85.0, east: -65.0, south: 38.0, north: 49.0",
+    "label: 'Southern Plains', west: -104.0, east: -90.0, south: 24.0, north: 38.0",
+    "label: 'Southeast', west: -90.0, east: -75.0, south: 24.0, north: 38.0",
+    "label: 'Northeast', west: -85.0, east: -66.0, south: 38.0, north: 49.0",
 ]
 for fragment in required_ufvs_utility_fragments:
     if fragment not in app:
         errors.append(f"Missing UFVS Geographic Domains utility fragment: {fragment}")
+
+# The display overlay and GLM regional trend calculations must use the exact
+# same authoritative fixed WPC UFVS bounds.
+expected_ufvs_domains = [
+    ("west-coast", "West Coast", -125.0, -117.0, 32.0, 49.0),
+    ("southwest", "Southwest", -117.0, -104.0, 28.0, 42.0),
+    ("interior-mountain-west", "Interior Mountain West", -117.0, -104.0, 42.0, 49.0),
+    ("northern-plains", "Northern Plains", -104.0, -85.0, 38.0, 49.0),
+    ("southern-plains", "Southern Plains", -104.0, -90.0, 24.0, 38.0),
+    ("southeast", "Southeast", -90.0, -75.0, 24.0, 38.0),
+    ("northeast", "Northeast", -85.0, -66.0, 38.0, 49.0),
+]
+for domain_id, label, west, east, south, north in expected_ufvs_domains:
+    app_fragment = (
+        f"id: '{domain_id}', label: '{label}', west: {west:.1f}, "
+        f"east: {east:.1f}, south: {south:.1f}, north: {north:.1f}"
+    )
+    if app_fragment not in app:
+        errors.append(
+            f"UFVS overlay bounds do not match the WPC definition for {label}."
+        )
+
+    generator_pattern = re.compile(
+        rf'"id":\s*"{re.escape(domain_id)}".*?'
+        rf'"label":\s*"{re.escape(label)}".*?'
+        rf'"west":\s*{re.escape(f"{west:.1f}")}.*?'
+        rf'"east":\s*{re.escape(f"{east:.1f}")}.*?'
+        rf'"south":\s*{re.escape(f"{south:.1f}")}.*?'
+        rf'"north":\s*{re.escape(f"{north:.1f}")}',
+        re.DOTALL,
+    )
+    if not generator_pattern.search(glm_generator):
+        errors.append(
+            f"GLM UFVS trend-calculation bounds do not match the WPC definition for {label}."
+        )
 
 if "setInterval(() => fetchGLMMetadata(), 10 * 60 * 1000)" in app:
     errors.append("Legacy blind 10-minute GLM refresh interval is still active.")
@@ -251,6 +286,7 @@ required_glm_generator_fragments = [
     '"labels": list(labels)',
     '"rgba": [list(color) for color in colors]',
     "UFVS_TREND_DOMAINS = [",
+    "Authoritative fixed WPC UFVS seven-domain rectangular framework",
     "TREND_HISTORY_MINUTES = 60",
     "TREND_RECENT_SLOT_COUNT = 3",
     "build_convective_trend_analysis",
