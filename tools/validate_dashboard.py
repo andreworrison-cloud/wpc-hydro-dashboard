@@ -48,6 +48,10 @@ required_labels = [
     "NEXRAD Radar (2-Hour Loop)",
     "MRMS FLASH CREST Unit Q — Rolling 24-Hour Maximum",
     "MRMS FLASH FFD — Rolling 24-Hour Maximum Category",
+    "GOES GLM Controlled Mosaic — Latest 5-Minute FED",
+    "GOES GLM Controlled Mosaic — Rolling 30-Minute Accumulation",
+    "GOES GLM Controlled Mosaic — Rolling 60-Minute Accumulation",
+    "GLM Debug — Mosaic Source Ownership",
     "NWM Soil Saturation (0-40cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
@@ -88,6 +92,18 @@ if radar_start >= 0 and antecedent_start > radar_start:
         errors.append(
             "MRMS FLASH rolling layers are not in the required radar-section order."
         )
+
+    glm_radar_labels = [
+        "{id: 'goes-west-ir'",
+        "{id: 'glm-mosaic-5min'",
+        "{id: 'glm-mosaic-30min'",
+        "{id: 'glm-mosaic-60min'",
+    ]
+    glm_radar_positions = [radar_block.find(label) for label in glm_radar_labels]
+    if any(position < 0 for position in glm_radar_positions):
+        errors.append("Radar and Satellite Data is missing a primary GLM mosaic layer.")
+    elif glm_radar_positions != sorted(glm_radar_positions):
+        errors.append("Primary GLM mosaic layers are not in the required radar-section order.")
 
 # Enforce the agreed order within Antecedent Hydrologic Conditions.
 antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
@@ -150,12 +166,32 @@ for fragment in required_nldas_fragments:
 if "NASA SPoRT-LIS Volumetric Soil Moisture Percentile (0–100 cm)" not in app:
     errors.append("Updated SPoRT-LIS legend heading is missing.")
 
+required_glm_fragments = [
+    "static/glm_conus_mosaic_5min.png",
+    "static/glm_conus_mosaic_30min.png",
+    "static/glm_conus_mosaic_60min.png",
+    "static/glm_g18_fed_5min.png",
+    "static/glm_g19_fed_5min.png",
+    "static/glm_mosaic_source_ownership.png",
+    "glm_dashboard_v1",
+    "fetchGLMMetadata",
+    "glm-time-box",
+    "glmFiveMinuteLegendHTML",
+    "glmRollingLegendHTML",
+    "glmOwnershipLegendHTML",
+    "dashboardUtilityLayers",
+    "enforceExclusiveGLMSelection",
+]
+for fragment in required_glm_fragments:
+    if fragment not in app:
+        errors.append(f"Missing GOES GLM integration fragment: {fragment}")
+
 ids = re.findall(r"\{id: '([a-z0-9-]+)', label:", app)
 duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
 
-expected_layer_count = 100
+expected_layer_count = 110
 if len(ids) != expected_layer_count:
     errors.append(
         f"Expected {expected_layer_count} registered layers, found {len(ids)}."
@@ -190,6 +226,10 @@ if "nldas-rsm-v1" not in index:
     errors.append(
         "Frontend cache-busting token for NLDAS RSM integration is missing."
     )
+if "glm-v1" not in index:
+    errors.append(
+        "Frontend cache-busting token for GOES GLM integration is missing."
+    )
 
 if errors:
     print("Dashboard validation FAILED:")
@@ -200,5 +240,5 @@ if errors:
 print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
-    "antecedent order, MRMS/NLDAS mappings, and required labels preserved."
+    "antecedent order, MRMS/NLDAS/GLM mappings, and required labels preserved."
 )
