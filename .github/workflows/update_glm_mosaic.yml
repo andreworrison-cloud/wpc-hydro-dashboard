@@ -133,7 +133,11 @@ jobs:
           minimum = float(os.environ.get('MINIMUM_COMPLETENESS') or 0.80)
           debug = (os.environ.get('PUBLISH_DEBUG_LAYERS') or 'false').lower() == 'true'
           primary = ['glm_conus_mosaic_5min', 'glm_conus_mosaic_30min', 'glm_conus_mosaic_60min']
-          expected = {'glm_mosaic_manifest.json', 'glm_mosaic_summary.csv'}
+          expected = {
+              'glm_mosaic_manifest.json',
+              'glm_mosaic_summary.csv',
+              'glm_convective_trend_15min_metadata.json',
+          }
           for stem in primary:
               expected.update({f'{stem}.png', f'{stem}_metadata.json'})
           if debug:
@@ -182,6 +186,23 @@ jobs:
           if len(endings) != 1:
               raise SystemExit(f'Primary windows are not synchronized: {endings}')
 
+          trend = json.loads((root / 'glm_convective_trend_15min_metadata.json').read_text())
+          if trend.get('metadata_mode') != 'glm_dashboard_v1' or trend.get('product_role') != 'convective_trend_map':
+              raise SystemExit('GLM trend-map metadata contract failed')
+          if trend.get('window_end_utc') != next(iter(endings)):
+              raise SystemExit('GLM trend-map and primary metadata ending times differ')
+          rendering = trend.get('rendering') or {}
+          if len(rendering.get('labels') or []) != 5 or len(rendering.get('rgba') or []) != 5:
+              raise SystemExit('GLM trend-map rendering contract failed')
+          import base64, io
+          encoded = trend.get('embedded_png_base64') or ''
+          try:
+              trend_image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert('RGBA')
+          except Exception as error:
+              raise SystemExit(f'GLM trend-map embedded PNG is invalid: {error}')
+          if trend_image.width < 1000 or trend_image.height < 500:
+              raise SystemExit('GLM trend-map embedded PNG is implausibly small')
+
           manifest = json.loads((root / 'glm_mosaic_manifest.json').read_text())
           if manifest.get('metadata_mode') != 'glm_dashboard_v1':
               raise SystemExit('Manifest metadata contract failed')
@@ -227,6 +248,7 @@ jobs:
             glm_conus_mosaic_5min.png glm_conus_mosaic_5min_metadata.json
             glm_conus_mosaic_30min.png glm_conus_mosaic_30min_metadata.json
             glm_conus_mosaic_60min.png glm_conus_mosaic_60min_metadata.json
+            glm_convective_trend_15min_metadata.json
             glm_mosaic_manifest.json glm_mosaic_summary.csv
           )
           debug_publish=(
