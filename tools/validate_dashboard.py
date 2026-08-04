@@ -199,10 +199,44 @@ required_glm_fragments = [
     "color: '#ffe878'",
     "color: '#4ceaff'",
     "color: '#3876ff'",
+    "GLM_MANIFEST_URL",
+    "GLM_MANIFEST_POLL_INTERVAL_MS = 90 * 1000",
+    "refreshGLMFromManifest",
+    "expectedWindowEnd",
+    "requireComplete",
+    "document.addEventListener('visibilitychange'",
+    "window.addEventListener('focus'",
+    "window.addEventListener('online'",
 ]
 for fragment in required_glm_fragments:
     if fragment not in app:
         errors.append(f"Missing GOES GLM integration fragment: {fragment}")
+
+
+required_ufvs_utility_fragments = [
+    "UFVS Geographic Domains",
+    "ufvs-geographic-domains-toggle",
+    "UFVS_GEOGRAPHIC_DOMAINS",
+    "UFVS_DOMAINS_SESSION_KEY",
+    "ufvsGeographicDomainsLayer",
+    "setUFVSGeographicDomainsVisible",
+    "map.createPane('ufvsDomains')",
+    "label: 'West Coast', west: -125.0, east: -117.0, south: 32.0, north: 49.0",
+    "label: 'Southwest', west: -117.0, east: -104.0, south: 28.0, north: 42.0",
+    "label: 'Interior Mountain West', west: -117.0, east: -104.0, south: 42.0, north: 49.0",
+    "label: 'Northern Plains', west: -104.0, east: -85.0, south: 38.0, north: 49.0",
+    "label: 'Southern Plains', west: -104.0, east: -85.0, south: 25.0, north: 38.0",
+    "label: 'Southeast', west: -85.0, east: -65.0, south: 24.0, north: 38.0",
+    "label: 'Northeast', west: -85.0, east: -65.0, south: 38.0, north: 49.0",
+]
+for fragment in required_ufvs_utility_fragments:
+    if fragment not in app:
+        errors.append(f"Missing UFVS Geographic Domains utility fragment: {fragment}")
+
+if "setInterval(() => fetchGLMMetadata(), 10 * 60 * 1000)" in app:
+    errors.append("Legacy blind 10-minute GLM refresh interval is still active.")
+if "Trend Framework" in app:
+    errors.append("UFVS utility label still contains the rejected words 'Trend Framework'.")
 
 if "const glmFiveMinuteLegendHTML" in app or "const glmRollingLegendHTML" in app:
     errors.append("GOES GLM legends are still hardcoded separately from product metadata.")
@@ -302,5 +336,6 @@ print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
     "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
-    "and the GLM trend diagnostic/trend map preserved."
+    "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
+    "and UFVS Geographic Domains utility preserved."
 )
