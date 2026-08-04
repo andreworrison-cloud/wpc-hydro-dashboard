@@ -204,17 +204,76 @@ def parse_mpd_tag(product_text, mpd_num):
     return tag if tag else f"MPD {mpd_num:04d}"
 
 
-def decode_wpc_latlon_token(token):
-    """Decode a compact WPC LAT...LON token into (longitude, latitude)."""
+def decode_wpc_latlon_token(token, context_text=""):
+    """Decode a compact WPC LAT...LON token into (longitude, latitude).
+
+    WPC/NWS compact coordinates normally devote the first four digits to
+    latitude.  Longitudes west of 100 degrees are often encoded with the
+    leading ``1`` suppressed, for example::
+
+        34470879 -> 34.47N, 108.79W
+        37502223 -> 37.50N, 122.23W
+
+    Longitudes below 100W remain direct, for example::
+
+        34198699 -> 34.19N, 86.99W
+
+    Explicit five-or-more-digit longitude fields (such as 10043) are decoded
+    directly.  Alaska and Hawaii require conservative context checks because
+    their suppressed values overlap Puerto Rico and western Atlantic values.
+    """
     token = token.strip()
     if not re.fullmatch(r"\d{8,10}", token):
         return None
 
     latitude = int(token[:4]) / 100.0
-    longitude_west = int(token[4:]) / 100.0
+    lon_raw = token[4:]
+    context_upper = context_text.upper()
 
     if not (0.0 <= latitude <= 90.0):
         return None
+
+    if len(lon_raw) >= 5:
+        longitude_west = int(lon_raw) / 100.0
+    elif len(lon_raw) == 4:
+        longitude_west = int(lon_raw) / 100.0
+
+        # CONUS west of 100W is commonly encoded as 00.xx-39.xx after the
+        # leading 100-degree component is suppressed.
+        if longitude_west < 40.0:
+            longitude_west += 100.0
+        else:
+            alaska_words = (
+                "ALASKA",
+                "ALEUTIAN",
+                "KODIAK",
+                "KENAI",
+                "FAIRBANKS",
+                "ANCHORAGE",
+            )
+            hawaii_words = (
+                "HAWAII",
+                "HAWAIIAN",
+                "KAUAI",
+                "OAHU",
+                "MAUI",
+                "MOLOKAI",
+                "LANAI",
+                "BIG ISLAND",
+            )
+
+            if 40.0 <= longitude_west < 80.0 and (
+                latitude >= 48.0
+                or any(word in context_upper for word in alaska_words)
+            ):
+                longitude_west += 100.0
+            elif 50.0 <= longitude_west < 70.0 and any(
+                word in context_upper for word in hawaii_words
+            ):
+                longitude_west += 100.0
+    else:
+        return None
+
     if not (0.0 <= longitude_west <= 180.0):
         return None
 
@@ -258,7 +317,7 @@ def parse_latest_latlon_polygon(product_text):
     coordinates = []
 
     for token in tokens:
-        coordinate = decode_wpc_latlon_token(token)
+        coordinate = decode_wpc_latlon_token(token, product_text)
         if coordinate is None:
             return None, f"Invalid LAT...LON token: {token}"
         if not coordinates or coordinate != coordinates[-1]:
@@ -463,9 +522,8 @@ def fetch_and_process_mpds():
         else:
             print(f" -> Using corrected/latest text geometry: {geometry_note}")
 
-        # Preserve the official four-digit HHMMZ time from the MPD text.
-        issue_str = valid_start.strftime("%H%MZ %b %d %Y")
-        expire_str = valid_end.strftime("%H%MZ %b %d %Y")
+        issue_str = valid_start.strftime("%HZ %b %d %Y")
+        expire_str = valid_end.strftime("%HZ %b %d %Y")
         valid_str = f"{issue_str} - {expire_str}"
 
         active_gdf = gpd.GeoDataFrame(
