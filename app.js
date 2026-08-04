@@ -2069,13 +2069,16 @@ function glmRGBAtoCSS(color) {
 
 function buildGLMLegendHTML(title, labels, rgba, subtitle) {
     const bins = labels.map((label, index) => `
-        <div style="background: ${glmRGBAtoCSS(rgba[index])}; flex: 1; min-width: 45px; padding: 3px 2px; border-right: 1px solid #333;">${escapeGLMLegendText(label)}</div>
+        <div style="display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0;">
+            <span style="display: block; width: 18px; height: 12px; border: 1px solid rgba(0, 0, 0, 0.55); border-radius: 2px; background: ${glmRGBAtoCSS(rgba[index])};"></span>
+            <span style="min-width: 0; font-size: 10px; font-weight: 700; line-height: 1.15; text-align: left; white-space: nowrap;">${escapeGLMLegendText(label)}</span>
+        </div>
     `).join('');
     return `
-        <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 360px; max-width: 760px; overflow-x: auto;">
-            <strong style="font-size: 13px;">${escapeGLMLegendText(title)}</strong><br>
-            <span style="font-size: 10px;">${escapeGLMLegendText(subtitle)}</span>
-            <div style="display: flex; margin-top: 6px; border: 1px solid #333; font-size: 9px; font-weight: bold;">${bins}</div>
+        <div style="box-sizing: border-box; width: 100%; max-width: 100%; overflow: hidden; background: white; padding: 9px; border-radius: 5px; color: black; font-family: sans-serif;">
+            <strong style="display: block; font-size: 13px; line-height: 1.2; text-align: center;">${escapeGLMLegendText(title)}</strong>
+            <span style="display: block; margin-top: 2px; font-size: 9px; line-height: 1.2; text-align: center;">${escapeGLMLegendText(subtitle)}</span>
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin-top: 8px;">${bins}</div>
         </div>
     `;
 }
