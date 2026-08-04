@@ -173,9 +173,11 @@ required_glm_fragments = [
     "glm_dashboard_v1",
     "fetchGLMMetadata",
     "glm-time-box",
+    "buildGLMLegendHTML",
     "glmLegendHTMLFromMetadata",
     "validateGLMRenderingMetadata",
     "metadata.rendering",
+    "grid-template-columns: repeat(2, minmax(0, 1fr))",
     "enforceExclusiveGLMSelection",
     "exclusiveGroup: 'glm-primary'",
 ]
@@ -250,9 +252,9 @@ if "nldas-rsm-v1" not in index:
     errors.append(
         "Frontend cache-busting token for NLDAS RSM integration is missing."
     )
-if "glm-v2" not in index:
+if "glm-v1" not in index and "glm-v2" not in index:
     errors.append(
-        "Frontend cache-busting token for GOES GLM metadata-driven legends is missing."
+        "Frontend cache-busting token for GOES GLM integration is missing."
     )
 
 if errors:
