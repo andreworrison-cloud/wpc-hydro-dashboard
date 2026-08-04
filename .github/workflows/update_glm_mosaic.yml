@@ -49,8 +49,6 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
-      # Run-local only: rebuild the synchronized 60-minute window each execution.
-      GLM_CACHE_DIR: ${{ runner.temp }}/glm_mosaic_cache
       GLM_OUTPUT_DIR: glm_operational_staging
 
     steps:
@@ -97,6 +95,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # RUNNER_TEMP is a shell environment variable supplied by GitHub Actions.
+          # Keep this cache local to the current runner; it is never restored or saved.
+          cache_dir="${RUNNER_TEMP}/glm_mosaic_cache"
+          rm -rf "$cache_dir"
+          mkdir -p "$cache_dir"
+
           debug_flag='--no-publish-debug-layers'
           if [[ "${PUBLISH_DEBUG_LAYERS:-false}" == 'true' ]]; then
             debug_flag='--publish-debug-layers'
@@ -107,7 +111,7 @@ jobs:
             --lookback-minutes "${LOOKBACK_MINUTES:-180}" \
             --minimum-completeness "${MINIMUM_COMPLETENESS:-0.80}" \
             --maximum-latency-minutes "${MAXIMUM_LATENCY_MINUTES:-45}" \
-            --cache-dir "$GLM_CACHE_DIR" \
+            --cache-dir "$cache_dir" \
             --output-dir "$GLM_OUTPUT_DIR" \
             "$debug_flag"
 
