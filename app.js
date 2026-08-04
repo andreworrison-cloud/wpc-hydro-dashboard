@@ -1229,6 +1229,7 @@ function applyGLMRasterMetadata(config, metadata) {
             throw new Error(`${config.name}: controlled-mosaic safeguards failed`);
         }
     }
+    metadata.rendering = validateGLMRenderingMetadata(metadata, config.name);
     const grid = metadata.grid || {};
     const imageCrs = String(grid.image_crs || '').toUpperCase();
     if (imageCrs !== 'EPSG:3857') {
@@ -1292,6 +1293,7 @@ async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS) {
         GLM_LAYER_CONFIGS.filter(config => !config.debug).forEach(config => config.layer.setOpacity(0));
     }
     updateGLMTimeBox();
+    if (typeof updateLegends === 'function') updateLegends();
 }
 
 async function fetchNWMMetadata() {
@@ -1986,43 +1988,119 @@ function buildNLDASRSMHTML(title) {
 const nldasRsm010LegendHTML = buildNLDASRSMHTML('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)');
 const nldasRsm0100LegendHTML = buildNLDASRSMHTML('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)');
 
-function buildGLMLegendHTML(title, labels, colors) {
+const GLM_FALLBACK_RENDERING = {
+    5: {
+        labels: ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '128–255', '≥256'],
+        rgba: [
+            [0, 255, 255, 255], [0, 255, 0, 255], [255, 255, 0, 255],
+            [255, 153, 0, 255], [255, 0, 0, 255], [255, 0, 255, 255],
+            [199, 125, 255, 255], [0, 102, 255, 255], [255, 255, 255, 255]
+        ],
+        units: 'flashes per 0.02-degree grid cell per five minutes'
+    },
+    rolling: {
+        labels: ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '128–255', '256–511', '≥512'],
+        rgba: [
+            [0, 255, 255, 255], [0, 255, 0, 255], [255, 255, 0, 255],
+            [255, 153, 0, 255], [255, 0, 0, 255], [255, 0, 255, 255],
+            [199, 125, 255, 255], [0, 102, 255, 255], [102, 204, 255, 255],
+            [255, 255, 255, 255]
+        ],
+        units: 'flash extent contributions per 0.02-degree grid cell'
+    }
+};
+
+function escapeGLMLegendText(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function validateGLMRenderingMetadata(metadata, layerName = 'GOES GLM') {
+    const rendering = metadata?.rendering || {};
+    const bins = rendering.bins;
+    const labels = rendering.labels;
+    const rgba = rendering.rgba;
+
+    if (!Array.isArray(bins) || !Array.isArray(labels) || !Array.isArray(rgba)) {
+        throw new Error(`${layerName}: rendering bins, labels, and rgba arrays are required`);
+    }
+    if (bins.length === 0 || bins.length !== labels.length || bins.length !== rgba.length) {
+        throw new Error(`${layerName}: rendering bins, labels, and rgba lengths do not match`);
+    }
+
+    const normalizedBins = bins.map(Number);
+    normalizedBins.forEach((value, index) => {
+        if (!Number.isFinite(value) || value < 0) {
+            throw new Error(`${layerName}: invalid rendering bin at index ${index}`);
+        }
+        if (index > 0 && value <= normalizedBins[index - 1]) {
+            throw new Error(`${layerName}: rendering bins must be strictly increasing`);
+        }
+    });
+
+    const normalizedColors = rgba.map((color, index) => {
+        if (!Array.isArray(color) || color.length !== 4) {
+            throw new Error(`${layerName}: RGBA entry ${index} must contain four channels`);
+        }
+        return color.map(channel => {
+            const value = Number(channel);
+            if (!Number.isFinite(value) || value < 0 || value > 255) {
+                throw new Error(`${layerName}: invalid RGBA channel in entry ${index}`);
+            }
+            return Math.round(value);
+        });
+    });
+
+    return {
+        bins: normalizedBins,
+        labels: labels.map(label => String(label)),
+        rgba: normalizedColors
+    };
+}
+
+function glmRGBAtoCSS(color) {
+    const alpha = Math.max(0, Math.min(255, Number(color[3]))) / 255;
+    return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha.toFixed(3)})`;
+}
+
+function buildGLMLegendHTML(title, labels, rgba, subtitle) {
     const bins = labels.map((label, index) => `
-        <div style="background: ${colors[index]}; flex: 1; min-width: 45px; padding: 3px 2px; border-right: 1px solid #333;">${label}</div>
+        <div style="background: ${glmRGBAtoCSS(rgba[index])}; flex: 1; min-width: 45px; padding: 3px 2px; border-right: 1px solid #333;">${escapeGLMLegendText(label)}</div>
     `).join('');
     return `
-        <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 360px;">
-            <strong style="font-size: 13px;">${title}</strong><br>
-            <span style="font-size: 10px;">LCFA-derived flash extent contributions per 0.02° grid cell</span>
+        <div style="background: white; padding: 10px; border-radius: 5px; text-align: center; color: black; font-family: sans-serif; min-width: 360px; max-width: 760px; overflow-x: auto;">
+            <strong style="font-size: 13px;">${escapeGLMLegendText(title)}</strong><br>
+            <span style="font-size: 10px;">${escapeGLMLegendText(subtitle)}</span>
             <div style="display: flex; margin-top: 6px; border: 1px solid #333; font-size: 9px; font-weight: bold;">${bins}</div>
         </div>
     `;
 }
 
-const glmFiveMinuteLegendHTML = buildGLMLegendHTML(
-    'GOES GLM — Latest 5-Minute FED',
-    ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '≥128'],
-    ['#00ffff', '#00ff00', '#ffff00', '#ff9900', '#ff0000', '#ff00ff', '#c77dff', '#ffffff']
-);
-const glmRollingLegendHTML = buildGLMLegendHTML(
-    'GOES GLM — Rolling Flash Extent Accumulation',
-    ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '128–255', '256–511', '≥512'],
-    ['#00ffff', '#00ff00', '#ffff00', '#ff9900', '#ff0000', '#ff00ff', '#c77dff', '#0066ff', '#66ccff', '#ffffff']
-);
-const glmOwnershipLegendHTML = `
-    <div style="background: white; padding: 10px; border-radius: 5px; color: black; font-family: sans-serif; min-width: 260px;">
-        <strong style="font-size: 13px;">GLM Mosaic Source Ownership</strong><br>
-        <div style="margin-top: 6px;"><span style="display:inline-block;width:18px;height:12px;background:#0099ff;margin-right:6px;"></span>GOES-18 (West)</div>
-        <div style="margin-top: 4px;"><span style="display:inline-block;width:18px;height:12px;background:#ffc400;margin-right:6px;"></span>GOES-19 (East)</div>
-        <div style="font-size: 9px; margin-top: 5px;">Exclusive lower-view-angle ownership; nominal seam near 106.1°W.</div>
-    </div>
-`;
+function glmLegendHTMLFromMetadata(config, metadata) {
+    const fallback = config.windowMinutes === 5
+        ? GLM_FALLBACK_RENDERING[5]
+        : GLM_FALLBACK_RENDERING.rolling;
+
+    let rendering = fallback;
+    if (metadata) {
+        try {
+            rendering = validateGLMRenderingMetadata(metadata, config.name);
+        } catch (error) {
+            console.error(`GLM legend metadata rejected for ${config.name}:`, error);
+        }
+    }
+
+    const title = metadata?.display_label || config.name;
+    const subtitle = metadata?.units || fallback.units;
+    return buildGLMLegendHTML(title, rendering.labels, rendering.rgba, subtitle);
+}
 
 function glmLegendHTMLForConfig(config) {
-    if (config.legendId === 'ownership') return glmOwnershipLegendHTML;
-    return config.legendId === 'five-minute'
-        ? glmFiveMinuteLegendHTML
-        : glmRollingLegendHTML;
+    return glmLegendHTMLFromMetadata(config, glmMetadataByName.get(config.name));
 }
 
 // Global tracker for currently active layers
