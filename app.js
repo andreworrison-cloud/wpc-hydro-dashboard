@@ -248,13 +248,6 @@ const glmMosaic5minLayer = createGLMImageOverlay('static/glm_conus_mosaic_5min.p
 const glmMosaic30minLayer = createGLMImageOverlay('static/glm_conus_mosaic_30min.png');
 const glmMosaic60minLayer = createGLMImageOverlay('static/glm_conus_mosaic_60min.png');
 
-const glmG18_5minLayer = createGLMImageOverlay('static/glm_g18_fed_5min.png', 12);
-const glmG18_30minLayer = createGLMImageOverlay('static/glm_g18_fed_30min.png', 12);
-const glmG18_60minLayer = createGLMImageOverlay('static/glm_g18_fed_60min.png', 12);
-const glmG19_5minLayer = createGLMImageOverlay('static/glm_g19_fed_5min.png', 12);
-const glmG19_30minLayer = createGLMImageOverlay('static/glm_g19_fed_30min.png', 12);
-const glmG19_60minLayer = createGLMImageOverlay('static/glm_g19_fed_60min.png', 12);
-const glmOwnershipLayer = createGLMImageOverlay('static/glm_mosaic_source_ownership.png', 8);
 
 const GLM_LAYER_CONFIGS = [
     {
@@ -266,7 +259,7 @@ const GLM_LAYER_CONFIGS = [
         productRole: 'controlled_mosaic',
         windowMinutes: 5,
         legendId: 'five-minute',
-        defaultOpacity: 0.88,
+        defaultOpacity: 1.0,
         debug: false
     },
     {
@@ -278,7 +271,7 @@ const GLM_LAYER_CONFIGS = [
         productRole: 'controlled_mosaic',
         windowMinutes: 30,
         legendId: 'rolling',
-        defaultOpacity: 0.88,
+        defaultOpacity: 1.0,
         debug: false
     },
     {
@@ -290,92 +283,8 @@ const GLM_LAYER_CONFIGS = [
         productRole: 'controlled_mosaic',
         windowMinutes: 60,
         legendId: 'rolling',
-        defaultOpacity: 0.88,
+        defaultOpacity: 1.0,
         debug: false
-    },
-    {
-        id: 'glm-debug-g18-5min',
-        name: 'GLM Debug — GOES-18 (West) — Latest 5-Minute FED',
-        layer: glmG18_5minLayer,
-        imageUrl: 'static/glm_g18_fed_5min.png',
-        metadataUrl: 'static/glm_g18_fed_5min_metadata.json',
-        productRole: 'satellite_reference_debug',
-        windowMinutes: 5,
-        legendId: 'five-minute',
-        defaultOpacity: 0.88,
-        debug: true
-    },
-    {
-        id: 'glm-debug-g18-30min',
-        name: 'GLM Debug — GOES-18 (West) — Rolling 30-Minute Accumulation',
-        layer: glmG18_30minLayer,
-        imageUrl: 'static/glm_g18_fed_30min.png',
-        metadataUrl: 'static/glm_g18_fed_30min_metadata.json',
-        productRole: 'satellite_reference_debug',
-        windowMinutes: 30,
-        legendId: 'rolling',
-        defaultOpacity: 0.88,
-        debug: true
-    },
-    {
-        id: 'glm-debug-g18-60min',
-        name: 'GLM Debug — GOES-18 (West) — Rolling 60-Minute Accumulation',
-        layer: glmG18_60minLayer,
-        imageUrl: 'static/glm_g18_fed_60min.png',
-        metadataUrl: 'static/glm_g18_fed_60min_metadata.json',
-        productRole: 'satellite_reference_debug',
-        windowMinutes: 60,
-        legendId: 'rolling',
-        defaultOpacity: 0.88,
-        debug: true
-    },
-    {
-        id: 'glm-debug-g19-5min',
-        name: 'GLM Debug — GOES-19 (East) — Latest 5-Minute FED',
-        layer: glmG19_5minLayer,
-        imageUrl: 'static/glm_g19_fed_5min.png',
-        metadataUrl: 'static/glm_g19_fed_5min_metadata.json',
-        productRole: 'satellite_reference_debug',
-        windowMinutes: 5,
-        legendId: 'five-minute',
-        defaultOpacity: 0.88,
-        debug: true
-    },
-    {
-        id: 'glm-debug-g19-30min',
-        name: 'GLM Debug — GOES-19 (East) — Rolling 30-Minute Accumulation',
-        layer: glmG19_30minLayer,
-        imageUrl: 'static/glm_g19_fed_30min.png',
-        metadataUrl: 'static/glm_g19_fed_30min_metadata.json',
-        productRole: 'satellite_reference_debug',
-        windowMinutes: 30,
-        legendId: 'rolling',
-        defaultOpacity: 0.88,
-        debug: true
-    },
-    {
-        id: 'glm-debug-g19-60min',
-        name: 'GLM Debug — GOES-19 (East) — Rolling 60-Minute Accumulation',
-        layer: glmG19_60minLayer,
-        imageUrl: 'static/glm_g19_fed_60min.png',
-        metadataUrl: 'static/glm_g19_fed_60min_metadata.json',
-        productRole: 'satellite_reference_debug',
-        windowMinutes: 60,
-        legendId: 'rolling',
-        defaultOpacity: 0.88,
-        debug: true
-    },
-    {
-        id: 'glm-debug-ownership',
-        name: 'GLM Debug — Mosaic Source Ownership',
-        layer: glmOwnershipLayer,
-        imageUrl: 'static/glm_mosaic_source_ownership.png',
-        metadataUrl: 'static/glm_mosaic_source_ownership_metadata.json',
-        productRole: 'source_ownership_debug',
-        windowMinutes: null,
-        legendId: 'ownership',
-        defaultOpacity: 0.45,
-        debug: true
     }
 ];
 
@@ -2493,9 +2402,9 @@ const dashboardSections = [
             {id: 'goes-west-vis', label: 'GOES-West: Visible (Ch. 2)', layer: goesWestVis, kind: 'raster'},
             {id: 'goes-west-wv', label: 'GOES-West: Mid-Level WV (Ch. 9)', layer: goesWestWV, kind: 'raster'},
             {id: 'goes-west-ir', label: 'GOES-West: Clean IR (Ch. 13)', layer: goesWestIR, kind: 'raster'},
-            {id: 'glm-mosaic-5min', label: GLM_MOSAIC_5MIN_LAYER_NAME, layer: glmMosaic5minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection},
-            {id: 'glm-mosaic-30min', label: GLM_MOSAIC_30MIN_LAYER_NAME, layer: glmMosaic30minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection},
-            {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection}
+            {id: 'glm-mosaic-5min', label: GLM_MOSAIC_5MIN_LAYER_NAME, layer: glmMosaic5minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
+            {id: 'glm-mosaic-30min', label: GLM_MOSAIC_30MIN_LAYER_NAME, layer: glmMosaic30minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
+            {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection}
         ]
     },
     {
@@ -2620,15 +2529,6 @@ const dashboardSections = [
     }
 ];
 
-const dashboardUtilityLayers = [
-    {id: 'glm-debug-g18-5min', label: 'GLM Debug — GOES-18 (West) — Latest 5-Minute FED', layer: glmG18_5minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite west'},
-    {id: 'glm-debug-g18-30min', label: 'GLM Debug — GOES-18 (West) — Rolling 30-Minute Accumulation', layer: glmG18_30minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite west'},
-    {id: 'glm-debug-g18-60min', label: 'GLM Debug — GOES-18 (West) — Rolling 60-Minute Accumulation', layer: glmG18_60minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite west'},
-    {id: 'glm-debug-g19-5min', label: 'GLM Debug — GOES-19 (East) — Latest 5-Minute FED', layer: glmG19_5minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite east'},
-    {id: 'glm-debug-g19-30min', label: 'GLM Debug — GOES-19 (East) — Rolling 30-Minute Accumulation', layer: glmG19_30minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite east'},
-    {id: 'glm-debug-g19-60min', label: 'GLM Debug — GOES-19 (East) — Rolling 60-Minute Accumulation', layer: glmG19_60minLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning reference satellite east'},
-    {id: 'glm-debug-ownership', label: 'GLM Debug — Mosaic Source Ownership', layer: glmOwnershipLayer, kind: 'raster', onActivate: enforceExclusiveGLMSelection, nested: true, keywords: 'lightning seam ownership source mask'}
-];
 
 const layerEntriesById = new Map();
 let selectedDashboardLayerId = null;
@@ -2759,14 +2659,22 @@ function renderLayerRow(entry) {
     row.dataset.layerId = entry.id;
     row.dataset.searchText = entry.searchText;
 
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'layer-checkbox';
-    checkbox.dataset.layerId = entry.id;
-    checkbox.checked = map.hasLayer(entry.layer);
-    checkbox.addEventListener('change', () => {
+    const control = document.createElement('input');
+    const isExclusive = Boolean(entry.exclusiveGroup);
+    control.type = isExclusive ? 'radio' : 'checkbox';
+    control.className = 'layer-checkbox';
+    control.dataset.layerId = entry.id;
+    if (isExclusive) control.name = `layer-group-${entry.exclusiveGroup}`;
+    control.checked = map.hasLayer(entry.layer);
+
+    control.addEventListener('click', event => {
         selectDashboardLayer(entry.id);
-        setDashboardLayerActive(entry, checkbox.checked);
+        if (isExclusive && map.hasLayer(entry.layer)) {
+            event.preventDefault();
+            setDashboardLayerActive(entry, false);
+            return;
+        }
+        setDashboardLayerActive(entry, isExclusive ? true : control.checked);
     });
 
     const label = document.createElement('span');
@@ -2774,7 +2682,7 @@ function renderLayerRow(entry) {
     label.innerHTML = entry.label;
 
     row.addEventListener('click', () => selectDashboardLayer(entry.id));
-    row.append(checkbox, label);
+    row.append(control, label);
     return row;
 }
 
@@ -2808,15 +2716,6 @@ function renderUtilitySection(container) {
         </div>
     `;
 
-    const glmDebugGroup = document.createElement('div');
-    glmDebugGroup.className = 'utility-field';
-    const glmDebugHeading = document.createElement('div');
-    glmDebugHeading.style.fontWeight = '700';
-    glmDebugHeading.style.marginBottom = '5px';
-    glmDebugHeading.textContent = 'GLM Debug Layers';
-    glmDebugGroup.append(glmDebugHeading);
-    dashboardUtilityLayers.forEach(entry => glmDebugGroup.append(renderLayerRow(entry)));
-    body.append(glmDebugGroup);
 
     section.append(summary, body);
     container.append(section);

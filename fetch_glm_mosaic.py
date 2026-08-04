@@ -83,14 +83,14 @@ FILENAME_TIME_RE = re.compile(r"_s(?P<start>\d{13,16})_e(?P<end>\d{13,16})_")
 FIVE_MIN_BINS = [1, 2, 4, 8, 16, 32, 64, 128]
 FIVE_MIN_LABELS = ["1", "2–3", "4–7", "8–15", "16–31", "32–63", "64–127", "≥128"]
 FIVE_MIN_RGBA = [
-    (0, 255, 255, 210),
-    (0, 255, 0, 210),
-    (255, 255, 0, 220),
-    (255, 153, 0, 225),
-    (255, 0, 0, 230),
-    (255, 0, 255, 235),
-    (199, 125, 255, 240),
-    (255, 255, 255, 248),
+    (0, 255, 255, 255),
+    (0, 255, 0, 255),
+    (255, 255, 0, 255),
+    (255, 153, 0, 255),
+    (255, 0, 0, 255),
+    (255, 0, 255, 255),
+    (199, 125, 255, 255),
+    (255, 255, 255, 255),
 ]
 
 ROLLING_BINS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
@@ -99,16 +99,16 @@ ROLLING_LABELS = [
     "128–255", "256–511", "≥512",
 ]
 ROLLING_RGBA = [
-    (0, 255, 255, 210),
-    (0, 255, 0, 210),
-    (255, 255, 0, 220),
-    (255, 153, 0, 225),
-    (255, 0, 0, 230),
-    (255, 0, 255, 235),
-    (199, 125, 255, 240),
-    (0, 102, 255, 242),
-    (102, 204, 255, 246),
-    (255, 255, 255, 250),
+    (0, 255, 255, 255),
+    (0, 255, 0, 255),
+    (255, 255, 0, 255),
+    (255, 153, 0, 255),
+    (255, 0, 0, 255),
+    (255, 0, 255, 255),
+    (199, 125, 255, 255),
+    (0, 102, 255, 255),
+    (102, 204, 255, 255),
+    (255, 255, 255, 255),
 ]
 
 EVENT_DENSITY_BINS = [1, 4, 16, 64, 256, 1024]
@@ -117,9 +117,9 @@ EVENT_DENSITY_RGBA = [
     (80, 180, 255, 160),
     (0, 255, 255, 180),
     (0, 255, 0, 195),
-    (255, 255, 0, 210),
-    (255, 128, 0, 225),
-    (255, 0, 0, 240),
+    (255, 255, 0, 255),
+    (255, 128, 0, 255),
+    (255, 0, 0, 255),
 ]
 
 FOOTPRINT_BINS = [1]
@@ -866,6 +866,30 @@ def write_native_geotiff(array: np.ndarray, grid: GridSpec, output_path: Path, p
         destination.update_tags(product=product, units=units, zero_value="valid no-lightning value")
 
 
+def expand_display_footprint(array: np.ndarray, radius_pixels: int) -> np.ndarray:
+    """Expand nonzero display cells without altering the underlying FED arrays."""
+    radius = max(0, int(radius_pixels))
+    if radius == 0:
+        return array
+    source = np.asarray(array)
+    expanded = source.copy()
+    height, width = source.shape
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dx == 0 and dy == 0:
+                continue
+            sy0, sy1 = max(0, -dy), min(height, height - dy)
+            sx0, sx1 = max(0, -dx), min(width, width - dx)
+            dy0, dy1 = sy0 + dy, sy1 + dy
+            dx0, dx1 = sx0 + dx, sx1 + dx
+            np.maximum(
+                expanded[dy0:dy1, dx0:dx1],
+                source[sy0:sy1, sx0:sx1],
+                out=expanded[dy0:dy1, dx0:dx1],
+            )
+    return expanded
+
+
 def render_web_mercator(
     array: np.ndarray,
     grid: GridSpec,
@@ -873,6 +897,7 @@ def render_web_mercator(
     maximum_dimension: int,
     bins: Sequence[int],
     rgba_values: Sequence[tuple[int, int, int, int]],
+    display_radius_pixels: int = 0,
 ) -> tuple[list[list[float]], list[int], dict[str, float]]:
     dst_transform, dst_width, dst_height = calculate_default_transform(
         "EPSG:4326", "EPSG:3857", grid.width, grid.height,
@@ -924,13 +949,14 @@ def render_web_mercator(
         dst_crs="EPSG:3857",
         resampling=Resampling.nearest,
     )
+    display_values = expand_display_footprint(destination, display_radius_pixels)
 
     rgba = np.zeros((dst_height, dst_width, 4), dtype=np.uint8)
     for index, lower in enumerate(bins):
         upper = bins[index + 1] if index + 1 < len(bins) else None
-        mask = destination >= lower
+        mask = display_values >= lower
         if upper is not None:
-            mask &= destination < upper
+            mask &= display_values < upper
         rgba[mask] = rgba_values[index]
     Image.fromarray(rgba, mode="RGBA").save(output_path, optimize=False, compress_level=4)
 
@@ -1467,6 +1493,7 @@ def create_controlled_mosaic_product(
     metadata_path = output_dir / f"{stem}_metadata.json"
     bounds, shape, transform = render_web_mercator(
         mosaic, grid, png_path, args.maximum_render_dimension, bins, colors,
+        display_radius_pixels=args.display_footprint_radius,
     )
     seam = seam_statistics(
         g18, g19, owner, grid,
@@ -1483,6 +1510,8 @@ def create_controlled_mosaic_product(
         "window_end_utc": iso_z(end_time),
         "maximum_value": int(mosaic.max(initial=0)),
         "nonzero_grid_cells": int(np.count_nonzero(mosaic)),
+        "display_footprint_radius_pixels": int(args.display_footprint_radius),
+        "display_note": "Display-only maximum-value footprint expansion; underlying FED counts and ownership are unchanged.",
         "flash_cell_contributions": int(mosaic.sum(dtype=np.uint64)),
         "source_g18_owned_cells": int(np.count_nonzero(owner == 18)),
         "source_g19_owned_cells": int(np.count_nonzero(owner == 19)),
@@ -1512,10 +1541,12 @@ def create_controlled_mosaic_product(
         "units": units,
         "legend_id": legend_id,
         "leaflet_png": png_path.name,
-        "default_opacity": 0.88,
+        "default_opacity": 1.0,
         "grid": compact_grid_metadata(grid, bounds, shape, transform),
         "rendering": {
             "resampling": "nearest",
+            "display_footprint_radius_pixels": int(args.display_footprint_radius),
+            "display_only_enhancement": True,
             "bins": list(bins),
             "labels": list(labels),
             "rgba": [list(color) for color in colors],
@@ -1839,6 +1870,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution-degrees", type=float, default=DEFAULT_RESOLUTION_DEGREES)
     parser.add_argument("--download-workers", type=int, default=10)
     parser.add_argument("--maximum-render-dimension", type=int, default=4200)
+    parser.add_argument("--display-footprint-radius", type=int, default=2, help="Display-only pixel radius used to make sparse GLM cells visible at CONUS scale")
     parser.add_argument("--maximum-event-points", type=int, default=5000)
     parser.add_argument("--maximum-flash-centroids", type=int, default=3000)
     parser.add_argument("--cache-dir", default=".glm_mosaic_cache")
@@ -1856,6 +1888,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("lookback and maximum latency must be nonnegative")
     if args.resolution_degrees <= 0 or args.seam_band_degrees <= 0:
         raise SystemExit("resolution and seam band must be positive")
+    if args.display_footprint_radius < 0:
+        raise SystemExit("--display-footprint-radius must be nonnegative")
     # Reuse the existing cache/product functions without maintaining duplicate knobs.
     args.minimum_slot_completeness = args.minimum_completeness
     args.minimum_window_completeness = args.minimum_completeness
