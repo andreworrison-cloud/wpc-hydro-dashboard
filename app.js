@@ -1369,7 +1369,8 @@ function glmCompletenessText(metadata) {
         const summary = metadata.input_slot_summary || {};
         const recent = `${Number(summary.recent_available_slots) || 0}/${Number(summary.recent_required_slots) || 0}`;
         const prior = `${Number(summary.prior_available_slots) || 0}/${Number(summary.prior_required_slots) || 0}`;
-        return `Recent slots: ${recent} &nbsp;|&nbsp; Prior slots: ${prior}`;
+        const hour = Number(summary.hour_available_slots);
+        return `Recent slots: ${recent} &nbsp;|&nbsp; Prior slots: ${prior}` + (Number.isFinite(hour) ? ` &nbsp;|&nbsp; Hour slots: ${hour}/12` : '');
     }
     const processed = Number(metadata.processed_files);
     const expected = Number(metadata.expected_files);
@@ -1663,7 +1664,7 @@ function updateGLMTrendCard() {
             </div>
             <div class="glm-trend-card__regional">${regionalLine}</div>
             <div class="glm-trend-card__footnote">
-                Controlled-mosaic five-minute flash-extent contributions. The map layer shows local gridcell trend classifications, while this card summarizes the selected domain. Classification compares the newest 15-minute mean with the preceding 15-minute mean. Valid through ${formatMetadataUTC(payload.window_end_utc)}.
+                Controlled-mosaic five-minute flash-extent contributions. The map layer shows local gridcell trend classifications plus muted gray past-hour lightning context, while this card summarizes the selected domain. Classification compares the newest 15-minute neighborhood sum with the preceding 15-minute neighborhood sum. Valid through ${formatMetadataUTC(payload.window_end_utc)}.
             </div>
         </div>
     `;
@@ -2428,10 +2429,10 @@ const GLM_FALLBACK_RENDERING = {
         units: 'flash extent contributions per 0.02-degree grid cell'
     },
     trendMap: {
-        labels: ['Rapidly Decreasing', 'Decreasing', 'Steady', 'Increasing', 'Rapidly Increasing'],
+        labels: ['Past-Hour Lightning Context', 'Rapidly Decreasing', 'Decreasing', 'Steady', 'Increasing', 'Rapidly Increasing'],
         rgba: [
-            [56, 118, 255, 224], [76, 234, 255, 220], [255, 232, 120, 214],
-            [255, 170, 64, 224], [255, 72, 72, 232]
+            [142, 146, 158, 156], [56, 118, 255, 224], [76, 234, 255, 220],
+            [255, 232, 120, 214], [255, 170, 64, 224], [255, 72, 72, 232]
         ],
         units: 'categorical 15-minute convective trend class'
     }
