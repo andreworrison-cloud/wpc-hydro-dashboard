@@ -145,6 +145,48 @@ customStyle.innerHTML = `
         font-size: 8px;
         line-height: 1.25;
     }
+    .utility-toggle-field {
+        padding: 7px 8px;
+        border: 1px solid rgba(127, 215, 255, 0.18);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.025);
+    }
+    .utility-toggle-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        color: #e8f5ff;
+        cursor: pointer;
+        font-size: 11px;
+        line-height: 1.2;
+    }
+    .utility-toggle-row input {
+        margin: 2px 0 0;
+        accent-color: #6fd3ff;
+    }
+    .utility-toggle-row strong {
+        display: block;
+        font-size: 11px;
+    }
+    .utility-toggle-row small {
+        display: block;
+        margin-top: 3px;
+        color: #8ea5b6;
+        font-size: 9px;
+        line-height: 1.25;
+    }
+    .ufvs-domain-tooltip {
+        padding: 4px 7px;
+        border: 1px solid rgba(111, 211, 255, 0.75);
+        border-radius: 4px;
+        background: rgba(8, 23, 35, 0.94);
+        color: #f5fbff;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+        font-size: 10px;
+        font-weight: 800;
+        white-space: nowrap;
+    }
     @media (max-width: 420px) {
         .glm-trend-card__header {
             grid-template-columns: 1fr;
@@ -226,6 +268,77 @@ map.getPane('floodWarnings').style.zIndex = 451;
 
 map.createPane('flashFloodWarnings');
 map.getPane('flashFloodWarnings').style.zIndex = 452;
+
+// UFVS verification domains are an independent utility overlay. Keep the
+// boundaries above raster data but below the map-label pane.
+map.createPane('ufvsDomains');
+map.getPane('ufvsDomains').style.zIndex = 590;
+
+const UFVS_GEOGRAPHIC_DOMAINS = [
+    { id: 'west-coast', label: 'West Coast', west: -125.0, east: -117.0, south: 32.0, north: 49.0},
+    { id: 'southwest', label: 'Southwest', west: -117.0, east: -104.0, south: 28.0, north: 42.0},
+    { id: 'interior-mountain-west', label: 'Interior Mountain West', west: -117.0, east: -104.0, south: 42.0, north: 49.0},
+    { id: 'northern-plains', label: 'Northern Plains', west: -104.0, east: -85.0, south: 38.0, north: 49.0},
+    { id: 'southern-plains', label: 'Southern Plains', west: -104.0, east: -85.0, south: 25.0, north: 38.0},
+    { id: 'southeast', label: 'Southeast', west: -85.0, east: -65.0, south: 24.0, north: 38.0},
+    { id: 'northeast', label: 'Northeast', west: -85.0, east: -65.0, south: 38.0, north: 49.0}
+];
+const UFVS_DOMAINS_SESSION_KEY = 'wpc-ufvs-geographic-domains-v1';
+const ufvsGeographicDomainsLayer = L.layerGroup();
+
+UFVS_GEOGRAPHIC_DOMAINS.forEach(domain => {
+    const rectangle = L.rectangle(
+        [[domain.south, domain.west], [domain.north, domain.east]],
+        {
+            pane: 'ufvsDomains',
+            color: '#6fd3ff',
+            weight: 1.5,
+            opacity: 0.88,
+            dashArray: '7 5',
+            fill: false,
+            interactive: true,
+            bubblingMouseEvents: false
+        }
+    );
+    rectangle.bindTooltip(domain.label, {
+        sticky: true,
+        direction: 'top',
+        className: 'ufvs-domain-tooltip'
+    });
+    rectangle.addTo(ufvsGeographicDomainsLayer);
+});
+
+function readUFVSDomainsVisibility() {
+    try {
+        return window.sessionStorage.getItem(UFVS_DOMAINS_SESSION_KEY) === '1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function writeUFVSDomainsVisibility(isVisible) {
+    try {
+        window.sessionStorage.setItem(UFVS_DOMAINS_SESSION_KEY, isVisible ? '1' : '0');
+    } catch (error) {
+        // Session storage is optional; the utility remains functional in-page.
+    }
+}
+
+function setUFVSGeographicDomainsVisible(isVisible, persist = true) {
+    const shouldShow = Boolean(isVisible);
+    if (shouldShow && !map.hasLayer(ufvsGeographicDomainsLayer)) {
+        map.addLayer(ufvsGeographicDomainsLayer);
+    } else if (!shouldShow && map.hasLayer(ufvsGeographicDomainsLayer)) {
+        map.removeLayer(ufvsGeographicDomainsLayer);
+    }
+    if (persist) writeUFVSDomainsVisibility(shouldShow);
+    const toggle = document.getElementById('ufvs-geographic-domains-toggle');
+    if (toggle) toggle.checked = shouldShow;
+}
+
+if (readUFVSDomainsVisibility()) {
+    setUFVSGeographicDomainsVisible(true, false);
+}
 
 // --- BASEMAPS ---
 
@@ -453,6 +566,11 @@ const GLM_LAYER_CONFIGS = [
 const glmConfigByName = new Map(GLM_LAYER_CONFIGS.map(config => [config.name, config]));
 const glmMetadataByName = new Map();
 const glmReadyNames = new Set();
+const GLM_MANIFEST_URL = 'static/glm_mosaic_manifest.json';
+const GLM_MANIFEST_POLL_INTERVAL_MS = 90 * 1000;
+const GLM_MANIFEST_RETRY_DELAYS_MS = [0, 3500, 9000];
+let glmLastManifestVersion = '';
+let glmManifestCheckInFlight = false;
 const GLM_TREND_SESSION_KEY = 'wpc-glm-trend-domain-v1';
 const GLM_TREND_STATE_PRESENTATION = {
     rapidly_increasing: {
@@ -1411,7 +1529,7 @@ function formatGLMTimeBox(config, metadata) {
     `;
 }
 
-function applyGLMRasterMetadata(config, metadata) {
+function prepareGLMRasterMetadata(config, metadata) {
     if (!metadata || metadata.metadata_mode !== 'glm_dashboard_v1') {
         throw new Error(`${config.name}: invalid GLM metadata mode`);
     }
@@ -1439,7 +1557,6 @@ function applyGLMRasterMetadata(config, metadata) {
     const currentOpacity = glmReadyNames.has(config.name)
         ? Number(config.layer.options.opacity ?? config.defaultOpacity)
         : Number(metadata.default_opacity ?? config.defaultOpacity);
-    config.layer.setBounds(bounds);
     let rasterUrl = cacheBustedRasterUrl(config.imageUrl, {
         generated_time_utc: metadata.generated_time_utc,
         valid_time_iso: metadata.window_end_utc || metadata.generated_time_utc
@@ -1451,10 +1568,26 @@ function applyGLMRasterMetadata(config, metadata) {
         }
         rasterUrl = `data:image/png;base64,${encoded}`;
     }
+    return {
+        config,
+        metadata,
+        bounds,
+        rasterUrl,
+        opacity: Number.isFinite(currentOpacity) ? currentOpacity : config.defaultOpacity
+    };
+}
+
+function commitGLMRasterMetadata(prepared) {
+    const {config, metadata, bounds, rasterUrl, opacity} = prepared;
+    config.layer.setBounds(bounds);
     config.layer.setUrl(rasterUrl);
-    config.layer.setOpacity(Number.isFinite(currentOpacity) ? currentOpacity : config.defaultOpacity);
+    config.layer.setOpacity(opacity);
     glmMetadataByName.set(config.name, metadata);
     glmReadyNames.add(config.name);
+}
+
+function applyGLMRasterMetadata(config, metadata) {
+    commitGLMRasterMetadata(prepareGLMRasterMetadata(config, metadata));
 }
 
 function updateGLMTimeBox(preferredName = null) {
@@ -1679,36 +1812,127 @@ function updateGLMTrendCard() {
     refreshLegendDockSummary();
 }
 
-async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS) {
+async function fetchGLMMetadata(configs = GLM_LAYER_CONFIGS, options = {}) {
+    const expectedWindowEnd = options?.expectedWindowEnd || null;
+    const requireComplete = Boolean(options?.requireComplete);
     const cacheToken = Date.now();
     const results = await Promise.allSettled(configs.map(async config => {
         const response = await fetch(`${config.metadataUrl}?t=${cacheToken}`, {cache: 'no-store'});
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const metadata = await response.json();
-        applyGLMRasterMetadata(config, metadata);
-        return {config, metadata};
+        return prepareGLMRasterMetadata(config, metadata);
     }));
 
+    const preparedRecords = [];
     results.forEach((result, index) => {
         const config = configs[index];
-        if (result.status === 'rejected') {
-            if (!glmReadyNames.has(config.name)) config.layer.setOpacity(0);
-            console.error(`GLM raster update failed for ${config.name}:`, result.reason);
+        if (result.status === 'fulfilled') {
+            preparedRecords.push(result.value);
+            return;
         }
+        if (!glmReadyNames.has(config.name)) config.layer.setOpacity(0);
+        console.error(`GLM raster update failed for ${config.name}:`, result.reason);
     });
 
-    const operationalConfigs = GLM_LAYER_CONFIGS.filter(config => !config.debug);
-    const mainEnds = operationalConfigs
-        .map(config => glmMetadataByName.get(config.name)?.window_end_utc)
-        .filter(Boolean);
-    if (mainEnds.length === operationalConfigs.length && new Set(mainEnds).size !== 1) {
-        console.error('GOES GLM operational products are not synchronized:', mainEnds);
-        operationalConfigs.forEach(config => config.layer.setOpacity(0));
+    if (requireComplete && preparedRecords.length !== configs.length) {
+        return false;
     }
+
+    const operationalRequested = configs.filter(config => !config.debug);
+    const operationalPrepared = preparedRecords.filter(item => !item.config.debug);
+    const operationalEnds = operationalPrepared
+        .map(item => item.metadata.window_end_utc)
+        .filter(Boolean);
+
+    if (
+        expectedWindowEnd &&
+        operationalPrepared.some(item => item.metadata.window_end_utc !== expectedWindowEnd)
+    ) {
+        console.warn('GOES GLM files are still propagating through GitHub Pages; retaining the previous package.');
+        return false;
+    }
+
+    if (
+        operationalPrepared.length === operationalRequested.length &&
+        operationalEnds.length === operationalRequested.length &&
+        new Set(operationalEnds).size !== 1
+    ) {
+        console.error('GOES GLM operational products are not synchronized:', operationalEnds);
+        return false;
+    }
+
+    preparedRecords.forEach(commitGLMRasterMetadata);
     updateGLMTimeBox();
     updateGLMTrendCard();
     if (typeof updateLegends === 'function') updateLegends();
+    return preparedRecords.length > 0 && (!requireComplete || preparedRecords.length === configs.length);
 }
+
+function glmManifestVersion(manifest) {
+    return [manifest?.window_end_utc || '', manifest?.generated_time_utc || ''].join('|');
+}
+
+function waitForGLMRefresh(milliseconds) {
+    return new Promise(resolve => window.setTimeout(resolve, milliseconds));
+}
+
+async function fetchGLMManifest() {
+    const response = await fetch(`${GLM_MANIFEST_URL}?t=${Date.now()}`, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const manifest = await response.json();
+    if (!manifest || manifest.metadata_mode !== 'glm_dashboard_v1' || !manifest.window_end_utc) {
+        throw new Error('Invalid GLM manifest');
+    }
+    return manifest;
+}
+
+async function refreshGLMFromManifest({forceMetadata = false} = {}) {
+    if (glmManifestCheckInFlight) return false;
+    glmManifestCheckInFlight = true;
+    try {
+        const manifest = await fetchGLMManifest();
+        const version = glmManifestVersion(manifest);
+        if (!forceMetadata && version && version === glmLastManifestVersion) {
+            return false;
+        }
+
+        for (const delay of GLM_MANIFEST_RETRY_DELAYS_MS) {
+            if (delay > 0) await waitForGLMRefresh(delay);
+            const refreshed = await fetchGLMMetadata(GLM_LAYER_CONFIGS, {
+                expectedWindowEnd: manifest.window_end_utc,
+                requireComplete: true
+            });
+            if (refreshed) {
+                glmLastManifestVersion = version;
+                return true;
+            }
+        }
+        console.warn('GOES GLM manifest changed, but the complete synchronized package is not available yet.');
+        return false;
+    } catch (error) {
+        console.error('GOES GLM manifest check failed:', error);
+        if (forceMetadata && glmReadyNames.size === 0) {
+            return fetchGLMMetadata(GLM_LAYER_CONFIGS, {requireComplete: true});
+        }
+        return false;
+    } finally {
+        glmManifestCheckInFlight = false;
+    }
+}
+
+function checkGLMUpdatesNow() {
+    refreshGLMFromManifest();
+}
+
+window.setInterval(() => {
+    if (!document.hidden) checkGLMUpdatesNow();
+}, GLM_MANIFEST_POLL_INTERVAL_MS);
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkGLMUpdatesNow();
+});
+window.addEventListener('focus', checkGLMUpdatesNow);
+window.addEventListener('online', checkGLMUpdatesNow);
 
 async function fetchNWMMetadata() {
     try {
@@ -1861,7 +2085,7 @@ fetchRAPMetadata();
 fetchCAMMetadata();
 fetchEROCAMMetadata();
 fetchMRMSFlash24hMetadata();
-fetchGLMMetadata();
+refreshGLMFromManifest({forceMetadata: true});
 fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
@@ -1877,8 +2101,7 @@ setInterval(() => {
     fetchNLDASRSMMetadata();
 }, 15 * 60 * 1000); 
 
-// GLM products are generated on a 10-minute operational cadence.
-setInterval(() => fetchGLMMetadata(), 10 * 60 * 1000);
+// GLM products are refreshed by the manifest watcher above.
 
 function getValidTimeRange(cycleStr, windowStr) {
     if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
@@ -3217,6 +3440,15 @@ function renderUtilitySection(container) {
             <label for="basemap-select">Basemap</label>
             <select id="basemap-select" aria-label="Select basemap"></select>
         </div>
+        <div class="utility-toggle-field">
+            <label class="utility-toggle-row" for="ufvs-geographic-domains-toggle">
+                <input id="ufvs-geographic-domains-toggle" type="checkbox">
+                <span>
+                    <strong>UFVS Geographic Domains</strong>
+                    <small>Overlay the seven WPC verification domains. Hover over a boundary for its domain name.</small>
+                </span>
+            </label>
+        </div>
         <div class="opacity-control">
             <label for="layer-opacity">Selected raster opacity</label>
             <div class="opacity-row">
@@ -3253,6 +3485,12 @@ function renderUtilitySection(container) {
         });
         if (!map.hasLayer(next.layer)) map.addLayer(next.layer);
         map.fire('baselayerchange', {name: next.label, layer: next.layer});
+    });
+
+    const ufvsDomainsToggle = body.querySelector('#ufvs-geographic-domains-toggle');
+    ufvsDomainsToggle.checked = map.hasLayer(ufvsGeographicDomainsLayer);
+    ufvsDomainsToggle.addEventListener('change', event => {
+        setUFVSGeographicDomainsVisible(event.target.checked);
     });
 
     body.querySelector('#layer-opacity').addEventListener('input', event => {
@@ -3297,6 +3535,7 @@ function renderUtilitySection(container) {
         if (!map.hasLayer(defaultBase.layer)) map.addLayer(defaultBase.layer);
         map.fire('baselayerchange', {name: defaultBase.label, layer: defaultBase.layer});
         basemapSelect.value = defaultBase.id;
+        setUFVSGeographicDomainsVisible(false);
         map.setView([39.8283, -98.5795], 5);
     });
 }
