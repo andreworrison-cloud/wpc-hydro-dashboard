@@ -269,8 +269,10 @@ map.getPane('floodWarnings').style.zIndex = 451;
 map.createPane('flashFloodWarnings');
 map.getPane('flashFloodWarnings').style.zIndex = 452;
 
-// UFVS verification domains are an independent utility overlay. Keep the
-// boundaries above raster data but below the map-label pane.
+// Authoritative fixed WPC UFVS geographic domains used for verification.
+// Keep these bounds synchronized with UFVS_TREND_DOMAINS in
+// fetch_glm_mosaic.py. Boundaries are displayed above raster data but below
+// the map-label pane.
 map.createPane('ufvsDomains');
 map.getPane('ufvsDomains').style.zIndex = 590;
 
@@ -279,9 +281,9 @@ const UFVS_GEOGRAPHIC_DOMAINS = [
     { id: 'southwest', label: 'Southwest', west: -117.0, east: -104.0, south: 28.0, north: 42.0},
     { id: 'interior-mountain-west', label: 'Interior Mountain West', west: -117.0, east: -104.0, south: 42.0, north: 49.0},
     { id: 'northern-plains', label: 'Northern Plains', west: -104.0, east: -85.0, south: 38.0, north: 49.0},
-    { id: 'southern-plains', label: 'Southern Plains', west: -104.0, east: -85.0, south: 25.0, north: 38.0},
-    { id: 'southeast', label: 'Southeast', west: -85.0, east: -65.0, south: 24.0, north: 38.0},
-    { id: 'northeast', label: 'Northeast', west: -85.0, east: -65.0, south: 38.0, north: 49.0}
+    { id: 'southern-plains', label: 'Southern Plains', west: -104.0, east: -90.0, south: 24.0, north: 38.0},
+    { id: 'southeast', label: 'Southeast', west: -90.0, east: -75.0, south: 24.0, north: 38.0},
+    { id: 'northeast', label: 'Northeast', west: -85.0, east: -66.0, south: 38.0, north: 49.0}
 ];
 const UFVS_DOMAINS_SESSION_KEY = 'wpc-ufvs-geographic-domains-v1';
 const ufvsGeographicDomainsLayer = L.layerGroup();

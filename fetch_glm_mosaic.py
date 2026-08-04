@@ -137,9 +137,10 @@ SOURCE_RGBA = [
     (255, 196, 0, 92),
 ]
 
-# UFVS rectangular domains used consistently across the user's verification
-# and climatology work. Boundaries are evaluated as half-open intervals so
-# adjacent domains do not double-count grid cells.
+# Authoritative fixed WPC UFVS rectangular domains supplied for verification.
+# The dashboard overlay in app.js must use these exact same bounds. Geographic
+# slices are evaluated as half-open intervals so adjacent domains do not
+# double-count GLM grid cells along shared boundaries.
 UFVS_TREND_DOMAINS = [
     {
         "id": "west-coast",
@@ -177,15 +178,15 @@ UFVS_TREND_DOMAINS = [
         "id": "southern-plains",
         "label": "Southern Plains",
         "west": -104.0,
-        "east": -85.0,
-        "south": 25.0,
+        "east": -90.0,
+        "south": 24.0,
         "north": 38.0,
     },
     {
         "id": "southeast",
         "label": "Southeast",
-        "west": -85.0,
-        "east": -65.0,
+        "west": -90.0,
+        "east": -75.0,
         "south": 24.0,
         "north": 38.0,
     },
@@ -193,7 +194,7 @@ UFVS_TREND_DOMAINS = [
         "id": "northeast",
         "label": "Northeast",
         "west": -85.0,
-        "east": -65.0,
+        "east": -66.0,
         "south": 38.0,
         "north": 49.0,
     },
@@ -1808,7 +1809,7 @@ def build_convective_trend_analysis(
             "id": "conus",
             "label": "CONUS",
             "bounds": None,
-            "definition": "Union of the seven UFVS rectangular domains",
+            "definition": "Union of the seven authoritative fixed WPC UFVS rectangular domains",
         }
     }
     for item in UFVS_TREND_DOMAINS:
@@ -1875,7 +1876,8 @@ def build_convective_trend_analysis(
             "flash_extent_contributions": TREND_LOW_ACTIVITY_CONTRIBUTIONS,
             "active_grid_cells": TREND_LOW_ACTIVITY_ACTIVE_CELLS,
         },
-        "domain_framework": "UFVS seven-domain rectangular framework",
+        "domain_framework": "Authoritative fixed WPC UFVS seven-domain rectangular framework",
+        "domain_bounds_policy": "Half-open geographic intervals prevent double-counting along shared UFVS boundaries",
         "default_domain_id": "conus",
         "domain_order": domain_order,
         "leading_increase_domain_id": leading_increase_domain_id,
