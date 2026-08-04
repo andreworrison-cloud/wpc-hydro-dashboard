@@ -8,6 +8,7 @@ app = (ROOT / "app.js").read_text(encoding="utf-8")
 index = (ROOT / "index.html").read_text(encoding="utf-8")
 css = (ROOT / "style.css").read_text(encoding="utf-8")
 glm_generator = (ROOT / "fetch_glm_mosaic.py").read_text(encoding="utf-8")
+glm_workflow = (ROOT / ".github" / "workflows" / "update_glm_mosaic.yml").read_text(encoding="utf-8")
 
 errors = []
 
@@ -193,6 +194,11 @@ required_glm_fragments = [
     "GOES GLM Controlled Mosaic — Convective Trend (15 min)",
     "embedded_png_base64",
     "glm-convective-trend-15min",
+    "color: '#ff4848'",
+    "color: '#ffaa40'",
+    "color: '#ffe878'",
+    "color: '#4ceaff'",
+    "color: '#3876ff'",
 ]
 for fragment in required_glm_fragments:
     if fragment not in app:
@@ -222,6 +228,15 @@ for fragment in required_glm_generator_fragments:
     if fragment not in glm_generator:
         errors.append(f"Missing GOES GLM generator legend contract: {fragment}")
 
+
+required_glm_workflow_fragments = [
+    "glm_convective_trend_15min_metadata.json",
+    "GLM trend-map metadata contract failed",
+    "embedded_png_base64",
+]
+for fragment in required_glm_workflow_fragments:
+    if fragment not in glm_workflow:
+        errors.append(f"Missing GOES GLM workflow publication fragment: {fragment}")
 
 for forbidden in [
     "glm-debug-g18-5min",
