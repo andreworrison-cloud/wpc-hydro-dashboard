@@ -225,10 +225,13 @@ TREND_MAP_RGBA = [
 ]
 TREND_MAP_DISPLAY_LABEL = "GOES GLM Controlled Mosaic — Convective Trend (15 min)"
 TREND_MAP_UNITS = "categorical 15-minute convective trend class"
-TREND_MAP_LOW_SIGNAL_THRESHOLD = 4.0
-TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE = 2.0
+TREND_MAP_LOW_SIGNAL_THRESHOLD = 3.0
+TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE = 1.25
+TREND_MAP_NEIGHBORHOOD_RADIUS_CELLS = 2
 TREND_MAP_SMOOTHING_PASSES = 1
 TREND_MAP_MIN_NEIGHBOR_SUPPORT = 3
+TREND_MAP_MIN_COMPONENT_PIXELS = 4
+TREND_MAP_DISPLAY_RADIUS_PIXELS = 2
 
 
 @dataclass(frozen=True)
@@ -1897,6 +1900,56 @@ def _controlled_slot_mosaic(
     return build_controlled_mosaic(per_satellite["G18"], per_satellite["G19"], owner)
 
 
+def _box_filter_mean(array: np.ndarray, radius_cells: int) -> np.ndarray:
+    source = np.asarray(array, dtype=np.float32)
+    if radius_cells <= 0:
+        return source.copy()
+    padded = np.pad(source, radius_cells, mode="edge")
+    integral = np.pad(padded, ((1, 0), (1, 0)), mode="constant", constant_values=0.0).cumsum(axis=0).cumsum(axis=1)
+    kernel = 2 * radius_cells + 1
+    window_sum = (
+        integral[kernel:, kernel:]
+        - integral[:-kernel, kernel:]
+        - integral[kernel:, :-kernel]
+        + integral[:-kernel, :-kernel]
+    )
+    return window_sum / float(kernel * kernel)
+
+
+def _remove_small_components(array: np.ndarray, minimum_pixels: int) -> np.ndarray:
+    source = np.asarray(array, dtype=np.uint8)
+    if minimum_pixels <= 1:
+        return source.copy()
+    height, width = source.shape
+    visited = np.zeros((height, width), dtype=bool)
+    result = source.copy()
+    neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    for row in range(height):
+        for col in range(width):
+            code = int(source[row, col])
+            if code == 0 or visited[row, col]:
+                continue
+            stack = [(row, col)]
+            visited[row, col] = True
+            component = []
+            while stack:
+                current_row, current_col = stack.pop()
+                component.append((current_row, current_col))
+                for d_row, d_col in neighbors:
+                    next_row = current_row + d_row
+                    next_col = current_col + d_col
+                    if not (0 <= next_row < height and 0 <= next_col < width):
+                        continue
+                    if visited[next_row, next_col] or int(source[next_row, next_col]) != code:
+                        continue
+                    visited[next_row, next_col] = True
+                    stack.append((next_row, next_col))
+            if len(component) < minimum_pixels:
+                for current_row, current_col in component:
+                    result[current_row, current_col] = 0
+    return result
+
+
 def _majority_filter_classes(array: np.ndarray, class_codes: Sequence[int]) -> np.ndarray:
     source = np.asarray(array, dtype=np.uint8)
     padded = np.pad(source, 1, mode="constant", constant_values=0)
@@ -1968,15 +2021,18 @@ def build_convective_trend_map_product(
     classified = np.zeros((grid.height, grid.width), dtype=np.uint8)
     recent_avg = recent_sum / max(1, recent_available)
     prior_avg = prior_sum / max(1, prior_available)
-    denom = recent_avg + prior_avg
-    change = np.zeros_like(recent_avg, dtype=np.float32)
+    recent_smoothed = _box_filter_mean(recent_avg, TREND_MAP_NEIGHBORHOOD_RADIUS_CELLS)
+    prior_smoothed = _box_filter_mean(prior_avg, TREND_MAP_NEIGHBORHOOD_RADIUS_CELLS)
+    combined_smoothed = recent_smoothed + prior_smoothed
+    denom = combined_smoothed.copy()
+    change = np.zeros_like(recent_smoothed, dtype=np.float32)
     nonzero = denom > 0.0
-    change[nonzero] = 200.0 * (recent_avg[nonzero] - prior_avg[nonzero]) / denom[nonzero]
+    change[nonzero] = 200.0 * (recent_smoothed[nonzero] - prior_smoothed[nonzero]) / denom[nonzero]
 
     if recent_available >= 2 and prior_available >= 2:
         significant = (
-            ((recent_sum + prior_sum) >= TREND_MAP_LOW_SIGNAL_THRESHOLD)
-            | (np.maximum(recent_avg, prior_avg) >= TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE)
+            (combined_smoothed >= TREND_MAP_LOW_SIGNAL_THRESHOLD)
+            | (np.maximum(recent_smoothed, prior_smoothed) >= TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE)
         )
         classified[significant & (change <= TREND_RAPID_DECREASE_THRESHOLD_PERCENT)] = 1
         classified[significant & (change > TREND_RAPID_DECREASE_THRESHOLD_PERCENT) & (change <= TREND_DECREASE_THRESHOLD_PERCENT)] = 2
@@ -1985,6 +2041,7 @@ def build_convective_trend_map_product(
         classified[significant & (change >= TREND_RAPID_INCREASE_THRESHOLD_PERCENT)] = 5
         for _ in range(max(0, int(TREND_MAP_SMOOTHING_PASSES))):
             classified = _majority_filter_classes(classified, TREND_MAP_BINS)
+        classified = _remove_small_components(classified, TREND_MAP_MIN_COMPONENT_PIXELS)
         classified = _suppress_isolated_classes(classified, TREND_MAP_MIN_NEIGHBOR_SUPPORT)
 
     temp_png = output_dir / 'glm_convective_trend_15min_embedded.png'
@@ -1995,7 +2052,7 @@ def build_convective_trend_map_product(
         args.maximum_render_dimension,
         TREND_MAP_BINS,
         TREND_MAP_RGBA,
-        display_radius_pixels=1,
+        display_radius_pixels=TREND_MAP_DISPLAY_RADIUS_PIXELS,
     )
     embedded_png_base64 = base64.b64encode(temp_png.read_bytes()).decode('ascii')
 
@@ -2018,7 +2075,7 @@ def build_convective_trend_map_product(
         'grid': compact_grid_metadata(grid, bounds, shape, transform),
         'rendering': {
             'resampling': 'nearest',
-            'display_footprint_radius_pixels': 1,
+            'display_footprint_radius_pixels': int(TREND_MAP_DISPLAY_RADIUS_PIXELS),
             'display_only_enhancement': True,
             'bins': list(TREND_MAP_BINS),
             'labels': list(TREND_MAP_LABELS),
@@ -2037,9 +2094,11 @@ def build_convective_trend_map_product(
             'recent_or_prior_mean_value': TREND_MAP_MIN_RECENT_OR_PRIOR_VALUE,
         },
         'smoothing': {
+            'spatial_aggregation_neighborhood': f'{2 * TREND_MAP_NEIGHBORHOOD_RADIUS_CELLS + 1}x{2 * TREND_MAP_NEIGHBORHOOD_RADIUS_CELLS + 1} box mean',
             'majority_filter_neighborhood': '3x3',
             'majority_filter_passes': int(TREND_MAP_SMOOTHING_PASSES),
             'minimum_neighbor_support': int(TREND_MAP_MIN_NEIGHBOR_SUPPORT),
+            'minimum_component_pixels': int(TREND_MAP_MIN_COMPONENT_PIXELS),
         },
         'input_slot_summary': {
             'recent_required_slots': TREND_RECENT_SLOT_COUNT,
