@@ -51,7 +51,6 @@ required_labels = [
     "GOES GLM Controlled Mosaic — Latest 5-Minute FED",
     "GOES GLM Controlled Mosaic — Rolling 30-Minute Accumulation",
     "GOES GLM Controlled Mosaic — Rolling 60-Minute Accumulation",
-    "GLM Debug — Mosaic Source Ownership",
     "NWM Soil Saturation (0-40cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
@@ -170,28 +169,34 @@ required_glm_fragments = [
     "static/glm_conus_mosaic_5min.png",
     "static/glm_conus_mosaic_30min.png",
     "static/glm_conus_mosaic_60min.png",
-    "static/glm_g18_fed_5min.png",
-    "static/glm_g19_fed_5min.png",
-    "static/glm_mosaic_source_ownership.png",
     "glm_dashboard_v1",
     "fetchGLMMetadata",
     "glm-time-box",
     "glmFiveMinuteLegendHTML",
     "glmRollingLegendHTML",
-    "glmOwnershipLegendHTML",
-    "dashboardUtilityLayers",
     "enforceExclusiveGLMSelection",
+    "exclusiveGroup: 'glm-primary'",
 ]
 for fragment in required_glm_fragments:
     if fragment not in app:
         errors.append(f"Missing GOES GLM integration fragment: {fragment}")
+
+
+for forbidden in [
+    "glm-debug-g18-5min",
+    "glm-debug-g19-5min",
+    "glm-debug-ownership",
+    "GLM Debug Layers",
+]:
+    if forbidden in app:
+        errors.append(f"Production dashboard still exposes forbidden GLM debug control: {forbidden}")
 
 ids = re.findall(r"\{id: '([a-z0-9-]+)', label:", app)
 duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
 
-expected_layer_count = 110
+expected_layer_count = 103
 if len(ids) != expected_layer_count:
     errors.append(
         f"Expected {expected_layer_count} registered layers, found {len(ids)}."
