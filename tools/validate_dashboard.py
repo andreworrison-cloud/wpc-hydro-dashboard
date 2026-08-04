@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 app = (ROOT / "app.js").read_text(encoding="utf-8")
 index = (ROOT / "index.html").read_text(encoding="utf-8")
 css = (ROOT / "style.css").read_text(encoding="utf-8")
+glm_generator = (ROOT / "fetch_glm_mosaic.py").read_text(encoding="utf-8")
 
 errors = []
 
@@ -172,14 +173,32 @@ required_glm_fragments = [
     "glm_dashboard_v1",
     "fetchGLMMetadata",
     "glm-time-box",
-    "glmFiveMinuteLegendHTML",
-    "glmRollingLegendHTML",
+    "glmLegendHTMLFromMetadata",
+    "validateGLMRenderingMetadata",
+    "metadata.rendering",
     "enforceExclusiveGLMSelection",
     "exclusiveGroup: 'glm-primary'",
 ]
 for fragment in required_glm_fragments:
     if fragment not in app:
         errors.append(f"Missing GOES GLM integration fragment: {fragment}")
+
+if "const glmFiveMinuteLegendHTML" in app or "const glmRollingLegendHTML" in app:
+    errors.append("GOES GLM legends are still hardcoded separately from product metadata.")
+
+required_glm_generator_fragments = [
+    "FIVE_MIN_BINS = [1, 2, 4, 8, 16, 32, 64, 128, 256]",
+    '"128–255", "≥256"',
+    "ROLLING_BINS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]",
+    '"128–255", "256–511", "≥512"',
+    '"rendering": {',
+    '"bins": list(bins)',
+    '"labels": list(labels)',
+    '"rgba": [list(color) for color in colors]',
+]
+for fragment in required_glm_generator_fragments:
+    if fragment not in glm_generator:
+        errors.append(f"Missing GOES GLM generator legend contract: {fragment}")
 
 
 for forbidden in [
@@ -231,9 +250,9 @@ if "nldas-rsm-v1" not in index:
     errors.append(
         "Frontend cache-busting token for NLDAS RSM integration is missing."
     )
-if "glm-v1" not in index:
+if "glm-v2" not in index:
     errors.append(
-        "Frontend cache-busting token for GOES GLM integration is missing."
+        "Frontend cache-busting token for GOES GLM metadata-driven legends is missing."
     )
 
 if errors:
