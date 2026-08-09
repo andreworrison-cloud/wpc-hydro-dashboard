@@ -1,14 +1,14 @@
 {
-  "metadata_mode": "lightningcast_dashboard_v1",
+  "metadata_mode": "lightningcast_dashboard_v1b",
   "product_role": "probability_of_lightning_next_60_minutes",
   "display_label": "CIMSS/SSEC LightningCast \u2014 Probability of Lightning in Next 60 Minutes",
   "source_product": "LightningCast CONUS GRLevelX placefile loops",
   "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
-  "scan_time_utc": "2026-08-09T04:31:00Z",
-  "forecast_window_start_utc": "2026-08-09T04:31:00Z",
-  "forecast_window_end_utc": "2026-08-09T05:31:00Z",
-  "fetched_at_utc": "2026-08-09T04:38:58Z",
-  "frame_age_minutes_at_fetch": 7.98,
+  "scan_time_utc": "2026-08-09T04:51:00Z",
+  "forecast_window_start_utc": "2026-08-09T04:51:00Z",
+  "forecast_window_end_utc": "2026-08-09T05:51:00Z",
+  "fetched_at_utc": "2026-08-09T04:56:21Z",
+  "frame_age_minutes_at_fetch": 5.37,
   "probability_thresholds_percent": [
     10,
     30,
@@ -23,15 +23,23 @@
   },
   "source_permission": "CIMSS/SSEC permission obtained by the WPC dashboard project owner for direct server pulls and dashboard display.",
   "satellite_ownership": {
-    "method": "exclusive fixed longitude ownership",
-    "seam_longitude": -106.1,
-    "GOES-West": "longitude < -106.1",
-    "GOES-East": "longitude >= -106.1",
+    "method": "whole-contour representative-longitude ownership",
     "summation": false,
     "averaging": false,
     "blending": false,
     "gap_fill": false,
-    "note": "Dashboard-defined seam retained for consistency with the observed GLM controlled-mosaic suite."
+    "cross_seam_polygon_splitting": false,
+    "representative_longitude_field": "mean contour longitude",
+    "overlap_longitude_metadata": {
+      "east_min_lon": -119.013,
+      "east_max_lon": -60.208,
+      "west_min_lon": -168.415,
+      "west_max_lon": -97.644,
+      "overlap_west_lon": -119.013,
+      "overlap_east_lon": -97.644,
+      "decision_longitude": -108.3285
+    },
+    "note": "Contours are not cut at a fixed seam. Whole contours are assigned by representative longitude only within the dynamic East/West overlap region."
   },
   "rendering": {
     "image_crs": "EPSG:3857",
@@ -117,6 +125,7 @@
     ],
     "closed_contours_filled": true,
     "open_contours_line_only": true,
+    "close_contour_tolerance_degrees": 0.2,
     "resampling": "not applicable; vector contours rendered directly to Web Mercator"
   },
   "source_summary": {
@@ -125,10 +134,10 @@
       "refresh_seconds": 1,
       "frame_count": 13,
       "selected_frame_contours": {
-        "10": 128,
-        "30": 83,
-        "50": 71,
-        "70": 55,
+        "10": 123,
+        "30": 80,
+        "50": 61,
+        "70": 50,
         "90": 37
       },
       "threshold_colors_observed": {
@@ -173,12 +182,12 @@
       "warnings": [],
       "fetch": {
         "http_status": 200,
-        "bytes_downloaded": 3520569,
-        "download_seconds": 0.499,
+        "bytes_downloaded": 3457369,
+        "download_seconds": 1.198,
         "download_attempt": 1,
-        "last_modified": "Sun, 09 Aug 2026 04:34:25 GMT",
-        "etag": "\"35b839-65895c09b9030\"",
-        "sha256": "03b7f3ad630440e9913f70ea3c682cc5fa4b50489affe70c4f90d4a69caac51c"
+        "last_modified": "Sun, 09 Aug 2026 04:54:42 GMT",
+        "etag": "\"34c159-6589609339bfe\"",
+        "sha256": "b829dcd9cc3fd3ce7a374eecc6431be9473a7ccd02326fa944bbe6bfa033b289"
       }
     },
     "GOES-West": {
@@ -186,10 +195,10 @@
       "refresh_seconds": 1,
       "frame_count": 13,
       "selected_frame_contours": {
-        "10": 40,
-        "30": 14,
-        "50": 10,
-        "70": 7,
+        "10": 35,
+        "30": 17,
+        "50": 11,
+        "70": 5,
         "90": 5
       },
       "threshold_colors_observed": {
@@ -234,12 +243,12 @@
       "warnings": [],
       "fetch": {
         "http_status": 200,
-        "bytes_downloaded": 544343,
-        "download_seconds": 0.274,
+        "bytes_downloaded": 510411,
+        "download_seconds": 0.565,
         "download_attempt": 1,
-        "last_modified": "Sun, 09 Aug 2026 04:34:27 GMT",
-        "etag": "\"84e57-65895c0ba6ea9\"",
-        "sha256": "b5e8904d8ba6abef4d23bec02ad30b9e24ef4629ae8b0ce918dfc765c655235c"
+        "last_modified": "Sun, 09 Aug 2026 04:54:39 GMT",
+        "etag": "\"7c9cb-6589608fd7094\"",
+        "sha256": "8472c3e1d69e6a8dff7c16ce39d80664e6e73c8ebed82b4223023c58fc266cdb"
       }
     }
   },
@@ -249,36 +258,61 @@
     "has_visible_pixels": true,
     "source_contours_by_satellite_and_threshold": {
       "East": {
-        "10": 128,
-        "30": 83,
-        "50": 71,
-        "70": 55,
+        "10": 123,
+        "30": 80,
+        "50": 61,
+        "70": 50,
         "90": 37
       },
       "West": {
-        "10": 40,
-        "30": 14,
-        "50": 10,
-        "70": 7,
+        "10": 35,
+        "30": 17,
+        "50": 11,
+        "70": 5,
         "90": 5
       }
     },
+    "selected_contours_by_satellite_and_threshold": {
+      "East": {
+        "10": 110,
+        "30": 73,
+        "50": 54,
+        "70": 43,
+        "90": 34
+      },
+      "West": {
+        "10": 32,
+        "30": 15,
+        "50": 9,
+        "70": 3,
+        "90": 4
+      }
+    },
     "rendered_closed_contours_by_threshold": {
-      "10": 94,
-      "30": 58,
-      "50": 50,
-      "70": 35,
-      "90": 25
+      "10": 93,
+      "30": 57,
+      "50": 43,
+      "70": 32,
+      "90": 28
     },
     "rendered_open_contours_by_threshold": {
-      "10": 8,
-      "30": 2,
-      "50": 3,
-      "70": 3,
+      "10": 7,
+      "30": 3,
+      "50": 2,
+      "70": 2,
       "90": 1
     },
-    "source_color_mismatches": []
+    "source_color_mismatches": [],
+    "ownership_overlap": {
+      "east_min_lon": -119.013,
+      "east_max_lon": -60.208,
+      "west_min_lon": -168.415,
+      "west_max_lon": -97.644,
+      "overlap_west_lon": -119.013,
+      "overlap_east_lon": -97.644,
+      "decision_longitude": -108.3285
+    }
   },
   "leaflet_png": "lightningcast_conus_probability_60min.png",
-  "generated_time_utc": "2026-08-09T04:39:00Z"
+  "generated_time_utc": "2026-08-09T04:56:24Z"
 }
