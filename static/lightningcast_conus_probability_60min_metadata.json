@@ -1,14 +1,14 @@
 {
-  "metadata_mode": "lightningcast_dashboard_v1c",
+  "metadata_mode": "lightningcast_dashboard_v1d",
   "product_role": "probability_of_lightning_next_60_minutes",
   "display_label": "CIMSS/SSEC LightningCast \u2014 Probability of Lightning in Next 60 Minutes",
   "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
   "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
-  "scan_time_utc": "2026-08-09T05:06:00Z",
-  "forecast_window_start_utc": "2026-08-09T05:06:00Z",
-  "forecast_window_end_utc": "2026-08-09T06:06:00Z",
-  "fetched_at_utc": "2026-08-09T05:10:11Z",
-  "frame_age_minutes_at_fetch": 4.18,
+  "scan_time_utc": "2026-08-09T05:26:00Z",
+  "forecast_window_start_utc": "2026-08-09T05:26:00Z",
+  "forecast_window_end_utc": "2026-08-09T06:26:00Z",
+  "fetched_at_utc": "2026-08-09T05:31:38Z",
+  "frame_age_minutes_at_fetch": 5.64,
   "probability_thresholds_percent": [
     10,
     30,
@@ -23,17 +23,19 @@
   },
   "source_permission": "CIMSS/SSEC permission obtained by the WPC dashboard project owner for direct server pulls and dashboard display.",
   "satellite_ownership": {
-    "method": "fixed whole-contour representative-longitude ownership",
+    "method": "fixed whole-storm-object representative-longitude ownership",
     "ownership_longitude": -106.1,
-    "GOES-West": "whole contours with mean longitude < -106.1",
-    "GOES-East": "whole contours with mean longitude >= -106.1",
+    "GOES-West": "whole same-satellite contour families with representative longitude < -106.1",
+    "GOES-East": "whole same-satellite contour families with representative longitude >= -106.1",
     "summation": false,
     "averaging": false,
     "blending": false,
     "gap_fill": false,
     "cross_boundary_geometry_clipping": false,
-    "representative_longitude_field": "mean contour longitude",
-    "note": "The ownership longitude is fixed and does not depend on current convection. A contour is retained or rejected as a whole; no LightningCast contour is cut at the ownership longitude."
+    "cross_threshold_family_splitting": false,
+    "object_link_padding_degrees": 0.18,
+    "representative_longitude_field": "mean longitude of the object's outermost available probability contour(s)",
+    "note": "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. Source contour geometry is never cut or altered at the ownership longitude."
   },
   "rendering": {
     "image_crs": "EPSG:3857",
@@ -128,11 +130,11 @@
       "refresh_seconds": 1,
       "frame_count": 13,
       "selected_frame_contours": {
-        "10": 130,
-        "30": 88,
-        "50": 63,
-        "70": 50,
-        "90": 36
+        "10": 127,
+        "30": 83,
+        "50": 75,
+        "70": 53,
+        "90": 29
       },
       "threshold_colors_observed": {
         "10": [
@@ -176,21 +178,21 @@
       "warnings": [],
       "fetch": {
         "http_status": 200,
-        "bytes_downloaded": 3419013,
-        "download_seconds": 0.193,
+        "bytes_downloaded": 3359800,
+        "download_seconds": 0.342,
         "download_attempt": 1,
-        "last_modified": "Sun, 09 Aug 2026 05:09:20 GMT",
-        "etag": "\"342b85-658963d836e59\"",
-        "sha256": "b5d4c0bc0fe44104f0b4f75611665dbce4e7cbacb2f213d843dc2009f2073f99"
+        "last_modified": "Sun, 09 Aug 2026 05:29:19 GMT",
+        "etag": "\"334438-6589684fb3f93\"",
+        "sha256": "d0f6a2fd024e74472b7a4b3bc968b86c82f2ad5f41b96ec017af97c8196187bc"
       }
     },
     "GOES-West": {
       "title": "NOAA LightningCast  loop -- GOES-West CONUS sector",
       "refresh_seconds": 1,
-      "frame_count": 13,
+      "frame_count": 12,
       "selected_frame_contours": {
-        "10": 30,
-        "30": 16,
+        "10": 25,
+        "30": 11,
         "50": 9,
         "70": 5,
         "90": 4
@@ -237,12 +239,12 @@
       "warnings": [],
       "fetch": {
         "http_status": 200,
-        "bytes_downloaded": 493628,
-        "download_seconds": 0.158,
+        "bytes_downloaded": 443401,
+        "download_seconds": 0.182,
         "download_attempt": 1,
-        "last_modified": "Sun, 09 Aug 2026 05:09:20 GMT",
-        "etag": "\"7883c-658963d8838ee\"",
-        "sha256": "7a8d46ebaa57830aab8c8114a2c22b6b53fec9e5ddebad78ba6f79d6fd78c395"
+        "last_modified": "Sun, 09 Aug 2026 05:29:23 GMT",
+        "etag": "\"6c409-65896853bded1\"",
+        "sha256": "d7dbc8d5ca8bd568d1b357b64eb51ca15c138cad8c27ca02c3c4b79a5c6c2cf0"
       }
     }
   },
@@ -252,15 +254,15 @@
     "has_visible_pixels": true,
     "source_contours_by_satellite_and_threshold": {
       "East": {
-        "10": 130,
-        "30": 88,
-        "50": 63,
-        "70": 50,
-        "90": 36
+        "10": 127,
+        "30": 83,
+        "50": 75,
+        "70": 53,
+        "90": 29
       },
       "West": {
-        "10": 30,
-        "30": 16,
+        "10": 25,
+        "30": 11,
         "50": 9,
         "70": 5,
         "90": 4
@@ -268,30 +270,56 @@
     },
     "selected_contours_by_satellite_and_threshold": {
       "East": {
-        "10": 114,
-        "30": 76,
-        "50": 54,
-        "70": 38,
-        "90": 30
+        "10": 108,
+        "30": 75,
+        "50": 65,
+        "70": 41,
+        "90": 21
       },
       "West": {
-        "10": 28,
-        "30": 14,
-        "50": 7,
+        "10": 23,
+        "30": 10,
+        "50": 8,
         "70": 4,
         "90": 3
       }
     },
     "rendered_contour_lines_by_threshold": {
-      "10": 96,
-      "30": 60,
-      "50": 45,
-      "70": 29,
-      "90": 26
+      "10": 80,
+      "30": 58,
+      "50": 54,
+      "70": 33,
+      "90": 16
     },
     "source_color_mismatches": [],
-    "ownership_longitude": -106.1
+    "ownership_longitude": -106.1,
+    "storm_object_summary": {
+      "West": {
+        "source_object_count": 21,
+        "retained_object_count": 19,
+        "rejected_object_count": 2,
+        "retained_threshold_families": {
+          "10,30,50,70,90": 3,
+          "10": 12,
+          "10,30": 2,
+          "10,30,50,70": 1,
+          "10,30,50": 1
+        }
+      },
+      "East": {
+        "source_object_count": 100,
+        "retained_object_count": 82,
+        "rejected_object_count": 18,
+        "retained_threshold_families": {
+          "10,30,50": 6,
+          "10,30,50,70,90": 12,
+          "10": 44,
+          "10,30,50,70": 12,
+          "10,30": 8
+        }
+      }
+    }
   },
   "leaflet_png": "lightningcast_conus_probability_60min.png",
-  "generated_time_utc": "2026-08-09T05:10:12Z"
+  "generated_time_utc": "2026-08-09T05:31:39Z"
 }
