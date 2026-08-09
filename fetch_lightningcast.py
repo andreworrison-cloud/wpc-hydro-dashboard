@@ -50,6 +50,7 @@ THRESHOLD_RGB_SOURCE = {
 
 OWNERSHIP_LONGITUDE = -106.1
 OBJECT_LINK_PADDING_DEGREES = 0.18
+OBJECT_SWAP_PADDING_DEGREES = 0.25
 RENDER_WEST = -130.0
 RENDER_EAST = -60.0
 RENDER_SOUTH = 20.0
@@ -129,6 +130,24 @@ class StormObject:
     @property
     def thresholds(self) -> tuple[int, ...]:
         return tuple(sorted({contour.threshold for contour in self.contours}))
+
+    @property
+    def contour_count(self) -> int:
+        return len(self.contours)
+
+    @property
+    def closed_count(self) -> int:
+        return sum(1 for contour in self.contours if contour.closed)
+
+    @property
+    def threshold_count(self) -> int:
+        return len(self.thresholds)
+
+    @property
+    def completeness_score(self) -> tuple[int, int, int, float]:
+        # Prefer objects with more closed contours, then more represented thresholds,
+        # then more total contours. Representative longitude is a stable tie-breaker.
+        return (self.closed_count, self.threshold_count, self.contour_count, -abs(self.representative_lon - OWNERSHIP_LONGITUDE))
 
 
 @dataclasses.dataclass
@@ -427,24 +446,90 @@ def storm_object_owner(storm: StormObject) -> str:
     return "West" if storm.representative_lon < OWNERSHIP_LONGITUDE else "East"
 
 
+def should_swap_to_alternate(primary: StormObject, alternate: StormObject) -> bool:
+    """Prefer the alternate family only when it is meaningfully more complete.
+
+    This specifically targets residual seam artifacts where one satellite contributes a
+    truncated/open family while the other satellite carries a more coherent version of
+    the same storm object.
+    """
+    if alternate.completeness_score <= primary.completeness_score:
+        return False
+    # Require a tangible improvement, not just a lateral swap.
+    if alternate.closed_count > primary.closed_count:
+        return True
+    if alternate.threshold_count > primary.threshold_count:
+        return True
+    if alternate.contour_count >= primary.contour_count + 2:
+        return True
+    return False
+
+
 def select_contours_for_render(
     frame_time: datetime, east: ParsedPlacefile, west: ParsedPlacefile
 ) -> tuple[dict[int, list[Contour]], dict[str, Counter], dict[str, object]]:
     selected: dict[int, list[Contour]] = {threshold: [] for threshold in THRESHOLDS}
     ownership_counts: dict[str, Counter] = {"East": Counter(), "West": Counter()}
+
+    west_objects = group_contours_into_objects(west.contours_by_frame.get(frame_time, []), "West")
+    east_objects = group_contours_into_objects(east.contours_by_frame.get(frame_time, []), "East")
+
+    west_selected = {index for index, storm in enumerate(west_objects) if storm_object_owner(storm) == "West"}
+    east_selected = {index for index, storm in enumerate(east_objects) if storm_object_owner(storm) == "East"}
+
+    swaps: list[dict[str, object]] = []
+    used_west: set[int] = set()
+    used_east: set[int] = set()
+
+    # Compare selected objects against opposite-satellite overlapping candidates and, when
+    # the opposite family is more complete, swap ownership to preserve a coherent family.
+    for sat_name, selected_ids, objects, other_name, other_objects, other_selected in (
+        ("West", west_selected, west_objects, "East", east_objects, east_selected),
+        ("East", east_selected, east_objects, "West", west_objects, west_selected),
+    ):
+        for idx in list(selected_ids):
+            if sat_name == "West" and idx in used_west:
+                continue
+            if sat_name == "East" and idx in used_east:
+                continue
+            primary = objects[idx]
+            overlapping = []
+            for j, candidate in enumerate(other_objects):
+                if j in other_selected:
+                    continue
+                if (other_name == "West" and j in used_west) or (other_name == "East" and j in used_east):
+                    continue
+                if bbox_intersects_or_near(primary.bbox, candidate.bbox, OBJECT_SWAP_PADDING_DEGREES):
+                    overlapping.append((j, candidate))
+            if not overlapping:
+                continue
+            best_j, best_candidate = max(overlapping, key=lambda item: item[1].completeness_score)
+            if should_swap_to_alternate(primary, best_candidate):
+                selected_ids.discard(idx)
+                other_selected.add(best_j)
+                if sat_name == "West":
+                    used_east.add(best_j)
+                else:
+                    used_west.add(best_j)
+                swaps.append({
+                    "replaced_satellite": sat_name,
+                    "replaced_thresholds": list(primary.thresholds),
+                    "replacement_satellite": other_name,
+                    "replacement_thresholds": list(best_candidate.thresholds),
+                    "primary_score": list(primary.completeness_score[:3]),
+                    "alternate_score": list(best_candidate.completeness_score[:3]),
+                    "primary_bbox": [round(v, 3) for v in primary.bbox],
+                    "alternate_bbox": [round(v, 3) for v in best_candidate.bbox],
+                })
+
     object_summary: dict[str, object] = {}
-
-    for satellite, parsed in (("West", west), ("East", east)):
-        source_contours = parsed.contours_by_frame.get(frame_time, [])
-        objects = group_contours_into_objects(source_contours, satellite)
-        retained = [storm for storm in objects if storm_object_owner(storm) == satellite]
-        rejected = [storm for storm in objects if storm_object_owner(storm) != satellite]
-
+    for satellite, objects, selected_ids in (("West", west_objects, west_selected), ("East", east_objects, east_selected)):
+        retained = [storm for i, storm in enumerate(objects) if i in selected_ids]
+        rejected = [storm for i, storm in enumerate(objects) if i not in selected_ids]
         for storm in retained:
             for contour in storm.contours:
                 selected[contour.threshold].append(contour)
                 ownership_counts[satellite][contour.threshold] += 1
-
         object_summary[satellite] = {
             "source_object_count": len(objects),
             "retained_object_count": len(retained),
@@ -455,7 +540,12 @@ def select_contours_for_render(
                 )
                 for storm in retained
             },
+            "retained_closed_contours": sum(storm.closed_count for storm in retained),
+            "retained_total_contours": sum(storm.contour_count for storm in retained),
         }
+    object_summary["cross_satellite_family_swaps"] = swaps
+    object_summary["cross_satellite_family_splitting"] = False
+    object_summary["swap_padding_degrees"] = OBJECT_SWAP_PADDING_DEGREES
 
     return selected, ownership_counts, object_summary
 
@@ -626,7 +716,7 @@ def write_outputs(
 
     age_minutes = round((fetched_at - frame_time).total_seconds() / 60.0, 2)
     metadata = {
-        "metadata_mode": "lightningcast_dashboard_v1d",
+        "metadata_mode": "lightningcast_dashboard_v1e",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
         "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
@@ -647,7 +737,7 @@ def write_outputs(
             "and dashboard display."
         ),
         "satellite_ownership": {
-            "method": "fixed whole-storm-object representative-longitude ownership",
+            "method": "fixed whole-storm-object representative-longitude ownership with completeness-based overlap swaps",
             "ownership_longitude": OWNERSHIP_LONGITUDE,
             "GOES-West": f"whole same-satellite contour families with representative longitude < {OWNERSHIP_LONGITUDE}",
             "GOES-East": f"whole same-satellite contour families with representative longitude >= {OWNERSHIP_LONGITUDE}",
@@ -657,10 +747,12 @@ def write_outputs(
             "gap_fill": False,
             "cross_boundary_geometry_clipping": False,
             "cross_threshold_family_splitting": False,
+            "cross_satellite_family_splitting": False,
+            "swap_padding_degrees": OBJECT_SWAP_PADDING_DEGREES,
             "object_link_padding_degrees": OBJECT_LINK_PADDING_DEGREES,
             "representative_longitude_field": "mean longitude of the object's outermost available probability contour(s)",
             "note": (
-                "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. "
+                "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. In the overlap region, a more complete opposite-satellite family may replace a truncated family, but no family is split across satellites. "
                 "Source contour geometry is never cut or altered at the ownership longitude."
             ),
         },
@@ -747,6 +839,7 @@ End:
         assert summary["has_visible_pixels"] is True
         assert summary["ownership_longitude"] == OWNERSHIP_LONGITUDE
         assert "storm_object_summary" in summary
+        assert summary["storm_object_summary"]["cross_satellite_family_splitting"] is False
         assert sum(summary["rendered_contour_lines_by_threshold"].values()) >= 1
         with Image.open(path) as image:
             assert image.mode == "RGBA"
