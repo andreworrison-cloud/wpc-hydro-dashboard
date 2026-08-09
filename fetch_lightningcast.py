@@ -2,7 +2,7 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-placefile loops, selects the newest scan common to both feeds, applies fixed whole-contour East/West source ownership and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus
+placefile loops, selects the newest scan common to both feeds, groups nested LightningCast contours into coherent storm objects, applies fixed whole-object East/West source ownership, and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus
 metadata and a compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
@@ -49,6 +49,7 @@ THRESHOLD_RGB_SOURCE = {
 }
 
 OWNERSHIP_LONGITUDE = -106.1
+OBJECT_LINK_PADDING_DEGREES = 0.18
 RENDER_WEST = -130.0
 RENDER_EAST = -60.0
 RENDER_SOUTH = 20.0
@@ -99,6 +100,35 @@ class Contour:
         if not self.points:
             return 0.0
         return sum(point[0] for point in self.points) / len(self.points)
+
+
+@dataclasses.dataclass
+class StormObject:
+    satellite: str
+    contours: list[Contour]
+
+    @property
+    def bbox(self) -> tuple[float, float, float, float]:
+        boxes = [contour.bbox for contour in self.contours]
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+
+    @property
+    def representative_lon(self) -> float:
+        # Give the outer 10% contour family the strongest geographic weight when present.
+        anchors = [contour for contour in self.contours if contour.threshold == min(c.threshold for c in self.contours)]
+        points = [point for contour in anchors for point in contour.points]
+        if not points:
+            points = [point for contour in self.contours for point in contour.points]
+        return sum(point[0] for point in points) / len(points) if points else 0.0
+
+    @property
+    def thresholds(self) -> tuple[int, ...]:
+        return tuple(sorted({contour.threshold for contour in self.contours}))
 
 
 @dataclasses.dataclass
@@ -334,30 +364,100 @@ def close_contour_if_nearly_closed(points: list[tuple[float, float]], tolerance_
     return points
 
 
-def contour_owner(contour: Contour) -> str:
-    """Assign an entire contour to one satellite without cutting its geometry.
+def bbox_intersects_or_near(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+    padding: float = OBJECT_LINK_PADDING_DEGREES,
+) -> bool:
+    return not (
+        a[2] + padding < b[0]
+        or b[2] + padding < a[0]
+        or a[3] + padding < b[1]
+        or b[3] + padding < a[1]
+    )
 
-    The fixed longitude is the midpoint of the nominal GOES-18 (-137.0) and
-    GOES-19 (-75.2) sub-satellite longitudes used elsewhere in the dashboard.
-    It is an ownership rule only; contours are never clipped at this longitude.
+
+def group_contours_into_objects(contours: Sequence[Contour], satellite: str) -> list[StormObject]:
+    """Group nested/adjacent probability contours into same-satellite storm objects.
+
+    Connectivity uses bounding-box overlap with a small tolerance so the 10/30/50/70/90
+    family for a convective feature is handled as one ownership unit. The source contour
+    coordinates themselves are never changed by this grouping.
     """
-    return "West" if contour.representative_lon < OWNERSHIP_LONGITUDE else "East"
+    candidates = [contour for contour in contours if contour.threshold in THRESHOLDS and contour.points]
+    if not candidates:
+        return []
+
+    parents = list(range(len(candidates)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parents[rb] = ra
+
+    for i, left in enumerate(candidates):
+        for j in range(i + 1, len(candidates)):
+            right = candidates[j]
+            # Different thresholds are the most important links; same-threshold links are
+            # allowed only when their boxes actually overlap, which avoids joining distinct
+            # nearby storms merely because the tolerance boxes touch.
+            padding = OBJECT_LINK_PADDING_DEGREES if left.threshold != right.threshold else 0.0
+            if bbox_intersects_or_near(left.bbox, right.bbox, padding):
+                union(i, j)
+
+    grouped: dict[int, list[Contour]] = defaultdict(list)
+    for index, contour in enumerate(candidates):
+        grouped[find(index)].append(contour)
+
+    return [StormObject(satellite=satellite, contours=value) for value in grouped.values()]
+
+
+def storm_object_owner(storm: StormObject) -> str:
+    """Assign an intact nested probability family to one satellite.
+
+    The fixed longitude is an ownership discriminator only. No source contour is clipped,
+    split, closed, or reshaped at this longitude.
+    """
+    return "West" if storm.representative_lon < OWNERSHIP_LONGITUDE else "East"
 
 
 def select_contours_for_render(
     frame_time: datetime, east: ParsedPlacefile, west: ParsedPlacefile
-) -> tuple[dict[int, list[Contour]], dict[str, Counter]]:
+) -> tuple[dict[int, list[Contour]], dict[str, Counter], dict[str, object]]:
     selected: dict[int, list[Contour]] = {threshold: [] for threshold in THRESHOLDS}
     ownership_counts: dict[str, Counter] = {"East": Counter(), "West": Counter()}
-    for contour in west.contours_by_frame.get(frame_time, []) + east.contours_by_frame.get(frame_time, []):
-        if contour.threshold not in THRESHOLDS:
-            continue
-        owner = contour_owner(contour)
-        if owner != contour.satellite:
-            continue
-        selected[contour.threshold].append(contour)
-        ownership_counts[contour.satellite][contour.threshold] += 1
-    return selected, ownership_counts
+    object_summary: dict[str, object] = {}
+
+    for satellite, parsed in (("West", west), ("East", east)):
+        source_contours = parsed.contours_by_frame.get(frame_time, [])
+        objects = group_contours_into_objects(source_contours, satellite)
+        retained = [storm for storm in objects if storm_object_owner(storm) == satellite]
+        rejected = [storm for storm in objects if storm_object_owner(storm) != satellite]
+
+        for storm in retained:
+            for contour in storm.contours:
+                selected[contour.threshold].append(contour)
+                ownership_counts[satellite][contour.threshold] += 1
+
+        object_summary[satellite] = {
+            "source_object_count": len(objects),
+            "retained_object_count": len(retained),
+            "rejected_object_count": len(rejected),
+            "retained_threshold_families": {
+                ",".join(str(value) for value in storm.thresholds): sum(
+                    1 for candidate in retained if candidate.thresholds == storm.thresholds
+                )
+                for storm in retained
+            },
+        }
+
+    return selected, ownership_counts, object_summary
 
 
 def clip_polygon_halfplane(
@@ -433,7 +533,7 @@ def render_product(
     rendered_lines: Counter = Counter()
     source_color_mismatches: list[str] = []
 
-    selected_contours, ownership_counts = select_contours_for_render(frame_time, east, west)
+    selected_contours, ownership_counts, object_summary = select_contours_for_render(frame_time, east, west)
 
     for threshold in THRESHOLDS:
         stroke = (*THRESHOLD_RGB_SOURCE[threshold], 242)
@@ -478,6 +578,7 @@ def render_product(
         "rendered_contour_lines_by_threshold": {str(t): int(rendered_lines[t]) for t in THRESHOLDS},
         "source_color_mismatches": sorted(set(source_color_mismatches)),
         "ownership_longitude": OWNERSHIP_LONGITUDE,
+        "storm_object_summary": object_summary,
     }
 
 
@@ -525,7 +626,7 @@ def write_outputs(
 
     age_minutes = round((fetched_at - frame_time).total_seconds() / 60.0, 2)
     metadata = {
-        "metadata_mode": "lightningcast_dashboard_v1c",
+        "metadata_mode": "lightningcast_dashboard_v1d",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
         "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
@@ -546,19 +647,21 @@ def write_outputs(
             "and dashboard display."
         ),
         "satellite_ownership": {
-            "method": "fixed whole-contour representative-longitude ownership",
+            "method": "fixed whole-storm-object representative-longitude ownership",
             "ownership_longitude": OWNERSHIP_LONGITUDE,
-            "GOES-West": f"whole contours with mean longitude < {OWNERSHIP_LONGITUDE}",
-            "GOES-East": f"whole contours with mean longitude >= {OWNERSHIP_LONGITUDE}",
+            "GOES-West": f"whole same-satellite contour families with representative longitude < {OWNERSHIP_LONGITUDE}",
+            "GOES-East": f"whole same-satellite contour families with representative longitude >= {OWNERSHIP_LONGITUDE}",
             "summation": False,
             "averaging": False,
             "blending": False,
             "gap_fill": False,
             "cross_boundary_geometry_clipping": False,
-            "representative_longitude_field": "mean contour longitude",
+            "cross_threshold_family_splitting": False,
+            "object_link_padding_degrees": OBJECT_LINK_PADDING_DEGREES,
+            "representative_longitude_field": "mean longitude of the object's outermost available probability contour(s)",
             "note": (
-                "The ownership longitude is fixed and does not depend on current convection. "
-                "A contour is retained or rejected as a whole; no LightningCast contour is cut at the ownership longitude."
+                "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. "
+                "Source contour geometry is never cut or altered at the ownership longitude."
             ),
         },
         "rendering": {
@@ -643,6 +746,7 @@ End:
         assert path.exists() and path.stat().st_size > 100
         assert summary["has_visible_pixels"] is True
         assert summary["ownership_longitude"] == OWNERSHIP_LONGITUDE
+        assert "storm_object_summary" in summary
         assert sum(summary["rendered_contour_lines_by_threshold"].values()) >= 1
         with Image.open(path) as image:
             assert image.mode == "RGBA"
