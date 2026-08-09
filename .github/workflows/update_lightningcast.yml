@@ -64,14 +64,14 @@ jobs:
 
           meta = json.loads(meta_path.read_text())
           manifest = json.loads(manifest_path.read_text())
-          if meta.get('metadata_mode') != 'lightningcast_dashboard_v1d':
+          if meta.get('metadata_mode') != 'lightningcast_dashboard_v1e':
               raise SystemExit('LightningCast metadata contract failed')
           if meta.get('product_role') != 'probability_of_lightning_next_60_minutes':
               raise SystemExit('LightningCast product-role contract failed')
           if meta.get('probability_thresholds_percent') != [10, 30, 50, 70, 90]:
               raise SystemExit('LightningCast threshold contract failed')
           ownership = meta.get('satellite_ownership') or {}
-          if ownership.get('method') != 'fixed whole-storm-object representative-longitude ownership':
+          if ownership.get('method') != 'fixed whole-storm-object representative-longitude ownership with completeness-based overlap swaps':
               raise SystemExit('LightningCast source-ownership method contract failed')
           if ownership.get('ownership_longitude') != -106.1:
               raise SystemExit('LightningCast fixed ownership-longitude contract failed')
@@ -185,6 +185,7 @@ jobs:
           print(f"- Image: **{render.get('width')} × {render.get('height')} px**")
           ownership = meta.get('satellite_ownership') or {}
           print(f"- Ownership method: **{ownership.get('method')}**")
+          print(f"- Swap padding: **{ownership.get('swap_padding_degrees')}°**")
           print(f"- Fixed ownership longitude: **{ownership.get('ownership_longitude')}°**")
           print('- Rendering: **source probability contours only; no inferred polygon fills**')
           PY
