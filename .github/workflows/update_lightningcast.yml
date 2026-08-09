@@ -1,0 +1,181 @@
+name: Update LightningCast
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-lightningcast
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: '1'
+      LIGHTNINGCAST_OUTPUT_DIR: lightningcast_output
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install rendering dependency
+        run: python -m pip install 'Pillow>=10,<13'
+
+      - name: Validate LightningCast generator
+        run: |
+          python -m py_compile fetch_lightningcast.py
+          python fetch_lightningcast.py --self-test
+
+      - name: Build latest LightningCast product
+        run: |
+          python fetch_lightningcast.py \
+            --output-dir "$LIGHTNINGCAST_OUTPUT_DIR" \
+            --maximum-age-minutes 20
+
+      - name: Validate generated package
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path('lightningcast_output')
+          png = root / 'lightningcast_conus_probability_60min.png'
+          meta_path = root / 'lightningcast_conus_probability_60min_metadata.json'
+          manifest_path = root / 'lightningcast_manifest.json'
+          for path in (png, meta_path, manifest_path):
+              if not path.exists() or path.stat().st_size == 0:
+                  raise SystemExit(f'Missing or empty LightningCast output: {path}')
+
+          meta = json.loads(meta_path.read_text())
+          manifest = json.loads(manifest_path.read_text())
+          if meta.get('metadata_mode') != 'lightningcast_dashboard_v1':
+              raise SystemExit('LightningCast metadata contract failed')
+          if meta.get('product_role') != 'probability_of_lightning_next_60_minutes':
+              raise SystemExit('LightningCast product-role contract failed')
+          if meta.get('probability_thresholds_percent') != [10, 30, 50, 70, 90]:
+              raise SystemExit('LightningCast threshold contract failed')
+          ownership = meta.get('satellite_ownership') or {}
+          if ownership.get('seam_longitude') != -106.1:
+              raise SystemExit('LightningCast source-ownership seam contract failed')
+          if any(ownership.get(key) is not False for key in ('summation', 'averaging', 'blending', 'gap_fill')):
+              raise SystemExit('LightningCast source-ownership safeguards failed')
+          rendering = meta.get('rendering') or {}
+          if rendering.get('image_crs') != 'EPSG:3857':
+              raise SystemExit('LightningCast image CRS contract failed')
+          if len(rendering.get('threshold_rgba') or []) != 5:
+              raise SystemExit('LightningCast rendering-color contract failed')
+          if manifest.get('scan_time_utc') != meta.get('scan_time_utc'):
+              raise SystemExit('LightningCast manifest/metadata scan-time mismatch')
+
+          with Image.open(png) as image:
+              if image.mode != 'RGBA':
+                  raise SystemExit(f'LightningCast PNG must be RGBA, found {image.mode}')
+              if image.width < 1000 or image.height < 500:
+                  raise SystemExit(f'LightningCast PNG unexpectedly small: {image.size}')
+
+          print('LightningCast package validation passed.')
+          print('Scan:', meta['scan_time_utc'])
+          print('Forecast through:', meta['forecast_window_end_utc'])
+          PY
+
+      - name: Check whether scan is new
+        id: freshness
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          new = json.loads(Path('lightningcast_output/lightningcast_conus_probability_60min_metadata.json').read_text())
+          old_path = Path('static/lightningcast_conus_probability_60min_metadata.json')
+          old_scan = None
+          if old_path.exists():
+              try:
+                  old_scan = json.loads(old_path.read_text()).get('scan_time_utc')
+              except Exception:
+                  old_scan = None
+          new_scan = new.get('scan_time_utc')
+          print(f'new_scan={new_scan}')
+          print(f'old_scan={old_scan or "none"}')
+          print(f'publish={str(new_scan != old_scan).lower()}')
+          PY
+
+      - name: Publish LightningCast files
+        if: steps.freshness.outputs.publish == 'true'
+        shell: bash
+        run: |
+          mkdir -p static
+          publish=(
+            lightningcast_conus_probability_60min.png
+            lightningcast_conus_probability_60min_metadata.json
+            lightningcast_manifest.json
+          )
+          for name in "${publish[@]}"; do
+            cp "$LIGHTNINGCAST_OUTPUT_DIR/$name" "static/$name"
+          done
+
+      - name: Commit LightningCast update
+        if: steps.freshness.outputs.publish == 'true'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            static/lightningcast_conus_probability_60min.png \
+            static/lightningcast_conus_probability_60min_metadata.json \
+            static/lightningcast_manifest.json
+          if git diff --cached --quiet; then
+            echo 'No LightningCast file changes to commit.'
+            exit 0
+          fi
+          scan='${{ steps.freshness.outputs.new_scan }}'
+          git commit -m "Update LightningCast ${scan}"
+          git push
+
+      - name: Upload LightningCast preview artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lightningcast-preview-${{ github.run_id }}
+          path: |
+            lightningcast_output/lightningcast_conus_probability_60min.png
+            lightningcast_output/lightningcast_conus_probability_60min_metadata.json
+            lightningcast_output/lightningcast_manifest.json
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 9
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          echo '## LightningCast backend update' >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$LIGHTNINGCAST_OUTPUT_DIR/lightningcast_conus_probability_60min_metadata.json" ]]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          meta = json.loads(Path('lightningcast_output/lightningcast_conus_probability_60min_metadata.json').read_text())
+          print(f"- Scan time: **{meta.get('scan_time_utc')}**")
+          print(f"- Probability window ends: **{meta.get('forecast_window_end_utc')}**")
+          print('- Standard thresholds: **10 / 30 / 50 / 70 / 90%**')
+          render = meta.get('render_summary') or {}
+          print(f"- Image: **{render.get('width')} × {render.get('height')} px**")
+          PY
+          else
+            echo '- Generator did not produce metadata.' >> "$GITHUB_STEP_SUMMARY"
+          fi
