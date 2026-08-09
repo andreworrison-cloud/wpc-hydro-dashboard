@@ -2,7 +2,7 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-placefile loops, selects the newest scan common to both feeds, applies whole-contour East/West source ownership in the overlap region, and renders a transparent Web-Mercator PNG plus
+placefile loops, selects the newest scan common to both feeds, applies fixed whole-contour East/West source ownership and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus
 metadata and a compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
@@ -48,7 +48,7 @@ THRESHOLD_RGB_SOURCE = {
     90: (255, 80, 255),
 }
 
-OWNERSHIP_FALLBACK_MIDPOINT_LON = -110.5
+OWNERSHIP_LONGITUDE = -106.1
 RENDER_WEST = -130.0
 RENDER_EAST = -60.0
 RENDER_SOUTH = 20.0
@@ -334,66 +334,30 @@ def close_contour_if_nearly_closed(points: list[tuple[float, float]], tolerance_
     return points
 
 
-def compute_overlap_metadata(east_contours: Sequence[Contour], west_contours: Sequence[Contour]) -> dict[str, float | None]:
-    east_extent = contour_longitude_extent(east_contours)
-    west_extent = contour_longitude_extent(west_contours)
-    if east_extent is None or west_extent is None:
-        return {
-            'east_min_lon': east_extent[0] if east_extent else None,
-            'east_max_lon': east_extent[1] if east_extent else None,
-            'west_min_lon': west_extent[0] if west_extent else None,
-            'west_max_lon': west_extent[1] if west_extent else None,
-            'overlap_west_lon': None,
-            'overlap_east_lon': None,
-            'decision_longitude': OWNERSHIP_FALLBACK_MIDPOINT_LON,
-        }
-    overlap_west_lon = max(east_extent[0], west_extent[0])
-    overlap_east_lon = min(east_extent[1], west_extent[1])
-    if overlap_west_lon >= overlap_east_lon:
-        overlap_west_lon = None
-        overlap_east_lon = None
-        decision_longitude = OWNERSHIP_FALLBACK_MIDPOINT_LON
-    else:
-        decision_longitude = (overlap_west_lon + overlap_east_lon) / 2.0
-    return {
-        'east_min_lon': east_extent[0],
-        'east_max_lon': east_extent[1],
-        'west_min_lon': west_extent[0],
-        'west_max_lon': west_extent[1],
-        'overlap_west_lon': overlap_west_lon,
-        'overlap_east_lon': overlap_east_lon,
-        'decision_longitude': decision_longitude,
-    }
+def contour_owner(contour: Contour) -> str:
+    """Assign an entire contour to one satellite without cutting its geometry.
+
+    The fixed longitude is the midpoint of the nominal GOES-18 (-137.0) and
+    GOES-19 (-75.2) sub-satellite longitudes used elsewhere in the dashboard.
+    It is an ownership rule only; contours are never clipped at this longitude.
+    """
+    return "West" if contour.representative_lon < OWNERSHIP_LONGITUDE else "East"
 
 
-def contour_owner(contour: Contour, overlap_meta: dict[str, float | None]) -> str:
-    overlap_west_lon = overlap_meta.get('overlap_west_lon')
-    overlap_east_lon = overlap_meta.get('overlap_east_lon')
-    xmin, _ymin, xmax, _ymax = contour.bbox
-    if overlap_west_lon is None or overlap_east_lon is None:
-        return contour.satellite
-    if xmax < overlap_west_lon:
-        return 'West'
-    if xmin > overlap_east_lon:
-        return 'East'
-    return 'West' if contour.representative_lon < float(overlap_meta['decision_longitude']) else 'East'
-
-
-def select_contours_for_render(frame_time: datetime, east: ParsedPlacefile, west: ParsedPlacefile) -> tuple[dict[int, list[Contour]], dict[str, float | None], dict[str, Counter]]:
-    east_contours = east.contours_by_frame.get(frame_time, [])
-    west_contours = west.contours_by_frame.get(frame_time, [])
-    overlap_meta = compute_overlap_metadata(east_contours, west_contours)
+def select_contours_for_render(
+    frame_time: datetime, east: ParsedPlacefile, west: ParsedPlacefile
+) -> tuple[dict[int, list[Contour]], dict[str, Counter]]:
     selected: dict[int, list[Contour]] = {threshold: [] for threshold in THRESHOLDS}
-    ownership_counts: dict[str, Counter] = {'East': Counter(), 'West': Counter()}
-    for contour in west_contours + east_contours:
+    ownership_counts: dict[str, Counter] = {"East": Counter(), "West": Counter()}
+    for contour in west.contours_by_frame.get(frame_time, []) + east.contours_by_frame.get(frame_time, []):
         if contour.threshold not in THRESHOLDS:
             continue
-        owner = contour_owner(contour, overlap_meta)
+        owner = contour_owner(contour)
         if owner != contour.satellite:
             continue
         selected[contour.threshold].append(contour)
         ownership_counts[contour.satellite][contour.threshold] += 1
-    return selected, overlap_meta, ownership_counts
+    return selected, ownership_counts
 
 
 def clip_polygon_halfplane(
@@ -465,35 +429,24 @@ def render_product(
     draw = ImageDraw.Draw(image, "RGBA")
 
     source_counts: dict[str, Counter] = {"East": Counter(), "West": Counter()}
-    rendered_closed: Counter = Counter()
-    rendered_open: Counter = Counter()
     selected_counts: dict[str, Counter] = {"East": Counter(), "West": Counter()}
+    rendered_lines: Counter = Counter()
     source_color_mismatches: list[str] = []
 
-    selected_contours, overlap_meta, ownership_counts = select_contours_for_render(frame_time, east, west)
+    selected_contours, ownership_counts = select_contours_for_render(frame_time, east, west)
 
     for threshold in THRESHOLDS:
-        fill = THRESHOLD_RGBA[threshold]
-        stroke = (*THRESHOLD_RGB_SOURCE[threshold], 238)
+        stroke = (*THRESHOLD_RGB_SOURCE[threshold], 242)
         for satellite, parsed in (("West", west), ("East", east)):
             contours = [c for c in parsed.contours_by_frame.get(frame_time, []) if c.threshold == threshold]
             source_counts[satellite][threshold] = len(contours)
-        for satellite, counter in ownership_counts.items():
-            selected_counts[satellite][threshold] = counter[threshold]
+            selected_counts[satellite][threshold] = ownership_counts[satellite][threshold]
+
         for contour in selected_contours[threshold]:
             if contour.color is not None and contour.color != THRESHOLD_RGB_SOURCE[threshold]:
                 source_color_mismatches.append(
                     f"GOES-{contour.satellite} {threshold}% source RGB {contour.color} differs from expected {THRESHOLD_RGB_SOURCE[threshold]}"
                 )
-            candidate_points = close_contour_if_nearly_closed(contour.points)
-            if contour_is_closed(candidate_points):
-                polygon = clip_polygon_to_render_bounds(candidate_points)
-                polygon = close_contour_if_nearly_closed(polygon)
-                if len(polygon) >= 4:
-                    pixels = [project_to_pixel(lon, lat, width, height) for lon, lat in polygon]
-                    draw.polygon(pixels, fill=fill, outline=stroke)
-                    rendered_closed[threshold] += 1
-                    continue
             any_segment = False
             for a, b in zip(contour.points[:-1], contour.points[1:]):
                 clipped = clip_segment_to_rect(a, b)
@@ -506,7 +459,7 @@ def render_product(
                 draw.line(pixels, fill=stroke, width=2)
                 any_segment = True
             if any_segment:
-                rendered_open[threshold] += 1
+                rendered_lines[threshold] += 1
 
     image.save(output_png, format="PNG", optimize=True)
     visible = image.getchannel("A").getbbox() is not None
@@ -522,10 +475,9 @@ def render_product(
             satellite: {str(t): int(counter[t]) for t in THRESHOLDS}
             for satellite, counter in selected_counts.items()
         },
-        "rendered_closed_contours_by_threshold": {str(t): int(rendered_closed[t]) for t in THRESHOLDS},
-        "rendered_open_contours_by_threshold": {str(t): int(rendered_open[t]) for t in THRESHOLDS},
+        "rendered_contour_lines_by_threshold": {str(t): int(rendered_lines[t]) for t in THRESHOLDS},
         "source_color_mismatches": sorted(set(source_color_mismatches)),
-        "ownership_overlap": overlap_meta,
+        "ownership_longitude": OWNERSHIP_LONGITUDE,
     }
 
 
@@ -573,10 +525,10 @@ def write_outputs(
 
     age_minutes = round((fetched_at - frame_time).total_seconds() / 60.0, 2)
     metadata = {
-        "metadata_mode": "lightningcast_dashboard_v1b",
+        "metadata_mode": "lightningcast_dashboard_v1c",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
-        "source_product": "LightningCast CONUS GRLevelX placefile loops",
+        "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
         "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
         "scan_time_utc": iso_z(frame_time),
         "forecast_window_start_utc": iso_z(frame_time),
@@ -594,15 +546,20 @@ def write_outputs(
             "and dashboard display."
         ),
         "satellite_ownership": {
-            "method": "whole-contour representative-longitude ownership",
+            "method": "fixed whole-contour representative-longitude ownership",
+            "ownership_longitude": OWNERSHIP_LONGITUDE,
+            "GOES-West": f"whole contours with mean longitude < {OWNERSHIP_LONGITUDE}",
+            "GOES-East": f"whole contours with mean longitude >= {OWNERSHIP_LONGITUDE}",
             "summation": False,
             "averaging": False,
             "blending": False,
             "gap_fill": False,
-            "cross_seam_polygon_splitting": False,
+            "cross_boundary_geometry_clipping": False,
             "representative_longitude_field": "mean contour longitude",
-            "overlap_longitude_metadata": render["ownership_overlap"],
-            "note": "Contours are not cut at a fixed seam. Whole contours are assigned by representative longitude only within the dynamic East/West overlap region.",
+            "note": (
+                "The ownership longitude is fixed and does not depend on current convection. "
+                "A contour is retained or rejected as a whole; no LightningCast contour is cut at the ownership longitude."
+            ),
         },
         "rendering": {
             "image_crs": "EPSG:3857",
@@ -611,9 +568,9 @@ def write_outputs(
             "threshold_labels": [f">= {t}%" for t in THRESHOLDS],
             "threshold_rgba": [list(THRESHOLD_RGBA[t]) for t in THRESHOLDS],
             "source_threshold_rgb": [list(THRESHOLD_RGB_SOURCE[t]) for t in THRESHOLDS],
-            "closed_contours_filled": True,
-            "open_contours_line_only": True,
-            "close_contour_tolerance_degrees": 0.2,
+            "contour_lines_only": True,
+            "polygon_fill_inference": False,
+            "line_width_pixels": 2,
             "resampling": "not applicable; vector contours rendered directly to Web Mercator",
         },
         "source_summary": {
@@ -685,7 +642,8 @@ End:
         summary = render_product(frame, east, west, path, 600)
         assert path.exists() and path.stat().st_size > 100
         assert summary["has_visible_pixels"] is True
-        assert summary["ownership_overlap"]["decision_longitude"] is not None
+        assert summary["ownership_longitude"] == OWNERSHIP_LONGITUDE
+        assert sum(summary["rendered_contour_lines_by_threshold"].values()) >= 1
         with Image.open(path) as image:
             assert image.mode == "RGBA"
             assert image.getchannel("A").getbbox() is not None
