@@ -605,6 +605,29 @@ const GLM_TREND_STATE_PRESENTATION = {
     }
 };
 
+
+// --- CIMSS/SSEC LIGHTNINGCAST ---
+// Authorized CIMSS/SSEC real-time CONUS LightningCast contours. The backend
+// publishes a transparent EPSG:3857 raster using the standard 10/30/50/70/90%
+// probability contours. LightningCast remains independent of the observed GLM
+// layers so forecasters may compare prediction and observed lightning together.
+const LIGHTNINGCAST_LAYER_NAME = 'CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes';
+const LIGHTNINGCAST_IMAGE_URL = 'static/lightningcast_conus_probability_60min.png';
+const LIGHTNINGCAST_METADATA_URL = 'static/lightningcast_conus_probability_60min_metadata.json';
+const LIGHTNINGCAST_MANIFEST_URL = 'static/lightningcast_manifest.json';
+const LIGHTNINGCAST_MANIFEST_POLL_INTERVAL_MS = 90 * 1000;
+const LIGHTNINGCAST_MANIFEST_RETRY_DELAYS_MS = [0, 3500, 9000];
+const lightningCastPlaceholderBounds = [[20.0, -130.0], [55.0, -60.0]];
+const lightningCastLayer = L.imageOverlay(
+    LIGHTNINGCAST_IMAGE_URL,
+    lightningCastPlaceholderBounds,
+    {zIndex: 14, opacity: 0, interactive: false}
+);
+let lightningCastMetadata = null;
+let lightningCastReady = false;
+let lightningCastLastManifestVersion = '';
+let lightningCastManifestCheckInFlight = false;
+
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
@@ -1936,6 +1959,222 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', checkGLMUpdatesNow);
 window.addEventListener('online', checkGLMUpdatesNow);
 
+
+function validateLightningCastBounds(bounds) {
+    if (!Array.isArray(bounds) || bounds.length !== 2) {
+        throw new Error('LightningCast metadata has invalid Leaflet bounds');
+    }
+    const south = Number(bounds[0]?.[0]);
+    const west = Number(bounds[0]?.[1]);
+    const north = Number(bounds[1]?.[0]);
+    const east = Number(bounds[1]?.[1]);
+    if (![south, west, north, east].every(Number.isFinite) || south >= north || west >= east) {
+        throw new Error('LightningCast metadata has malformed geographic bounds');
+    }
+    return [[south, west], [north, east]];
+}
+
+function validateLightningCastMetadata(metadata, expectedScanTime = null) {
+    if (!metadata || metadata.metadata_mode !== 'lightningcast_dashboard_v1e') {
+        throw new Error('Invalid LightningCast metadata mode');
+    }
+    if (metadata.product_role !== 'probability_of_lightning_next_60_minutes') {
+        throw new Error(`Unexpected LightningCast product role: ${metadata.product_role}`);
+    }
+    const thresholds = metadata.probability_thresholds_percent || [];
+    if (JSON.stringify(thresholds) !== JSON.stringify([10, 30, 50, 70, 90])) {
+        throw new Error('LightningCast probability threshold contract failed');
+    }
+    if (expectedScanTime && metadata.scan_time_utc !== expectedScanTime) {
+        throw new Error(`LightningCast scan mismatch: expected ${expectedScanTime}, found ${metadata.scan_time_utc}`);
+    }
+    const rendering = metadata.rendering || {};
+    if (String(rendering.image_crs || '').toUpperCase() !== 'EPSG:3857') {
+        throw new Error(`LightningCast expected EPSG:3857 image, found ${rendering.image_crs || 'none'}`);
+    }
+    if (rendering.contour_lines_only !== true || rendering.polygon_fill_inference !== false) {
+        throw new Error('LightningCast contour-only rendering contract failed');
+    }
+    const rgb = rendering.source_threshold_rgb || [];
+    if (!Array.isArray(rgb) || rgb.length !== 5) {
+        throw new Error('LightningCast source-color contract failed');
+    }
+    const ownership = metadata.satellite_ownership || {};
+    if (
+        ownership.summation !== false ||
+        ownership.averaging !== false ||
+        ownership.blending !== false ||
+        ownership.gap_fill !== false ||
+        ownership.cross_boundary_geometry_clipping !== false ||
+        ownership.cross_threshold_family_splitting !== false ||
+        ownership.cross_satellite_family_splitting !== false
+    ) {
+        throw new Error('LightningCast source-ownership safeguards failed');
+    }
+    return {
+        metadata,
+        bounds: validateLightningCastBounds(rendering.leaflet_bounds)
+    };
+}
+
+function lightningCastRasterUrl(metadata) {
+    const version = encodeURIComponent(metadata.generated_time_utc || metadata.scan_time_utc || Date.now());
+    return `${LIGHTNINGCAST_IMAGE_URL}?v=${version}`;
+}
+
+function preloadLightningCastImage(url) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(url);
+        image.onerror = () => reject(new Error('LightningCast raster failed to preload'));
+        image.src = url;
+    });
+}
+
+async function fetchLightningCastMetadata({expectedScanTime = null} = {}) {
+    const response = await fetch(`${LIGHTNINGCAST_METADATA_URL}?t=${Date.now()}`, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const metadata = await response.json();
+    const validated = validateLightningCastMetadata(metadata, expectedScanTime);
+    const rasterUrl = lightningCastRasterUrl(metadata);
+    await preloadLightningCastImage(rasterUrl);
+
+    const currentOpacity = Number(lightningCastLayer.options?.opacity);
+    lightningCastLayer.setBounds(validated.bounds);
+    lightningCastLayer.setUrl(rasterUrl);
+    lightningCastLayer.setOpacity(
+        lightningCastReady && Number.isFinite(currentOpacity) ? currentOpacity : 1.0
+    );
+    lightningCastMetadata = metadata;
+    lightningCastReady = true;
+    updateLightningCastTimeBox();
+    if (typeof updateLegends === 'function') updateLegends();
+    return true;
+}
+
+function formatLightningCastTimeBox(metadata) {
+    if (!metadata) {
+        return `
+            <strong>${LIGHTNINGCAST_LAYER_NAME}</strong><br>
+            <span style="color:#ffeb3b;">Loading latest LightningCast contours...</span>
+        `;
+    }
+    return `
+        <strong>${LIGHTNINGCAST_LAYER_NAME}</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">Scan: ${formatMetadataUTC(metadata.scan_time_utc)}</span><br>
+        <span style="color:#ffeb3b;">Probability window: ${formatMetadataUTC(metadata.forecast_window_start_utc)} &mdash; ${formatMetadataUTC(metadata.forecast_window_end_utc)}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">LightningCast data courtesy CIMSS/SSEC</span>
+    `;
+}
+
+function updateLightningCastTimeBox() {
+    const box = document.getElementById('lightningcast-time-box');
+    if (!box) return;
+    if (!map.hasLayer(lightningCastLayer)) {
+        box.style.display = 'none';
+        refreshLegendDockSummary();
+        return;
+    }
+    box.innerHTML = formatLightningCastTimeBox(lightningCastMetadata);
+    box.style.display = 'block';
+    refreshLegendDockSummary();
+}
+
+function buildLightningCastLegendHTML() {
+    const thresholds = lightningCastMetadata?.probability_thresholds_percent || [10, 30, 50, 70, 90];
+    const colors = lightningCastMetadata?.rendering?.source_threshold_rgb || [
+        [80, 201, 134], [255, 255, 81], [255, 192, 108], [255, 80, 80], [255, 80, 255]
+    ];
+    const rows = thresholds.map((threshold, index) => {
+        const rgb = colors[index] || [255, 255, 255];
+        return `
+            <div style="display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:7px;">
+                <span style="display:block;width:26px;height:0;border-top:3px solid rgb(${rgb[0]},${rgb[1]},${rgb[2]});"></span>
+                <span style="font-size:10px;font-weight:700;line-height:1.15;">${threshold}%</span>
+            </div>
+        `;
+    }).join('');
+    return `
+        <div style="box-sizing:border-box;width:100%;background:white;padding:9px;border-radius:5px;color:black;font-family:sans-serif;">
+            <strong style="display:block;font-size:13px;line-height:1.2;text-align:center;">CIMSS/SSEC LightningCast</strong>
+            <span style="display:block;margin-top:2px;font-size:9px;line-height:1.2;text-align:center;">Probability of lightning in the next 60 minutes</span>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 14px;margin-top:8px;">${rows}</div>
+            <span style="display:block;margin-top:7px;font-size:8px;line-height:1.2;text-align:center;color:#333;">LightningCast data courtesy CIMSS/SSEC</span>
+        </div>
+    `;
+}
+
+function lightningCastManifestVersion(manifest) {
+    return [manifest?.scan_time_utc || '', manifest?.generated_time_utc || ''].join('|');
+}
+
+function waitForLightningCastRefresh(milliseconds) {
+    return new Promise(resolve => window.setTimeout(resolve, milliseconds));
+}
+
+async function fetchLightningCastManifest() {
+    const response = await fetch(`${LIGHTNINGCAST_MANIFEST_URL}?t=${Date.now()}`, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const manifest = await response.json();
+    if (
+        !manifest ||
+        manifest.manifest_mode !== 'lightningcast_dashboard_manifest_v1' ||
+        !manifest.scan_time_utc
+    ) {
+        throw new Error('Invalid LightningCast manifest');
+    }
+    return manifest;
+}
+
+async function refreshLightningCastFromManifest({forceMetadata = false} = {}) {
+    if (lightningCastManifestCheckInFlight) return false;
+    lightningCastManifestCheckInFlight = true;
+    try {
+        const manifest = await fetchLightningCastManifest();
+        const version = lightningCastManifestVersion(manifest);
+        if (!forceMetadata && version && version === lightningCastLastManifestVersion) return false;
+
+        for (const delay of LIGHTNINGCAST_MANIFEST_RETRY_DELAYS_MS) {
+            if (delay > 0) await waitForLightningCastRefresh(delay);
+            try {
+                await fetchLightningCastMetadata({expectedScanTime: manifest.scan_time_utc});
+                lightningCastLastManifestVersion = version;
+                return true;
+            } catch (error) {
+                console.warn('LightningCast package not synchronized yet:', error);
+            }
+        }
+        console.warn('LightningCast manifest changed, but the synchronized raster package is not available yet.');
+        return false;
+    } catch (error) {
+        console.error('LightningCast manifest check failed:', error);
+        if (forceMetadata && !lightningCastReady) {
+            try {
+                return await fetchLightningCastMetadata();
+            } catch (fallbackError) {
+                console.error('Initial LightningCast metadata fetch failed:', fallbackError);
+            }
+        }
+        return false;
+    } finally {
+        lightningCastManifestCheckInFlight = false;
+    }
+}
+
+function checkLightningCastUpdatesNow() {
+    refreshLightningCastFromManifest();
+}
+
+window.setInterval(() => {
+    if (!document.hidden) checkLightningCastUpdatesNow();
+}, LIGHTNINGCAST_MANIFEST_POLL_INTERVAL_MS);
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkLightningCastUpdatesNow();
+});
+window.addEventListener('focus', checkLightningCastUpdatesNow);
+window.addEventListener('online', checkLightningCastUpdatesNow);
+
 async function fetchNWMMetadata() {
     try {
         const response = await fetch(
@@ -2088,6 +2327,7 @@ fetchCAMMetadata();
 fetchEROCAMMetadata();
 fetchMRMSFlash24hMetadata();
 refreshGLMFromManifest({forceMetadata: true});
+refreshLightningCastFromManifest({forceMetadata: true});
 fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
@@ -2103,7 +2343,7 @@ setInterval(() => {
     fetchNLDASRSMMetadata();
 }, 15 * 60 * 1000); 
 
-// GLM products are refreshed by the manifest watcher above.
+// GLM and LightningCast products are refreshed by their manifest watchers above.
 
 function getValidTimeRange(cycleStr, windowStr) {
     if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
@@ -2278,6 +2518,7 @@ legendDockControl.onAdd = function () {
         'mrms-crest-24h-time-box',
         'mrms-ffd-24h-time-box',
         'glm-time-box',
+        'lightningcast-time-box',
         'nwm-time-box',
         'sport-time-box',
         'nldas-rsm-010-time-box',
@@ -2791,6 +3032,7 @@ function updateLegends() {
     GLM_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.name))
         .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
+    if (activeLayerNames.has(LIGHTNINGCAST_LAYER_NAME)) addLegendBlock(buildLightningCastLegendHTML());
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -2836,6 +3078,7 @@ map.on('overlayadd', function(eventLayer) {
     const mrmsCrest24hTimeBox = document.getElementById('mrms-crest-24h-time-box');
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
+    const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -2890,6 +3133,14 @@ map.on('overlayadd', function(eventLayer) {
             mrmsFfd24hTimeBox.style.display = 'block';
         }
         fetchMRMSFlash24hMetadata();
+    }
+
+    if (eventLayer.name === LIGHTNINGCAST_LAYER_NAME) {
+        if (lightningCastTimeBox) {
+            lightningCastTimeBox.innerHTML = formatLightningCastTimeBox(lightningCastMetadata);
+            lightningCastTimeBox.style.display = 'block';
+        }
+        refreshLightningCastFromManifest({forceMetadata: !lightningCastReady});
     }
 
     const glmConfig = glmConfigByName.get(eventLayer.name);
@@ -3028,6 +3279,7 @@ map.on('overlayremove', function(eventLayer) {
     const mrmsCrest24hTimeBox = document.getElementById('mrms-crest-24h-time-box');
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
+    const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -3053,6 +3305,10 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === MRMS_FFD_24H_LAYER_NAME) {
         if (mrmsFfd24hTimeBox) mrmsFfd24hTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === LIGHTNINGCAST_LAYER_NAME) {
+        if (lightningCastTimeBox) lightningCastTimeBox.style.display = 'none';
     }
 
     if (glmConfigByName.has(eventLayer.name)) {
@@ -3143,7 +3399,8 @@ const dashboardSections = [
             {id: 'glm-mosaic-5min', label: GLM_MOSAIC_5MIN_LAYER_NAME, layer: glmMosaic5minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
             {id: 'glm-mosaic-30min', label: GLM_MOSAIC_30MIN_LAYER_NAME, layer: glmMosaic30minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
             {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
-            {id: 'glm-convective-trend-15min', label: GLM_TREND_MAP_15MIN_LAYER_NAME, layer: glmTrendMap15minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection}
+            {id: 'glm-convective-trend-15min', label: GLM_TREND_MAP_15MIN_LAYER_NAME, layer: glmTrendMap15minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
+            {id: 'lightningcast-probability-60min', label: LIGHTNINGCAST_LAYER_NAME, layer: lightningCastLayer, kind: 'raster', keywords: 'lightning forecast probability CIMSS SSEC next 60 minutes'}
         ]
     },
     {
