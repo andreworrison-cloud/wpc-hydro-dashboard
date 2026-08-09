@@ -2,6 +2,9 @@ name: Update LightningCast
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Update GOES GLM Mosaic"]
+    types: [completed]
 
 permissions:
   contents: write
@@ -12,6 +15,7 @@ concurrency:
 
 jobs:
   update:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -156,7 +160,7 @@ jobs:
           git push
 
       - name: Upload LightningCast preview artifact
-        if: always()
+        if: ${{ github.event_name == 'workflow_dispatch' || failure() }}
         uses: actions/upload-artifact@v7
         with:
           name: lightningcast-preview-${{ github.run_id }}
