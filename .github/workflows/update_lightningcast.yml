@@ -64,17 +64,19 @@ jobs:
 
           meta = json.loads(meta_path.read_text())
           manifest = json.loads(manifest_path.read_text())
-          if meta.get('metadata_mode') != 'lightningcast_dashboard_v1b':
+          if meta.get('metadata_mode') != 'lightningcast_dashboard_v1c':
               raise SystemExit('LightningCast metadata contract failed')
           if meta.get('product_role') != 'probability_of_lightning_next_60_minutes':
               raise SystemExit('LightningCast product-role contract failed')
           if meta.get('probability_thresholds_percent') != [10, 30, 50, 70, 90]:
               raise SystemExit('LightningCast threshold contract failed')
           ownership = meta.get('satellite_ownership') or {}
-          if ownership.get('method') != 'whole-contour representative-longitude ownership':
+          if ownership.get('method') != 'fixed whole-contour representative-longitude ownership':
               raise SystemExit('LightningCast source-ownership method contract failed')
-          if ownership.get('cross_seam_polygon_splitting') is not False:
-              raise SystemExit('LightningCast seam-splitting safeguard failed')
+          if ownership.get('ownership_longitude') != -106.1:
+              raise SystemExit('LightningCast fixed ownership-longitude contract failed')
+          if ownership.get('cross_boundary_geometry_clipping') is not False:
+              raise SystemExit('LightningCast geometry-clipping safeguard failed')
           if any(ownership.get(key) is not False for key in ('summation', 'averaging', 'blending', 'gap_fill')):
               raise SystemExit('LightningCast source-ownership safeguards failed')
           rendering = meta.get('rendering') or {}
@@ -82,6 +84,8 @@ jobs:
               raise SystemExit('LightningCast image CRS contract failed')
           if len(rendering.get('threshold_rgba') or []) != 5:
               raise SystemExit('LightningCast rendering-color contract failed')
+          if rendering.get('contour_lines_only') is not True or rendering.get('polygon_fill_inference') is not False:
+              raise SystemExit('LightningCast contour-rendering contract failed')
           if manifest.get('scan_time_utc') != meta.get('scan_time_utc'):
               raise SystemExit('LightningCast manifest/metadata scan-time mismatch')
 
@@ -178,9 +182,9 @@ jobs:
           render = meta.get('render_summary') or {}
           print(f"- Image: **{render.get('width')} × {render.get('height')} px**")
           ownership = meta.get('satellite_ownership') or {}
-          overlap = ownership.get('overlap_longitude_metadata') or {}
           print(f"- Ownership method: **{ownership.get('method')}**")
-          print(f"- Dynamic overlap: **{overlap.get('overlap_west_lon')} to {overlap.get('overlap_east_lon')}**")
+          print(f"- Fixed ownership longitude: **{ownership.get('ownership_longitude')}°**")
+          print('- Rendering: **source probability contours only; no inferred polygon fills**')
           PY
           else
             echo '- Generator did not produce metadata.' >> "$GITHUB_STEP_SUMMARY"
