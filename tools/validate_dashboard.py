@@ -14,6 +14,10 @@ lightningcast_workflow = (ROOT / ".github" / "workflows" / "update_lightningcast
 
 errors = []
 
+# LightningCast dashboard integration adds one registered layer to the prior 104-layer registry.
+EXPECTED_LAYER_COUNT = 105
+LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
+
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
 # immediately after the registered data sections rather than being stored as
 # another dashboardSections entry.
@@ -371,10 +375,15 @@ duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
 
-expected_layer_count = 105
-if len(ids) != expected_layer_count:
+if len(ids) != EXPECTED_LAYER_COUNT:
     errors.append(
-        f"Expected {expected_layer_count} registered layers, found {len(ids)}."
+        f"Expected {EXPECTED_LAYER_COUNT} registered layers, found {len(ids)}."
+    )
+
+if ids.count(LIGHTNINGCAST_LAYER_ID) != 1:
+    errors.append(
+        f"Expected exactly one registered LightningCast layer id {LIGHTNINGCAST_LAYER_ID!r}, "
+        f"found {ids.count(LIGHTNINGCAST_LAYER_ID)}."
     )
 
 if "const groupedOverlays" in app or "L.control.groupedLayers" in app:
