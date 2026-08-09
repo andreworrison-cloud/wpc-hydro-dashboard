@@ -9,6 +9,8 @@ index = (ROOT / "index.html").read_text(encoding="utf-8")
 css = (ROOT / "style.css").read_text(encoding="utf-8")
 glm_generator = (ROOT / "fetch_glm_mosaic.py").read_text(encoding="utf-8")
 glm_workflow = (ROOT / ".github" / "workflows" / "update_glm_mosaic.yml").read_text(encoding="utf-8")
+lightningcast_generator = (ROOT / "fetch_lightningcast.py").read_text(encoding="utf-8")
+lightningcast_workflow = (ROOT / ".github" / "workflows" / "update_lightningcast.yml").read_text(encoding="utf-8")
 
 errors = []
 
@@ -54,6 +56,7 @@ required_labels = [
     "GOES GLM Controlled Mosaic — Rolling 30-Minute Accumulation",
     "GOES GLM Controlled Mosaic — Rolling 60-Minute Accumulation",
     "GOES GLM Controlled Mosaic — Convective Trend (15 min)",
+    "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
     "NWM Soil Saturation (0-40cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
@@ -101,12 +104,13 @@ if radar_start >= 0 and antecedent_start > radar_start:
         "{id: 'glm-mosaic-30min'",
         "{id: 'glm-mosaic-60min'",
         "{id: 'glm-convective-trend-15min'",
+        "{id: 'lightningcast-probability-60min'",
     ]
     glm_radar_positions = [radar_block.find(label) for label in glm_radar_labels]
     if any(position < 0 for position in glm_radar_positions):
-        errors.append("Radar and Satellite Data is missing a primary GLM mosaic layer.")
+        errors.append("Radar and Satellite Data is missing a required GOES/LightningCast layer.")
     elif glm_radar_positions != sorted(glm_radar_positions):
-        errors.append("Primary GLM mosaic layers are not in the required radar-section order.")
+        errors.append("GOES GLM and LightningCast layers are not in the required radar-section order.")
 
 # Enforce the agreed order within Antecedent Hydrologic Conditions.
 antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
@@ -212,6 +216,51 @@ for fragment in required_glm_fragments:
     if fragment not in app:
         errors.append(f"Missing GOES GLM integration fragment: {fragment}")
 
+
+
+required_lightningcast_fragments = [
+    "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
+    "static/lightningcast_conus_probability_60min.png",
+    "static/lightningcast_conus_probability_60min_metadata.json",
+    "static/lightningcast_manifest.json",
+    "lightningcast_dashboard_v1e",
+    "lightningcast_dashboard_manifest_v1",
+    "lightningcast-probability-60min",
+    "lightningcast-time-box",
+    "buildLightningCastLegendHTML",
+    "refreshLightningCastFromManifest",
+    "LIGHTNINGCAST_MANIFEST_POLL_INTERVAL_MS = 90 * 1000",
+    "Probability of lightning in the next 60 minutes",
+    "LightningCast data courtesy CIMSS/SSEC",
+    "cross_satellite_family_splitting",
+]
+for fragment in required_lightningcast_fragments:
+    if fragment not in app:
+        errors.append(f"Missing LightningCast dashboard integration fragment: {fragment}")
+
+required_lightningcast_generator_fragments = [
+    '"metadata_mode": "lightningcast_dashboard_v1e"',
+    'THRESHOLDS = (10, 30, 50, 70, 90)',
+    '"contour_lines_only": True',
+    '"polygon_fill_inference": False',
+    '"cross_satellite_family_splitting": False',
+]
+for fragment in required_lightningcast_generator_fragments:
+    if fragment not in lightningcast_generator:
+        errors.append(f"Missing LightningCast v1E generator contract: {fragment}")
+
+required_lightningcast_workflow_fragments = [
+    "Update LightningCast",
+    "workflow_dispatch:",
+    "workflow_run:",
+    'workflows: ["Update GOES GLM Mosaic"]',
+    "lightningcast_dashboard_v1e",
+    "lightningcast_conus_probability_60min.png",
+    "lightningcast_manifest.json",
+]
+for fragment in required_lightningcast_workflow_fragments:
+    if fragment not in lightningcast_workflow:
+        errors.append(f"Missing LightningCast workflow integration fragment: {fragment}")
 
 required_ufvs_utility_fragments = [
     "UFVS Geographic Domains",
@@ -322,7 +371,7 @@ duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
 
-expected_layer_count = 104
+expected_layer_count = 105
 if len(ids) != expected_layer_count:
     errors.append(
         f"Expected {expected_layer_count} registered layers, found {len(ids)}."
@@ -373,5 +422,5 @@ print(
     f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
     "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
-    "and UFVS Geographic Domains utility preserved."
+    "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
