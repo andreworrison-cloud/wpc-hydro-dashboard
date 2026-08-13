@@ -59,6 +59,32 @@ class EnsembleNowcastEngine:
             print(f"IDX probe [ERROR] {source}: {idx_url} ({type(e).__name__})")
             return False
 
+
+
+    def _probe_grib(self, source, grib_url, timeout=10):
+        """
+        Probe the GRIB2 object itself without downloading the full file.
+        A one-byte Range request distinguishes:
+          - GRIB exists but .idx is missing
+          - GRIB itself is missing/unavailable
+        """
+        try:
+            r = requests.get(
+                grib_url,
+                headers={
+                    "Range": "bytes=0-0",
+                    "User-Agent": self.headers["User-Agent"],
+                },
+                timeout=timeout,
+                allow_redirects=True,
+                stream=True,
+            )
+            print(f"GRIB probe [{r.status_code}] {source}: {grib_url}")
+            return r.status_code in (200, 206)
+        except requests.RequestException as e:
+            print(f"GRIB probe [ERROR] {source}: {grib_url} ({type(e).__name__})")
+            return False
+
     def _refs_filename_variants(self, cycle, product, fxx):
         """Try both f15 and f015 forecast-hour forms during the transition."""
         names = [
@@ -94,18 +120,39 @@ class EnsembleNowcastEngine:
                     print(f"HREF candidate accepted: {d_str} {cycle:02d}Z (PROB f{max_fxx:02d})")
                     return d_str, cycle
             else:
-                # REFS FFRI is optional during the parallel.  A usable PROB index
-                # is enough to accept the cycle and continue the QPF products.
+                # REFS FFRI is optional during the parallel.
+                # First test the external index. If it is absent, probe the
+                # underlying GRIB2 object itself. We intentionally do NOT
+                # accept a GRIB-only cycle yet because downstream extraction
+                # still uses .idx byte ranges; this run is diagnostic.
+                grib_without_idx = []
                 for source, prob_url in self._refs_candidates(d_str, cycle, "prob", max_fxx):
                     if self._probe_idx(source, prob_url):
                         self.refs_cycle_source = source
                         print(
                             f"REFS candidate accepted: {d_str} {cycle:02d}Z "
-                            f"via {source} (PROB f{max_fxx:02d})"
+                            f"via {source} (PROB f{max_fxx:02d}, IDX available)"
                         )
                         return d_str, cycle
 
-        print(f"ERROR: No usable {model} cycle found in the last 48 hours.")
+                    if self._probe_grib(source, prob_url):
+                        grib_without_idx.append((source, prob_url))
+
+                if grib_without_idx:
+                    sources = ", ".join(source for source, _ in grib_without_idx)
+                    print(
+                        f"REFS GRIB EXISTS WITHOUT IDX: {d_str} {cycle:02d}Z "
+                        f"(PROB f{max_fxx:02d}) via {sources}"
+                    )
+
+        if model == "REFS":
+            print(
+                "ERROR: No REFS cycle with a usable external .idx was found. "
+                "Review GRIB probe lines above to determine whether direct-GRIB "
+                "fallback is possible."
+            )
+        else:
+            print(f"ERROR: No usable {model} cycle found in the last 48 hours.")
         return None, None
 
     def _get_idx(self, url):
