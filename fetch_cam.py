@@ -25,52 +25,101 @@ class EnsembleNowcastEngine:
         self.ffg_durations = [1, 3, 6]
 
     def _refs_product_urls(self, d_str, cycle, filename):
-        """Return REFS URLs in preferred order: AWS, NOMADS parallel, NOMADS production."""
+        """
+        Return candidate REFS product URLs in preferred order.
+
+        During the 2026 pre-implementation transition NOAA is moving from the
+        prototype hierarchy to the Version-1 operational-style hierarchy.
+        Keep several roots available so one dataflow change does not stop the dashboard.
+        """
         rel = f"refs.{d_str}/{cycle:02d}/ensprod/{filename}"
         return [
-            ("AWS", f"https://noaa-rrfs-pds.s3.amazonaws.com/refs/v1.0/{rel}"),
+            ("AWS-V1",      f"https://noaa-rrfs-pds.s3.amazonaws.com/refs/v1.0/{rel}"),
             ("NOMADS-PARA", f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/para/{rel}"),
+            ("AWS-PUBLIC",  f"https://noaa-rrfs-pds.s3.amazonaws.com/rrfs_public/{rel}"),
             ("NOMADS-PROD", f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/prod/{rel}"),
         ]
-        
+
+    def _probe_idx(self, source, grib_url, timeout=8):
+        """Probe the .idx endpoint with GET (not HEAD) and print the HTTP result."""
+        idx_url = grib_url + ".idx"
+        try:
+            r = requests.get(
+                idx_url,
+                headers={
+                    "Range": "bytes=0-1023",
+                    "User-Agent": self.headers["User-Agent"],
+                },
+                timeout=timeout,
+                allow_redirects=True,
+            )
+            print(f"IDX probe [{r.status_code}] {source}: {idx_url}")
+            return r.status_code in (200, 206)
+        except requests.RequestException as e:
+            print(f"IDX probe [ERROR] {source}: {idx_url} ({type(e).__name__})")
+            return False
+
+    def _refs_filename_variants(self, cycle, product, fxx):
+        """Try both f15 and f015 forecast-hour forms during the transition."""
+        names = [
+            f"refs.t{cycle:02d}z.{product}.f{fxx:02d}.conus.grib2",
+            f"refs.t{cycle:02d}z.{product}.f{fxx:03d}.conus.grib2",
+        ]
+        return list(dict.fromkeys(names))
+
+    def _refs_candidates(self, d_str, cycle, product, fxx):
+        candidates = []
+        for filename in self._refs_filename_variants(cycle, product, fxx):
+            candidates.extend(self._refs_product_urls(d_str, cycle, filename))
+        return candidates
 
     def _get_latest_cycle(self, model, max_fxx):
         now = datetime.now(timezone.utc)
         curr_cycle = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
+
         for i in range(8):
             dt = curr_cycle - timedelta(hours=6 * i)
             cycle = dt.hour
             d_str = dt.strftime("%Y%m%d")
-            
-            if model == "HREF":
-                idx_prob = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/href.{d_str}/ensprod/href.t{cycle:02d}z.conus.prob.f{max_fxx:02d}.grib2.idx"
-                idx_ffri = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/href.{d_str}/ensprod/href.t{cycle:02d}z.conus.ffri.f{max_fxx:02d}.grib2.idx"
-                try:
-                    if requests.head(idx_prob, headers=self.headers, timeout=5).status_code == 200 and requests.head(idx_ffri, headers=self.headers, timeout=5).status_code == 200:
-                        return d_str, cycle
-                except: pass
-            else:
-                prob_name = f"refs.t{cycle:02d}z.prob.f{max_fxx:02d}.conus.grib2"
-                ffri_name = f"refs.t{cycle:02d}z.ffri.f{max_fxx:02d}.conus.grib2"
-                prob_sources = self._refs_product_urls(d_str, cycle, prob_name)
-                ffri_sources = self._refs_product_urls(d_str, cycle, ffri_name)
 
-                for (source, prob_url), (_, ffri_url) in zip(prob_sources, ffri_sources):
-                    try:
-                        if (requests.head(prob_url + ".idx", headers=self.headers, timeout=5, allow_redirects=True).status_code == 200 and
-                            requests.head(ffri_url + ".idx", headers=self.headers, timeout=5, allow_redirects=True).status_code == 200):
-                            self.refs_cycle_source = source
-                            return d_str, cycle
-                    except requests.RequestException:
-                        pass
+            if model == "HREF":
+                # Use the general probability product to establish cycle readiness.
+                # FFRI is intentionally NOT required here.
+                prob_url = (
+                    f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/"
+                    f"href.{d_str}/ensprod/"
+                    f"href.t{cycle:02d}z.conus.prob.f{max_fxx:02d}.grib2"
+                )
+                if self._probe_idx("HREF-NOMADS", prob_url):
+                    print(f"HREF candidate accepted: {d_str} {cycle:02d}Z (PROB f{max_fxx:02d})")
+                    return d_str, cycle
+            else:
+                # REFS FFRI is optional during the parallel.  A usable PROB index
+                # is enough to accept the cycle and continue the QPF products.
+                for source, prob_url in self._refs_candidates(d_str, cycle, "prob", max_fxx):
+                    if self._probe_idx(source, prob_url):
+                        self.refs_cycle_source = source
+                        print(
+                            f"REFS candidate accepted: {d_str} {cycle:02d}Z "
+                            f"via {source} (PROB f{max_fxx:02d})"
+                        )
+                        return d_str, cycle
+
+        print(f"ERROR: No usable {model} cycle found in the last 48 hours.")
         return None, None
 
     def _get_idx(self, url):
         if url not in self.idx_cache:
             try:
-                r = requests.get(url, headers=self.headers, timeout=10)
-                self.idx_cache[url] = r.text if r.status_code == 200 else ""
-            except: self.idx_cache[url] = ""
+                r = requests.get(url, headers=self.headers, timeout=10, allow_redirects=True)
+                if r.status_code in (200, 206):
+                    self.idx_cache[url] = r.text
+                else:
+                    print(f"IDX fetch [{r.status_code}]: {url}")
+                    self.idx_cache[url] = ""
+            except requests.RequestException as e:
+                print(f"IDX fetch [ERROR]: {url} ({type(e).__name__})")
+                self.idx_cache[url] = ""
         return self.idx_cache[url]
 
     def _parse_idx(self, idx_text, param_type, val, fxx):
@@ -174,6 +223,7 @@ class EnsembleNowcastEngine:
         r_date, r_cyc = self._get_latest_cycle("REFS", max_req_fxx)
         
         if not h_date or not r_date:
+            print(f"Cycle discovery summary -> HREF: {h_date or 'MISSING'} | REFS: {r_date or 'MISSING'}")
             return {"error": f"Missing Core Ensemble Runs out to f{max_req_fxx}."}
             
         print(f"Locked Models -> HREF: {h_cyc:02d}Z | REFS: {r_cyc:02d}Z")
@@ -193,8 +243,7 @@ class EnsembleNowcastEngine:
                 # 1. Queue QPF (1-hour durations strictly inside the window)
                 for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
                     tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"H_Q_{t_in}_{fxx}.grib2"))
-                    r_name = f"refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2"
-                    r_sources = self._refs_product_urls(r_date, r_cyc, r_name)
+                    r_sources = self._refs_candidates(r_date, r_cyc, "prob", fxx)
                     r_urls = [u for _, u in r_sources]
                     tasks.append((r_urls, [u + ".idx" for u in r_urls], "QPF", t_mm, fxx, self.grib_dir/f"R_Q_{t_in}_{fxx}.grib2"))
                 
@@ -202,8 +251,7 @@ class EnsembleNowcastEngine:
                 for d in self.ffg_durations:
                     if fxx - d >= window_start:
                         tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2.idx", "FFG", d, fxx, self.grib_dir/f"H_F_{d}_{fxx}.grib2"))
-                        r_name = f"refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2"
-                        r_sources = self._refs_product_urls(r_date, r_cyc, r_name)
+                        r_sources = self._refs_candidates(r_date, r_cyc, "ffri", fxx)
                         r_urls = [u for _, u in r_sources]
                         tasks.append((r_urls, [u + ".idx" for u in r_urls], "FFG", d, fxx, self.grib_dir/f"R_F_{d}_{fxx}.grib2"))
 
@@ -263,8 +311,7 @@ class EnsembleNowcastEngine:
 
     def export_dashboard_layers(self, payload):
         if "error" in payload:
-            print("Error in payload. Cannot export maps.")
-            return
+            raise RuntimeError(payload["error"])
 
         print("Exporting Geo-Registered PNGs and Metadata...")
         os.makedirs("static", exist_ok=True)
@@ -280,7 +327,12 @@ class EnsembleNowcastEngine:
         min_y, max_y = np.nanmin(y_wm), np.nanmax(y_wm)
 
         def save_png(data, filename, cmap, levels):
-            if data is None: return
+            if data is None:
+                stale = Path("static") / filename
+                if stale.exists():
+                    stale.unlink()
+                    print(f"Removed stale unavailable layer: {stale}")
+                return
             
             # Mask out probabilities less than 10% for a clean transparent background
             data = np.where(data < levels[0], np.nan, data)
