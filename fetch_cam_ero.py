@@ -16,10 +16,21 @@ class EROCamEngine:
         self.grib_dir.mkdir(exist_ok=True, parents=True)
         self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         self.idx_cache = {}
-        
+        self.refs_cycle_source = None
+
         self.qpf_thresh_in = [0.5, 1, 2, 3]
         self.qpf_thresh_mm = [12.7, 25.4, 50.8, 76.2]
         self.ffg_durations = [1, 3, 6]
+
+    def _refs_product_urls(self, d_str, cycle, filename):
+        """Return REFS URLs in preferred order: AWS, NOMADS parallel, NOMADS production."""
+        rel = f"refs.{d_str}/{cycle:02d}/ensprod/{filename}"
+        return [
+            ("AWS", f"https://noaa-rrfs-pds.s3.amazonaws.com/refs/v1.0/{rel}"),
+            ("NOMADS-PARA", f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/para/{rel}"),
+            ("NOMADS-PROD", f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/prod/{rel}"),
+        ]
+        
 
     def _get_fxx_range_for_ero(self, cycle):
         """Matches the user's logic to perfectly bound the 12Z-12Z ERO period."""
@@ -49,11 +60,14 @@ class EROCamEngine:
                         return d_str, cycle, fxx_range, dt
                 except: pass
             else:
-                idx_prob = f"https://noaa-rrfs-pds.s3.amazonaws.com/rrfs_public/refs.{d_str}/{cycle:02d}/enspost/refs.t{cycle:02d}z.prob.f{max_fxx:02d}.conus.grib2.idx"
-                try:
-                    if requests.head(idx_prob, timeout=5).status_code == 200: 
-                        return d_str, cycle, fxx_range, dt
-                except: pass
+                prob_name = f"refs.t{cycle:02d}z.prob.f{max_fxx:02d}.conus.grib2"
+                for source, prob_url in self._refs_product_urls(d_str, cycle, prob_name):
+                    try:
+                        if requests.head(prob_url + ".idx", headers=self.headers, timeout=5, allow_redirects=True).status_code == 200:
+                            self.refs_cycle_source = source
+                            return d_str, cycle, fxx_range, dt
+                    except requests.RequestException:
+                        pass
         return None, None, None, None
 
     def _get_idx(self, url):
@@ -100,15 +114,31 @@ class EROCamEngine:
     def _fetch_grib(self, args):
         url, idx_url, p_type, val, fxx, out_file = args
         if out_file.exists(): return True
-        start_b, end_b = self._parse_idx(self._get_idx(idx_url), p_type, val, fxx)
-        if start_b is None: return False
-        rng = f"bytes={start_b}-{end_b}" if end_b else f"bytes={start_b}-"
-        try:
-            r = requests.get(url, headers={"Range": rng, "User-Agent": self.headers["User-Agent"]}, timeout=30)
-            if r.status_code in (200, 206):
-                with open(out_file, 'wb') as f: f.write(r.content)
-                return True
-        except: pass
+
+        # HREF passes one URL pair. REFS passes ordered URL lists:
+        # AWS first, then NOMADS parallel, then NOMADS production.
+        urls = list(url) if isinstance(url, (list, tuple)) else [url]
+        idx_urls = list(idx_url) if isinstance(idx_url, (list, tuple)) else [idx_url]
+
+        for source_url, source_idx_url in zip(urls, idx_urls):
+            start_b, end_b = self._parse_idx(self._get_idx(source_idx_url), p_type, val, fxx)
+            if start_b is None:
+                continue
+
+            rng = f"bytes={start_b}-{end_b}" if end_b else f"bytes={start_b}-"
+            try:
+                r = requests.get(
+                    source_url,
+                    headers={"Range": rng, "User-Agent": self.headers["User-Agent"]},
+                    timeout=30
+                )
+                if r.status_code in (200, 206):
+                    with open(out_file, 'wb') as f:
+                        f.write(r.content)
+                    return True
+            except requests.RequestException:
+                continue
+
         return False
 
     def _extract_max(self, file_path, current_max, lats, lons):
@@ -170,7 +200,7 @@ class EROCamEngine:
         
         tasks = []
         h_base = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/href.{h_date}/ensprod"
-        r_base = f"https://noaa-rrfs-pds.s3.amazonaws.com/rrfs_public/refs.{r_date}/{r_cyc:02d}/enspost"
+        print(f"REFS cycle discovery source: {self.refs_cycle_source or 'unknown'}")
         
         # Ensure we only fetch the intersection of hours both models share for the ERO window
         shared_fxx_range = sorted(list(set(h_fxx_range) & set(r_fxx_range)))
@@ -179,12 +209,18 @@ class EROCamEngine:
         for fxx in shared_fxx_range:
             for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
                 tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"H_Q_{t_in}_{fxx}.grib2"))
-                tasks.append((f"{r_base}/refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2", f"{r_base}/refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2.idx", "QPF", t_mm, fxx, self.grib_dir/f"R_Q_{t_in}_{fxx}.grib2"))
+                r_name = f"refs.t{r_cyc:02d}z.prob.f{fxx:02d}.conus.grib2"
+                r_sources = self._refs_product_urls(r_date, r_cyc, r_name)
+                r_urls = [u for _, u in r_sources]
+                tasks.append((r_urls, [u + ".idx" for u in r_urls], "QPF", t_mm, fxx, self.grib_dir/f"R_Q_{t_in}_{fxx}.grib2"))
                 
             for d in self.ffg_durations:
                 if fxx - d >= window_start:
                     tasks.append((f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2", f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2.idx", "FFG", d, fxx, self.grib_dir/f"H_F_{d}_{fxx}.grib2"))
-                    tasks.append((f"{r_base}/refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2", f"{r_base}/refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2.idx", "FFG", d, fxx, self.grib_dir/f"R_F_{d}_{fxx}.grib2"))
+                    r_name = f"refs.t{r_cyc:02d}z.ffri.f{fxx:02d}.conus.grib2"
+                    r_sources = self._refs_product_urls(r_date, r_cyc, r_name)
+                    r_urls = [u for _, u in r_sources]
+                    tasks.append((r_urls, [u + ".idx" for u in r_urls], "FFG", d, fxx, self.grib_dir/f"R_F_{d}_{fxx}.grib2"))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             list(executor.map(self._fetch_grib, tasks))
