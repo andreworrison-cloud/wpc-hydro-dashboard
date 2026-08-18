@@ -84,8 +84,8 @@ jobs:
               raise SystemExit("Unexpected HRRR-TLE manifest contract.")
 
           layers = manifest.get("layers") or {}
-          if len(layers) != 18:
-              raise SystemExit(f"Expected 18 HRRR-TLE dashboard overlays, found {len(layers)}.")
+          if len(layers) != 20:
+              raise SystemExit(f"Expected 20 HRRR/HRRR-TLE dashboard overlays, found {len(layers)}.")
 
           for key, item in layers.items():
               p = root / item["file"]
@@ -94,7 +94,7 @@ jobs:
               with Image.open(p).convert("RGBA") as image:
                   if image.width < 800 or image.height < 400:
                       raise SystemExit(f"{key}: implausibly small image {image.size}")
-          print(f"Validated 18 HRRR-TLE overlays for {manifest['latest_cycle_utc']}.")
+          print(f"Validated 20 HRRR/HRRR-TLE overlays; latest HRRR {manifest['latest_hrrr_diagnostic_cycle_utc']}, TLE anchor {manifest['latest_cycle_utc']}.")
           PY
 
       - name: Commit updated dashboard products
