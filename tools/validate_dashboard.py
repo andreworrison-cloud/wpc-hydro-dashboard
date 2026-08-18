@@ -16,7 +16,7 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 
 errors = []
 
-# HRRR-TLE dashboard integration adds 18 registered layers to the 105-layer LightningCast-era registry.
+# HRRR diagnostics (2) + HRRR-TLE (18) add 20 registered layers to the 105-layer LightningCast-era registry.
 EXPECTED_LAYER_COUNT = 125
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
@@ -303,7 +303,6 @@ required_hrrr_tle_app_fragments = [
     "static/hrrr_tle_manifest.json",
     "static/hrrr_tle_metadata.json",
     "hrrr-tle-time-box",
-    "'lightningcast-time-box',\n        'hrrr-tle-time-box',\n        'nwm-time-box'",
     "buildHRRRTLELegendHTML",
     "refreshHRRRTLEFromManifest",
     "hrrr_tle_dashboard_v3_3",
@@ -318,6 +317,39 @@ required_hrrr_tle_app_fragments = [
 for fragment in required_hrrr_tle_app_fragments:
     if fragment not in app:
         errors.append(f"Missing HRRR-TLE dashboard integration fragment: {fragment}")
+
+# Verify the current legend-dock time-box order without depending on exact
+# whitespace from an older app.js revision.
+legend_dock_marker = "].forEach(id => createLegendDockTimeBox(timeStack, id));"
+legend_dock_end = app.find(legend_dock_marker)
+if legend_dock_end < 0:
+    errors.append("Missing legend-dock time-box creation block.")
+else:
+    legend_dock_start = app.rfind("[", 0, legend_dock_end)
+    legend_dock_block = (
+        app[legend_dock_start:legend_dock_end]
+        if legend_dock_start >= 0
+        else ""
+    )
+    required_hrrr_time_boxes = [
+        "'lightningcast-time-box'",
+        "'hrrr-diagnostics-time-box'",
+        "'hrrr-tle-time-box'",
+        "'nwm-time-box'",
+    ]
+    time_box_positions = [
+        legend_dock_block.find(marker)
+        for marker in required_hrrr_time_boxes
+    ]
+    if any(position < 0 for position in time_box_positions):
+        errors.append(
+            "Legend dock is missing a required LightningCast/HRRR/NWM time box."
+        )
+    elif time_box_positions != sorted(time_box_positions):
+        errors.append(
+            "Legend-dock time boxes are not ordered "
+            "LightningCast -> HRRR Diagnostics -> HRRR-TLE -> NWM."
+        )
 
 # Enforce exact section placement below RAP and above the first CAM Nowcast section.
 rap_start = app.find("title: 'RAP Mesoanalysis Data'")
@@ -488,9 +520,9 @@ for forbidden in [
 
 # Count both the existing dashboard registry objects, which use
 #   {id: '...', label: ...}
-# and the HRRR-TLE configuration objects, which use
+# and the HRRR diagnostics / HRRR-TLE configuration objects, which use
 #   {id: '...', key: ..., ... label: ...}
-# The prior label-only regex incorrectly omitted all 18 HRRR-TLE layers.
+# The key-aware regex counts all 20 HRRR-family layers.
 ids = re.findall(r"\{id: '([a-z0-9-]+)', (?:label:|key:)", app)
 duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
