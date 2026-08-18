@@ -352,7 +352,7 @@ required_hrrr_tle_workflow_fragments = [
     "Update HRRR-TLE Flash Flood Guidance",
     "workflow_dispatch:",
     "schedule:",
-    "cron: '55 * * * *'",
+    "cron: '15 * * * *'",
     "python fetch_hrrr_tle.py --output-dir static",
     "static/hrrr_tle_*",
 ]
