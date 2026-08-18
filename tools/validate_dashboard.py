@@ -295,6 +295,7 @@ required_hrrr_tle_app_fragments = [
     "static/hrrr_tle_manifest.json",
     "static/hrrr_tle_metadata.json",
     "hrrr-tle-time-box",
+    "'lightningcast-time-box',\n        'hrrr-tle-time-box',\n        'nwm-time-box'",
     "buildHRRRTLELegendHTML",
     "refreshHRRRTLEFromManifest",
     "hrrr_tle_dashboard_v3_3",
