@@ -101,14 +101,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- static/hrrr_tle_*; then
+
+          # Stage first. `git diff` alone does not report brand-new untracked
+          # files, which is exactly what happens on the first HRRR-TLE run.
+          git add static/hrrr_tle_*
+
+          if git diff --cached --quiet; then
             echo "No HRRR-TLE product changes to commit."
             exit 0
           fi
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add static/hrrr_tle_*
           git commit -m "Update HRRR-TLE flash flood guidance"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
