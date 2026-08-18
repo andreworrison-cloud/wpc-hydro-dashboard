@@ -2893,6 +2893,7 @@ legendDockControl.onAdd = function () {
         'mrms-ffd-24h-time-box',
         'glm-time-box',
         'lightningcast-time-box',
+        'hrrr-tle-time-box',
         'nwm-time-box',
         'sport-time-box',
         'nldas-rsm-010-time-box',
