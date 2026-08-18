@@ -50,7 +50,8 @@ NEIGHBORHOOD_KM = 40.0
 TLE_MEMBER_COUNT = 6
 TLE_COMMON_HOURS = 12
 MIN_TLE_MEMBERS = 6  # dashboard package requires all six for a complete product
-SINGLE_RUN_MAX_FXX = 18  # retained for the frozen V3.3 availability helper definition
+SINGLE_RUN_MAX_FXX = 18  # frozen notebook value retained for helper compatibility
+DASHBOARD_HRRR_DIAGNOSTIC_HOURS = 12
 
 QPF_1H_THRESHOLDS_IN = (1.0, 2.0, 3.0)
 EVOLUTION_WINDOW_HOURS = 3
@@ -86,8 +87,12 @@ FREQ_COLORS_6 = ["#fff59d", "#ffcc80", "#ff8a65", "#ef5350", "#ab47bc", "#5e35b1
 FREQ_COLORS_5 = ["#ffcc80", "#ff8a65", "#ef5350", "#ab47bc", "#5e35b1"]
 FREQ_COLORS_3 = ["#ffcc80", "#ef5350", "#5e35b1"]
 RUN_CHANGE_COLORS = ["#4575b4", "#7b3294", "#fdae61"]
+COVERAGE_LEVELS = [1.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.01]
+COVERAGE_COLORS = ["#e0f7fa", "#c8e6c9", "#fff59d", "#ffb74d", "#f44336", "#9c27b0"]
 
 LAYER_FILES = {
+    "hrrr_max_ratio": "hrrr_latest_12h_max_ffg_ratio.png",
+    "hrrr_ffg_coverage": "hrrr_latest_12h_ffg_exceedance_coverage.png",
     "ffg_consensus": "hrrr_tle_ffg_consensus.png",
     "median_ratio": "hrrr_tle_median_neighborhood_ratio.png",
     "ffg_1h": "hrrr_tle_ffg_1h.png",
@@ -780,12 +785,18 @@ def build(output_dir: Path, force: bool = False) -> int:
     manifest_path = output_dir / "hrrr_tle_manifest.json"
 
     latest_dt = find_latest_tle_cycle()
+    latest_hrrr_dt = find_latest_complete_hrrr(
+        max_fxx=DASHBOARD_HRRR_DIAGNOSTIC_HOURS,
+        max_lookback_hours=14,
+    )
 
     if manifest_path.exists() and not force:
         try:
             old = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if old.get("latest_cycle_utc") == latest_dt.strftime("%Y-%m-%dT%H:00:00Z"):
-                print("ℹ️ Newest complete HRRR-TLE cycle is already published; exiting without churn.")
+            same_tle = old.get("latest_cycle_utc") == latest_dt.strftime("%Y-%m-%dT%H:00:00Z")
+            same_hrrr = old.get("latest_hrrr_diagnostic_cycle_utc") == latest_hrrr_dt.strftime("%Y-%m-%dT%H:00:00Z")
+            if same_tle and same_hrrr:
+                print("ℹ️ Newest HRRR diagnostics and HRRR-TLE package are already published; exiting without churn.")
                 return 0
         except Exception:
             pass
@@ -804,6 +815,64 @@ def build(output_dir: Path, force: bool = False) -> int:
 
     ffg_1h, ffg_3h, ffg_6h, ffg_dt = fetch_and_align_ffg(latest_dt, lats, lons)
     ffg_age_h = (latest_dt - ffg_dt).total_seconds() / 3600.0
+
+    # ------------------------------------------------------------
+    # Latest deterministic HRRR diagnostics — independent of TLE.
+    # Use the newest HRRR cycle complete through f12, even when that
+    # cycle is newer than the six-cycle TLE anchor.
+    # ------------------------------------------------------------
+    diagnostic_fxx = list(range(1, DASHBOARD_HRRR_DIAGNOSTIC_HOURS + 1))
+    print(
+        f"\n--- Latest HRRR diagnostics: {latest_hrrr_dt:%Y-%m-%d %HZ} "
+        f"f01-f{DASHBOARD_HRRR_DIAGNOSTIC_HOURS:02d} ---"
+    )
+
+    if latest_hrrr_dt == latest_dt:
+        qpf_hrrr = qpf0.astype(np.float32, copy=False)
+        diag_lats, diag_lons = lats, lons
+        diag_ffg_1h, diag_ffg_3h, diag_ffg_6h, diag_ffg_dt = (
+            ffg_1h, ffg_3h, ffg_6h, ffg_dt
+        )
+    else:
+        qpf_hrrr, diag_lats, diag_lons = get_hrrr_hourly_qpf(
+            latest_hrrr_dt,
+            diagnostic_fxx,
+        )
+        qpf_hrrr = qpf_hrrr.astype(np.float32, copy=False)
+        if diag_lats.shape != lats.shape or diag_lons.shape != lons.shape:
+            raise RuntimeError("Latest-HRRR diagnostic grid geometry mismatch")
+        diag_ffg_1h, diag_ffg_3h, diag_ffg_6h, diag_ffg_dt = fetch_and_align_ffg(
+            latest_hrrr_dt,
+            lats,
+            lons,
+        )
+
+    diagnostic_ffg_age_h = (
+        latest_hrrr_dt - diag_ffg_dt
+    ).total_seconds() / 3600.0
+
+    diagnostic_ratios = compute_run_ratio_fields(
+        qpf_hrrr,
+        diag_ffg_1h,
+        diag_ffg_3h,
+        diag_ffg_6h,
+    )
+    diagnostic_max_ratio = neighborhood_max(
+        diagnostic_ratios["combined"]
+    ).astype(np.float32)
+
+    diagnostic_exceed_raw = (
+        np.isfinite(diagnostic_ratios["combined"])
+        & (diagnostic_ratios["combined"] >= 1.0)
+    ).astype(np.float32)
+    diagnostic_ffg_coverage = neighborhood_coverage_fraction(
+        diagnostic_exceed_raw
+    ).astype(np.float32)
+
+    diagnostic_valid_start = latest_hrrr_dt
+    diagnostic_valid_end = latest_hrrr_dt + timedelta(
+        hours=DASHBOARD_HRRR_DIAGNOSTIC_HOURS
+    )
 
     member_records = []
     for member_index, run_dt in enumerate(tle_run_dts):
@@ -911,6 +980,22 @@ def build(output_dir: Path, force: bool = False) -> int:
         freq5_levels = frequency_levels(6, 2)
         freq3_levels = frequency_levels(3, 1)
 
+        # Latest deterministic HRRR diagnostics (standalone, not TLE).
+        render_overlay(
+            diagnostic_max_ratio,
+            staging / LAYER_FILES["hrrr_max_ratio"],
+            RATIO_LEVELS,
+            RATIO_COLORS,
+            mask_below=0.75,
+        )
+        render_overlay(
+            diagnostic_ffg_coverage,
+            staging / LAYER_FILES["hrrr_ffg_coverage"],
+            COVERAGE_LEVELS,
+            COVERAGE_COLORS,
+            mask_below=1.0,
+        )
+
         render_overlay(tle_frequency_raw, staging / LAYER_FILES["ffg_consensus"],
                        freq6_levels, FREQ_COLORS_6, mask_below=100/6 - 0.1)
         render_overlay(tle_median_neighborhood_ratio, staging / LAYER_FILES["median_ratio"],
@@ -954,6 +1039,13 @@ def build(output_dir: Path, force: bool = False) -> int:
             "metadata_mode": "hrrr_tle_dashboard_v3_3",
             "algorithm_version": "3.3",
             "experimental": True,
+            "latest_hrrr_diagnostic_cycle_utc": latest_hrrr_dt.strftime("%Y-%m-%dT%H:00:00Z"),
+            "hrrr_diagnostic_valid_start_utc": diagnostic_valid_start.strftime("%Y-%m-%dT%H:00:00Z"),
+            "hrrr_diagnostic_valid_end_utc": diagnostic_valid_end.strftime("%Y-%m-%dT%H:00:00Z"),
+            "hrrr_diagnostic_fxx_start": 1,
+            "hrrr_diagnostic_fxx_end": DASHBOARD_HRRR_DIAGNOSTIC_HOURS,
+            "hrrr_diagnostic_ffg_analysis_utc": diag_ffg_dt.strftime("%Y-%m-%dT%H:00:00Z"),
+            "hrrr_diagnostic_ffg_age_hours": round(diagnostic_ffg_age_h, 1),
             "latest_cycle_utc": latest_dt.strftime("%Y-%m-%dT%H:00:00Z"),
             "common_valid_start_utc": common_start.strftime("%Y-%m-%dT%H:00:00Z"),
             "common_valid_end_utc": common_end.strftime("%Y-%m-%dT%H:00:00Z"),
@@ -985,6 +1077,8 @@ def build(output_dir: Path, force: bool = False) -> int:
         write_json(staging / "hrrr_tle_manifest.json", {
             "metadata_mode": "hrrr_tle_dashboard_manifest_v1",
             "algorithm_version": "3.3",
+            "latest_hrrr_diagnostic_cycle_utc": metadata["latest_hrrr_diagnostic_cycle_utc"],
+            "hrrr_diagnostic_valid_end_utc": metadata["hrrr_diagnostic_valid_end_utc"],
             "latest_cycle_utc": metadata["latest_cycle_utc"],
             "common_valid_start_utc": metadata["common_valid_start_utc"],
             "common_valid_end_utc": metadata["common_valid_end_utc"],
@@ -1003,7 +1097,7 @@ def build(output_dir: Path, force: bool = False) -> int:
         for name in expected:
             shutil.copy2(staging / name, output_dir / name)
 
-        print(f"✅ Published HRRR-TLE V3.3 dashboard package for {latest_dt:%Y-%m-%d %HZ}")
+        print(f"✅ Published HRRR diagnostics {latest_hrrr_dt:%Y-%m-%d %HZ} + HRRR-TLE V3.3 {latest_dt:%Y-%m-%d %HZ}")
         return 0
     finally:
         shutil.rmtree(staging, ignore_errors=True)

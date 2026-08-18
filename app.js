@@ -639,6 +639,28 @@ const HRRR_TLE_METADATA_URL = 'static/hrrr_tle_metadata.json';
 const HRRR_TLE_MANIFEST_POLL_INTERVAL_MS = 3 * 60 * 1000;
 const HRRR_TLE_PLACEHOLDER_BOUNDS = [[23.0, -125.0], [50.5, -66.5]];
 
+const HRRR_DIAGNOSTIC_LAYER_CONFIGS = [
+    {id: 'hrrr-diag-max-ratio', key: 'hrrr_max_ratio',
+     label: 'Max FFG Exceedance Ratio — Next 12 Hours',
+     file: 'hrrr_latest_12h_max_ffg_ratio.png', legendType: 'ratio',
+     keywords: 'latest deterministic HRRR maximum FFG exceedance QPF ratio next 12 hours'},
+    {id: 'hrrr-diag-ffg-coverage', key: 'hrrr_ffg_coverage',
+     label: 'FFG Exceedance Areal Coverage — Next 12 Hours',
+     file: 'hrrr_latest_12h_ffg_exceedance_coverage.png', legendType: 'coverage',
+     keywords: 'latest deterministic HRRR FFG exceedance areal coverage 40 km next 12 hours'}
+];
+
+const HRRR_DIAGNOSTIC_CONFIG_BY_NAME = new Map();
+HRRR_DIAGNOSTIC_LAYER_CONFIGS.forEach(config => {
+    config.url = `static/${config.file}`;
+    config.layer = L.imageOverlay(
+        config.url,
+        HRRR_TLE_PLACEHOLDER_BOUNDS,
+        {zIndex: 13, opacity: 0, interactive: false}
+    );
+    HRRR_DIAGNOSTIC_CONFIG_BY_NAME.set(config.label, config);
+});
+
 const HRRR_TLE_LAYER_CONFIGS = [
     // Core FFG Guidance
     {id: 'hrrr-tle-ffg-consensus', key: 'ffg_consensus', group: 'Core FFG Guidance',
@@ -713,6 +735,11 @@ HRRR_TLE_LAYER_CONFIGS.forEach(config => {
     HRRR_TLE_CONFIG_BY_NAME.set(config.label, config);
     HRRR_TLE_CONFIG_BY_KEY.set(config.key, config);
 });
+
+const HRRR_ALL_LAYER_CONFIGS = [
+    ...HRRR_DIAGNOSTIC_LAYER_CONFIGS,
+    ...HRRR_TLE_LAYER_CONFIGS
+];
 
 let hrrrTLEMetadata = null;
 let hrrrTLEReady = false;
@@ -2267,7 +2294,7 @@ window.addEventListener('focus', checkLightningCastUpdatesNow);
 window.addEventListener('online', checkLightningCastUpdatesNow);
 
 
-function validateHRRRTLEMetadata(metadata, expectedCycle = null) {
+function validateHRRRTLEMetadata(metadata, expectedCycle = null, expectedHRRRCycle = null) {
     if (!metadata || metadata.metadata_mode !== 'hrrr_tle_dashboard_v3_3') {
         throw new Error('Invalid HRRR-TLE metadata contract');
     }
@@ -2282,6 +2309,14 @@ function validateHRRRTLEMetadata(metadata, expectedCycle = null) {
             `HRRR-TLE package not synchronized: expected ${expectedCycle}, got ${metadata.latest_cycle_utc}`
         );
     }
+    if (
+        expectedHRRRCycle &&
+        metadata.latest_hrrr_diagnostic_cycle_utc !== expectedHRRRCycle
+    ) {
+        throw new Error(
+            `Latest-HRRR diagnostics not synchronized: expected ${expectedHRRRCycle}, got ${metadata.latest_hrrr_diagnostic_cycle_utc}`
+        );
+    }
     const bounds = metadata.bounds;
     if (
         !Array.isArray(bounds) || bounds.length !== 2 ||
@@ -2290,7 +2325,7 @@ function validateHRRRTLEMetadata(metadata, expectedCycle = null) {
     ) {
         throw new Error('HRRR-TLE metadata contains invalid Leaflet bounds');
     }
-    if (!metadata.layers || Object.keys(metadata.layers).length !== HRRR_TLE_LAYER_CONFIGS.length) {
+    if (!metadata.layers || Object.keys(metadata.layers).length !== HRRR_ALL_LAYER_CONFIGS.length) {
         throw new Error('HRRR-TLE metadata layer inventory is incomplete');
     }
     return metadata;
@@ -2311,16 +2346,16 @@ function preloadDashboardRaster(url) {
     });
 }
 
-async function fetchHRRRTLEMetadata({expectedCycle = null} = {}) {
+async function fetchHRRRTLEMetadata({expectedCycle = null, expectedHRRRCycle = null} = {}) {
     const response = await fetch(`${HRRR_TLE_METADATA_URL}?t=${Date.now()}`, {cache: 'no-store'});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const metadata = validateHRRRTLEMetadata(await response.json(), expectedCycle);
-    const urls = HRRR_TLE_LAYER_CONFIGS.map(config => hrrrTLERasterUrl(config, metadata));
+    const metadata = validateHRRRTLEMetadata(await response.json(), expectedCycle, expectedHRRRCycle);
+    const urls = HRRR_ALL_LAYER_CONFIGS.map(config => hrrrTLERasterUrl(config, metadata));
 
     // Preload the entire synchronized package before swapping any layer URL.
     await Promise.all(urls.map(preloadDashboardRaster));
 
-    HRRR_TLE_LAYER_CONFIGS.forEach((config, index) => {
+    HRRR_ALL_LAYER_CONFIGS.forEach((config, index) => {
         const currentOpacity = Number(config.layer.options?.opacity);
         config.layer.setBounds(metadata.bounds);
         config.layer.setUrl(urls[index]);
@@ -2331,6 +2366,7 @@ async function fetchHRRRTLEMetadata({expectedCycle = null} = {}) {
 
     hrrrTLEMetadata = metadata;
     hrrrTLEReady = true;
+    updateHRRRDiagnosticTimeBox();
     updateHRRRTLETimeBox();
     if (typeof updateLegends === 'function') updateLegends();
     return true;
@@ -2338,6 +2374,8 @@ async function fetchHRRRTLEMetadata({expectedCycle = null} = {}) {
 
 function hrrrTLEManifestVersion(manifest) {
     return [
+        manifest?.latest_hrrr_diagnostic_cycle_utc || '',
+        manifest?.hrrr_diagnostic_valid_end_utc || '',
         manifest?.latest_cycle_utc || '',
         manifest?.common_valid_end_utc || '',
         manifest?.generated_utc || ''
@@ -2366,7 +2404,10 @@ async function refreshHRRRTLEFromManifest({forceMetadata = false} = {}) {
         const manifest = await fetchHRRRTLEManifest();
         const version = hrrrTLEManifestVersion(manifest);
         if (!forceMetadata && version === hrrrTLELastManifestVersion) return false;
-        await fetchHRRRTLEMetadata({expectedCycle: manifest.latest_cycle_utc});
+        await fetchHRRRTLEMetadata({
+            expectedCycle: manifest.latest_cycle_utc,
+            expectedHRRRCycle: manifest.latest_hrrr_diagnostic_cycle_utc
+        });
         hrrrTLELastManifestVersion = version;
         return true;
     } catch (error) {
@@ -2384,6 +2425,46 @@ function formatHRRRTLEUTC(value) {
     if (!value) return 'Unknown';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : formatUTC(date);
+}
+
+function activeHRRRDiagnosticConfigs() {
+    return HRRR_DIAGNOSTIC_LAYER_CONFIGS.filter(
+        config => activeLayerNames.has(config.label)
+    );
+}
+
+function formatHRRRDiagnosticTimeBox(config, metadata) {
+    if (!config) return '';
+    if (!metadata) {
+        return `
+            <strong>${config.label}</strong><br>
+            <span style="color:#ffeb3b;">Loading latest complete HRRR f01–f12 package...</span>
+        `;
+    }
+
+    return `
+        <strong>${config.label}</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">Latest HRRR: ${formatHRRRTLEUTC(metadata.latest_hrrr_diagnostic_cycle_utc)}</span><br>
+        <span style="color:#ffeb3b;">Valid: ${formatHRRRTLEUTC(metadata.hrrr_diagnostic_valid_start_utc)} — ${formatHRRRTLEUTC(metadata.hrrr_diagnostic_valid_end_utc)}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">f${String(metadata.hrrr_diagnostic_fxx_start || 1).padStart(2,'0')}–f${String(metadata.hrrr_diagnostic_fxx_end || 12).padStart(2,'0')} | FFG: ${formatHRRRTLEUTC(metadata.hrrr_diagnostic_ffg_analysis_utc)} (age ${Number(metadata.hrrr_diagnostic_ffg_age_hours).toFixed(1)} h) | ${metadata.neighborhood_km} km neighborhood</span>
+    `;
+}
+
+function updateHRRRDiagnosticTimeBox() {
+    const box = document.getElementById('hrrr-diagnostics-time-box');
+    if (!box) return;
+    const active = activeHRRRDiagnosticConfigs();
+    if (active.length === 0) {
+        box.style.display = 'none';
+        refreshLegendDockSummary();
+        return;
+    }
+    box.innerHTML = formatHRRRDiagnosticTimeBox(
+        active[active.length - 1],
+        hrrrTLEMetadata
+    );
+    box.style.display = 'block';
+    refreshLegendDockSummary();
 }
 
 function activeHRRRTLEConfigs() {
@@ -2471,6 +2552,22 @@ function hrrrTLEDiscreteRows(items, columns = 2) {
 
 function buildHRRRTLELegendHTML(config) {
     const note = 'HRRR time-lagged member frequency / consensus; NOT calibrated probability.';
+    if (config.legendType === 'coverage') {
+        return hrrrTLELegendShell(
+            config.label,
+            'Percent of the 40-km neighborhood containing an FFG exceedance',
+            hrrrTLEDiscreteRows([
+                {label: '1–5%', color: '#e0f7fa'},
+                {label: '5–10%', color: '#c8e6c9'},
+                {label: '10–25%', color: '#fff59d'},
+                {label: '25–50%', color: '#ffb74d'},
+                {label: '50–75%', color: '#f44336'},
+                {label: '75–100%', color: '#9c27b0'}
+            ], 3),
+            'Latest deterministic HRRR, next 12 hours; values <1% are transparent.'
+        );
+    }
+
     if (config.legendType === 'ratio') {
         const bins = [
             ['0.75–1.00', '#ffff00'], ['1.00–1.25', '#ffa500'],
@@ -2893,6 +2990,7 @@ legendDockControl.onAdd = function () {
         'mrms-ffd-24h-time-box',
         'glm-time-box',
         'lightningcast-time-box',
+        'hrrr-diagnostics-time-box',
         'hrrr-tle-time-box',
         'nwm-time-box',
         'sport-time-box',
@@ -3408,6 +3506,9 @@ function updateLegends() {
         .filter(config => activeLayerNames.has(config.name))
         .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
     if (activeLayerNames.has(LIGHTNINGCAST_LAYER_NAME)) addLegendBlock(buildLightningCastLegendHTML());
+    HRRR_DIAGNOSTIC_LAYER_CONFIGS
+        .filter(config => activeLayerNames.has(config.label))
+        .forEach(config => addLegendBlock(buildHRRRTLELegendHTML(config)));
     HRRR_TLE_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.label))
         .forEach(config => addLegendBlock(buildHRRRTLELegendHTML(config)));
@@ -3457,6 +3558,7 @@ map.on('overlayadd', function(eventLayer) {
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
     const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
+    const hrrrDiagnosticsTimeBox = document.getElementById('hrrr-diagnostics-time-box');
     const hrrrTLETimeBox = document.getElementById('hrrr-tle-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
@@ -3520,6 +3622,17 @@ map.on('overlayadd', function(eventLayer) {
             lightningCastTimeBox.style.display = 'block';
         }
         refreshLightningCastFromManifest({forceMetadata: !lightningCastReady});
+    }
+
+    if (HRRR_DIAGNOSTIC_CONFIG_BY_NAME.has(eventLayer.name)) {
+        if (hrrrDiagnosticsTimeBox) {
+            hrrrDiagnosticsTimeBox.innerHTML = formatHRRRDiagnosticTimeBox(
+                HRRR_DIAGNOSTIC_CONFIG_BY_NAME.get(eventLayer.name),
+                hrrrTLEMetadata
+            );
+            hrrrDiagnosticsTimeBox.style.display = 'block';
+        }
+        refreshHRRRTLEFromManifest({forceMetadata: !hrrrTLEReady});
     }
 
     if (HRRR_TLE_CONFIG_BY_NAME.has(eventLayer.name)) {
@@ -3670,6 +3783,7 @@ map.on('overlayremove', function(eventLayer) {
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
     const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
+    const hrrrDiagnosticsTimeBox = document.getElementById('hrrr-diagnostics-time-box');
     const hrrrTLETimeBox = document.getElementById('hrrr-tle-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
@@ -3700,6 +3814,10 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === LIGHTNINGCAST_LAYER_NAME) {
         if (lightningCastTimeBox) lightningCastTimeBox.style.display = 'none';
+    }
+
+    if (HRRR_DIAGNOSTIC_CONFIG_BY_NAME.has(eventLayer.name)) {
+        window.setTimeout(updateHRRRDiagnosticTimeBox, 0);
     }
 
     if (HRRR_TLE_CONFIG_BY_NAME.has(eventLayer.name)) {
@@ -3848,6 +3966,17 @@ const dashboardSections = [
             {id: 'rap-diff-adv', label: '700-400mb Diff Vorticity Advection', layer: diffAdvLayer, kind: 'raster'},
             {id: 'rap-div250', label: '250mb Divergence', layer: div250Layer, kind: 'raster'}
         ]
+    },
+    {
+        id: 'hrrr-diagnostics',
+        title: 'HRRR Flash Flood Diagnostics - Experimental',
+        layers: HRRR_DIAGNOSTIC_LAYER_CONFIGS.map(config => ({
+            id: config.id,
+            label: config.label,
+            layer: config.layer,
+            kind: 'raster',
+            keywords: config.keywords
+        }))
     },
     {
         id: 'hrrr-tle',
