@@ -385,6 +385,8 @@ required_hrrr_tle_generator_fragments = [
     "hrrr_latest_12h_max_ffg_ratio.png",
     "hrrr_latest_12h_ffg_exceedance_coverage.png",
     "latest_hrrr_diagnostic_cycle_utc",
+    "published_expected = list(LAYER_FILES.values())",
+    "forcing a rebuild of the synchronized package",
     "TLE_MEMBER_COUNT = 6",
     "TLE_COMMON_HOURS = 12",
     "MIN_TLE_MEMBERS = 6",
@@ -409,6 +411,7 @@ required_hrrr_tle_workflow_fragments = [
     "cron: '15 * * * *'",
     "python fetch_hrrr_tle.py --output-dir static",
     "static/hrrr_tle_*",
+    "static/hrrr_latest_12h_*",
 ]
 for fragment in required_hrrr_tle_workflow_fragments:
     if fragment not in hrrr_tle_workflow:
