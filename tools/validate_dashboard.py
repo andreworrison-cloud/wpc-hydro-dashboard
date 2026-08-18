@@ -11,11 +11,13 @@ glm_generator = (ROOT / "fetch_glm_mosaic.py").read_text(encoding="utf-8")
 glm_workflow = (ROOT / ".github" / "workflows" / "update_glm_mosaic.yml").read_text(encoding="utf-8")
 lightningcast_generator = (ROOT / "fetch_lightningcast.py").read_text(encoding="utf-8")
 lightningcast_workflow = (ROOT / ".github" / "workflows" / "update_lightningcast.yml").read_text(encoding="utf-8")
+hrrr_tle_generator = (ROOT / "fetch_hrrr_tle.py").read_text(encoding="utf-8")
+hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").read_text(encoding="utf-8")
 
 errors = []
 
-# LightningCast dashboard integration adds one registered layer to the prior 104-layer registry.
-EXPECTED_LAYER_COUNT = 105
+# HRRR-TLE dashboard integration adds 18 registered layers to the 105-layer LightningCast-era registry.
+EXPECTED_LAYER_COUNT = 123
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -26,6 +28,7 @@ required_sections = [
     "Radar and Satellite Data (Real-Time)",
     "Antecedent Hydrologic Conditions",
     "RAP Mesoanalysis Data",
+    "HRRR-TLE Flash Flood Guidance - Experimental",
     "CAM Nowcasts (+3h to +9h)",
     "CAM Nowcasts (+9h to +15h)",
     "Day 1 ERO CAMs (12Z-12Z)",
@@ -71,6 +74,24 @@ required_labels = [
     "850mb Moisture Transport",
     "3-Hour 850mb Moisture Transport Change",
     "+3h Forecast:</b> 850mb Moisture Transport",
+    "FFG Exceedance Consensus",
+    "Median Neighborhood-Max QPF / FFG Ratio",
+    "1-h FFG Exceedance",
+    "3-h FFG Exceedance",
+    "6-h FFG Exceedance",
+    "1-h QPF ≥ 1 in",
+    "1-h QPF ≥ 2 in",
+    "1-h QPF ≥ 3 in",
+    "≥1 in in 2 of 3 Hours",
+    "Rolling 3-h QPF ≥ 2 in",
+    "Rolling 3-h QPF ≥ 3 in",
+    "FFG Exceedance +00–03 h",
+    "FFG Exceedance +03–06 h",
+    "FFG Exceedance +06–09 h",
+    "FFG Exceedance +09–12 h",
+    "Prior 3 HRRR Cycles",
+    "Latest 3 HRRR Cycles",
+    "Run-to-Run Signal Change",
     "<b>SuperEnsemble</b>: Max FFG Exceedance",
     "<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance",
 ]
@@ -265,6 +286,79 @@ required_lightningcast_workflow_fragments = [
 for fragment in required_lightningcast_workflow_fragments:
     if fragment not in lightningcast_workflow:
         errors.append(f"Missing LightningCast workflow integration fragment: {fragment}")
+
+
+# HRRR-TLE V3.3 dashboard integration contract.
+required_hrrr_tle_app_fragments = [
+    "HRRR-TLE Flash Flood Guidance - Experimental",
+    "HRRR_TLE_LAYER_CONFIGS",
+    "static/hrrr_tle_manifest.json",
+    "static/hrrr_tle_metadata.json",
+    "hrrr-tle-time-box",
+    "buildHRRRTLELegendHTML",
+    "refreshHRRRTLEFromManifest",
+    "hrrr_tle_dashboard_v3_3",
+    "Core FFG Guidance",
+    "Heavy Rain / Persistence",
+    "Timing / Evolution",
+    "dashboard-layer-group",
+    "hrrr-tle-ffg-consensus",
+    "hrrr-tle-median-ratio",
+    "hrrr-tle-run-change",
+]
+for fragment in required_hrrr_tle_app_fragments:
+    if fragment not in app:
+        errors.append(f"Missing HRRR-TLE dashboard integration fragment: {fragment}")
+
+# Enforce exact section placement below RAP and above the first CAM Nowcast section.
+rap_start = app.find("title: 'RAP Mesoanalysis Data'")
+hrrr_tle_start = app.find("title: 'HRRR-TLE Flash Flood Guidance - Experimental'")
+cam_start = app.find("title: 'CAM Nowcasts (+3h to +9h)'")
+if not (rap_start >= 0 and hrrr_tle_start > rap_start and cam_start > hrrr_tle_start):
+    errors.append("HRRR-TLE section is not directly ordered between RAP and CAM Nowcasts.")
+
+hrrr_tle_ids = [
+    "hrrr-tle-ffg-consensus", "hrrr-tle-median-ratio",
+    "hrrr-tle-ffg-1h", "hrrr-tle-ffg-3h", "hrrr-tle-ffg-6h",
+    "hrrr-tle-qpf1h-1in", "hrrr-tle-qpf1h-2in", "hrrr-tle-qpf1h-3in",
+    "hrrr-tle-persist-1in", "hrrr-tle-persist-3h-2in", "hrrr-tle-persist-3h-3in",
+    "hrrr-tle-evol-00-03", "hrrr-tle-evol-03-06",
+    "hrrr-tle-evol-06-09", "hrrr-tle-evol-09-12",
+    "hrrr-tle-prior3", "hrrr-tle-latest3", "hrrr-tle-run-change",
+]
+for layer_id in hrrr_tle_ids:
+    if app.count(f"id: '{layer_id}'") != 1:
+        errors.append(f"Expected exactly one HRRR-TLE layer registry entry: {layer_id}")
+
+required_hrrr_tle_generator_fragments = [
+    "TLE_MEMBER_COUNT = 6",
+    "TLE_COMMON_HOURS = 12",
+    "MIN_TLE_MEMBERS = 6",
+    "NEIGHBORHOOD_KM = 40.0",
+    "aligned_member_fxx",
+    "candidate_is_complete",
+    "find_latest_tle_cycle",
+    "hrrr_tle_dashboard_v3_3",
+    "hrrr_tle_dashboard_manifest_v1",
+    "hrrr_tle_ffg_consensus.png",
+    "hrrr_tle_run_change.png",
+    "Member frequency / consensus; NOT calibrated probability.",
+]
+for fragment in required_hrrr_tle_generator_fragments:
+    if fragment not in hrrr_tle_generator:
+        errors.append(f"Missing HRRR-TLE V3.3 generator contract: {fragment}")
+
+required_hrrr_tle_workflow_fragments = [
+    "Update HRRR-TLE Flash Flood Guidance",
+    "workflow_dispatch:",
+    "schedule:",
+    "cron: '55 * * * *'",
+    "python fetch_hrrr_tle.py --output-dir static",
+    "static/hrrr_tle_*",
+]
+for fragment in required_hrrr_tle_workflow_fragments:
+    if fragment not in hrrr_tle_workflow:
+        errors.append(f"Missing HRRR-TLE workflow contract: {fragment}")
 
 required_ufvs_utility_fragments = [
     "UFVS Geographic Domains",
