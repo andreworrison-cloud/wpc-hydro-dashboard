@@ -17,7 +17,7 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 errors = []
 
 # HRRR-TLE dashboard integration adds 18 registered layers to the 105-layer LightningCast-era registry.
-EXPECTED_LAYER_COUNT = 123
+EXPECTED_LAYER_COUNT = 125
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -28,6 +28,7 @@ required_sections = [
     "Radar and Satellite Data (Real-Time)",
     "Antecedent Hydrologic Conditions",
     "RAP Mesoanalysis Data",
+    "HRRR Flash Flood Diagnostics - Experimental",
     "HRRR-TLE Flash Flood Guidance - Experimental",
     "CAM Nowcasts (+3h to +9h)",
     "CAM Nowcasts (+9h to +15h)",
@@ -74,6 +75,8 @@ required_labels = [
     "850mb Moisture Transport",
     "3-Hour 850mb Moisture Transport Change",
     "+3h Forecast:</b> 850mb Moisture Transport",
+    "Max FFG Exceedance Ratio — Next 12 Hours",
+    "FFG Exceedance Areal Coverage — Next 12 Hours",
     "FFG Exceedance Consensus",
     "Median Neighborhood-Max QPF / FFG Ratio",
     "1-h FFG Exceedance",
@@ -290,6 +293,11 @@ for fragment in required_lightningcast_workflow_fragments:
 
 # HRRR-TLE V3.3 dashboard integration contract.
 required_hrrr_tle_app_fragments = [
+    "HRRR Flash Flood Diagnostics - Experimental",
+    "HRRR_DIAGNOSTIC_LAYER_CONFIGS",
+    "hrrr-diagnostics-time-box",
+    "Max FFG Exceedance Ratio — Next 12 Hours",
+    "FFG Exceedance Areal Coverage — Next 12 Hours",
     "HRRR-TLE Flash Flood Guidance - Experimental",
     "HRRR_TLE_LAYER_CONFIGS",
     "static/hrrr_tle_manifest.json",
@@ -313,12 +321,21 @@ for fragment in required_hrrr_tle_app_fragments:
 
 # Enforce exact section placement below RAP and above the first CAM Nowcast section.
 rap_start = app.find("title: 'RAP Mesoanalysis Data'")
+hrrr_diag_start = app.find("title: 'HRRR Flash Flood Diagnostics - Experimental'")
 hrrr_tle_start = app.find("title: 'HRRR-TLE Flash Flood Guidance - Experimental'")
 cam_start = app.find("title: 'CAM Nowcasts (+3h to +9h)'")
-if not (rap_start >= 0 and hrrr_tle_start > rap_start and cam_start > hrrr_tle_start):
-    errors.append("HRRR-TLE section is not directly ordered between RAP and CAM Nowcasts.")
+if not (
+    rap_start >= 0
+    and hrrr_diag_start > rap_start
+    and hrrr_tle_start > hrrr_diag_start
+    and cam_start > hrrr_tle_start
+):
+    errors.append(
+        "HRRR diagnostic/TLE sections are not ordered RAP -> HRRR Diagnostics -> HRRR-TLE -> CAM."
+    )
 
 hrrr_tle_ids = [
+    "hrrr-diag-max-ratio", "hrrr-diag-ffg-coverage",
     "hrrr-tle-ffg-consensus", "hrrr-tle-median-ratio",
     "hrrr-tle-ffg-1h", "hrrr-tle-ffg-3h", "hrrr-tle-ffg-6h",
     "hrrr-tle-qpf1h-1in", "hrrr-tle-qpf1h-2in", "hrrr-tle-qpf1h-3in",
@@ -332,6 +349,10 @@ for layer_id in hrrr_tle_ids:
         errors.append(f"Expected exactly one HRRR-TLE layer registry entry: {layer_id}")
 
 required_hrrr_tle_generator_fragments = [
+    "DASHBOARD_HRRR_DIAGNOSTIC_HOURS = 12",
+    "hrrr_latest_12h_max_ffg_ratio.png",
+    "hrrr_latest_12h_ffg_exceedance_coverage.png",
+    "latest_hrrr_diagnostic_cycle_utc",
     "TLE_MEMBER_COUNT = 6",
     "TLE_COMMON_HOURS = 12",
     "MIN_TLE_MEMBERS = 6",
