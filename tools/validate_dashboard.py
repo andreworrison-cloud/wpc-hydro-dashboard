@@ -464,7 +464,12 @@ for forbidden in [
     if forbidden in app:
         errors.append(f"Production dashboard still exposes forbidden GLM debug control: {forbidden}")
 
-ids = re.findall(r"\{id: '([a-z0-9-]+)', label:", app)
+# Count both the existing dashboard registry objects, which use
+#   {id: '...', label: ...}
+# and the HRRR-TLE configuration objects, which use
+#   {id: '...', key: ..., ... label: ...}
+# The prior label-only regex incorrectly omitted all 18 HRRR-TLE layers.
+ids = re.findall(r"\{id: '([a-z0-9-]+)', (?:label:|key:)", app)
 duplicates = sorted({item for item in ids if ids.count(item) > 1})
 if duplicates:
     errors.append(f"Duplicate layer ids: {duplicates}")
