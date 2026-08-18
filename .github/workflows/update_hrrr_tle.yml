@@ -104,7 +104,7 @@ jobs:
 
           # Stage first. `git diff` alone does not report brand-new untracked
           # files, which is exactly what happens on the first HRRR-TLE run.
-          git add static/hrrr_tle_*
+          git add -- static/hrrr_tle_* static/hrrr_latest_12h_*
 
           if git diff --cached --quiet; then
             echo "No HRRR-TLE product changes to commit."
