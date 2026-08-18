@@ -407,8 +407,6 @@ for fragment in required_hrrr_tle_generator_fragments:
 required_hrrr_tle_workflow_fragments = [
     "Update HRRR-TLE Flash Flood Guidance",
     "workflow_dispatch:",
-    "schedule:",
-    "cron: '15 * * * *'",
     "python fetch_hrrr_tle.py --output-dir static",
     "static/hrrr_tle_*",
     "static/hrrr_latest_12h_*",
