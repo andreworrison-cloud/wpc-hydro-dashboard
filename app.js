@@ -623,10 +623,101 @@ const lightningCastLayer = L.imageOverlay(
     lightningCastPlaceholderBounds,
     {zIndex: 14, opacity: 0, interactive: false}
 );
+
 let lightningCastMetadata = null;
 let lightningCastReady = false;
 let lightningCastLastManifestVersion = '';
 let lightningCastManifestCheckInFlight = false;
+
+
+// --- HRRR-TLE FLASH FLOOD GUIDANCE — EXPERIMENTAL ---
+// Frozen Version 3.3 science. The production backend publishes 18 transparent
+// EPSG:3857 overlays plus synchronized metadata/manifest files.
+const HRRR_TLE_SECTION_TITLE = 'HRRR-TLE Flash Flood Guidance - Experimental';
+const HRRR_TLE_MANIFEST_URL = 'static/hrrr_tle_manifest.json';
+const HRRR_TLE_METADATA_URL = 'static/hrrr_tle_metadata.json';
+const HRRR_TLE_MANIFEST_POLL_INTERVAL_MS = 3 * 60 * 1000;
+const HRRR_TLE_PLACEHOLDER_BOUNDS = [[23.0, -125.0], [50.5, -66.5]];
+
+const HRRR_TLE_LAYER_CONFIGS = [
+    // Core FFG Guidance
+    {id: 'hrrr-tle-ffg-consensus', key: 'ffg_consensus', group: 'Core FFG Guidance',
+     label: 'FFG Exceedance Consensus', file: 'hrrr_tle_ffg_consensus.png', legendType: 'frequency6',
+     keywords: 'HRRR time lagged ensemble FFG exceedance member frequency consensus'},
+    {id: 'hrrr-tle-median-ratio', key: 'median_ratio', group: 'Core FFG Guidance',
+     label: 'Median Neighborhood-Max QPF / FFG Ratio', file: 'hrrr_tle_median_neighborhood_ratio.png', legendType: 'ratio',
+     keywords: 'median neighborhood maximum QPF FFG ratio magnitude'},
+    {id: 'hrrr-tle-ffg-1h', key: 'ffg_1h', group: 'Core FFG Guidance',
+     label: '1-h FFG Exceedance', file: 'hrrr_tle_ffg_1h.png', legendType: 'frequency6',
+     keywords: '1 hour FFG exceedance'},
+    {id: 'hrrr-tle-ffg-3h', key: 'ffg_3h', group: 'Core FFG Guidance',
+     label: '3-h FFG Exceedance', file: 'hrrr_tle_ffg_3h.png', legendType: 'frequency6',
+     keywords: '3 hour FFG exceedance'},
+    {id: 'hrrr-tle-ffg-6h', key: 'ffg_6h', group: 'Core FFG Guidance',
+     label: '6-h FFG Exceedance', file: 'hrrr_tle_ffg_6h.png', legendType: 'frequency6',
+     keywords: '6 hour FFG exceedance'},
+
+    // Heavy Rain / Persistence
+    {id: 'hrrr-tle-qpf1h-1in', key: 'qpf1h_1in', group: 'Heavy Rain / Persistence',
+     label: '1-h QPF ≥ 1 in', file: 'hrrr_tle_qpf1h_1in.png', legendType: 'frequency6',
+     keywords: 'one hour QPF 1 inch rainfall threshold'},
+    {id: 'hrrr-tle-qpf1h-2in', key: 'qpf1h_2in', group: 'Heavy Rain / Persistence',
+     label: '1-h QPF ≥ 2 in', file: 'hrrr_tle_qpf1h_2in.png', legendType: 'frequency6',
+     keywords: 'one hour QPF 2 inch rainfall threshold'},
+    {id: 'hrrr-tle-qpf1h-3in', key: 'qpf1h_3in', group: 'Heavy Rain / Persistence',
+     label: '1-h QPF ≥ 3 in', file: 'hrrr_tle_qpf1h_3in.png', legendType: 'frequency6',
+     keywords: 'one hour QPF 3 inch rainfall threshold'},
+    {id: 'hrrr-tle-persist-1in', key: 'persistence_1in_2of3', group: 'Heavy Rain / Persistence',
+     label: '≥1 in in 2 of 3 Hours', file: 'hrrr_tle_persistence_1in_2of3.png', legendType: 'frequency6',
+     keywords: 'persistence repeated one inch two of three hours'},
+    {id: 'hrrr-tle-persist-3h-2in', key: 'persistence_3h_2in', group: 'Heavy Rain / Persistence',
+     label: 'Rolling 3-h QPF ≥ 2 in', file: 'hrrr_tle_persistence_3h_2in.png', legendType: 'frequency6',
+     keywords: 'rolling three hour QPF 2 inch'},
+    {id: 'hrrr-tle-persist-3h-3in', key: 'persistence_3h_3in', group: 'Heavy Rain / Persistence',
+     label: 'Rolling 3-h QPF ≥ 3 in', file: 'hrrr_tle_persistence_3h_3in.png', legendType: 'frequency6',
+     keywords: 'rolling three hour QPF 3 inch'},
+
+    // Timing / Evolution
+    {id: 'hrrr-tle-evol-00-03', key: 'evolution_00_03', group: 'Timing / Evolution',
+     label: 'FFG Exceedance +00–03 h', file: 'hrrr_tle_evolution_00_03.png', legendType: 'frequency6Min2',
+     evolutionHours: [0, 3], keywords: 'timing evolution first 3 hours'},
+    {id: 'hrrr-tle-evol-03-06', key: 'evolution_03_06', group: 'Timing / Evolution',
+     label: 'FFG Exceedance +03–06 h', file: 'hrrr_tle_evolution_03_06.png', legendType: 'frequency6Min2',
+     evolutionHours: [3, 6], keywords: 'timing evolution 3 to 6 hours'},
+    {id: 'hrrr-tle-evol-06-09', key: 'evolution_06_09', group: 'Timing / Evolution',
+     label: 'FFG Exceedance +06–09 h', file: 'hrrr_tle_evolution_06_09.png', legendType: 'frequency6Min2',
+     evolutionHours: [6, 9], keywords: 'timing evolution 6 to 9 hours'},
+    {id: 'hrrr-tle-evol-09-12', key: 'evolution_09_12', group: 'Timing / Evolution',
+     label: 'FFG Exceedance +09–12 h', file: 'hrrr_tle_evolution_09_12.png', legendType: 'frequency6Min2',
+     evolutionHours: [9, 12], keywords: 'timing evolution 9 to 12 hours'},
+    {id: 'hrrr-tle-prior3', key: 'prior3', group: 'Timing / Evolution',
+     label: 'Prior 3 HRRR Cycles', file: 'hrrr_tle_prior3_consensus.png', legendType: 'frequency3',
+     keywords: 'prior three cycles older runs consensus'},
+    {id: 'hrrr-tle-latest3', key: 'latest3', group: 'Timing / Evolution',
+     label: 'Latest 3 HRRR Cycles', file: 'hrrr_tle_latest3_consensus.png', legendType: 'frequency3',
+     keywords: 'latest three cycles newest runs consensus'},
+    {id: 'hrrr-tle-run-change', key: 'run_change', group: 'Timing / Evolution',
+     label: 'Run-to-Run Signal Change', file: 'hrrr_tle_run_change.png', legendType: 'runChange',
+     keywords: 'fading persistent emerging run to run signal trend'}
+];
+
+const HRRR_TLE_CONFIG_BY_NAME = new Map();
+const HRRR_TLE_CONFIG_BY_KEY = new Map();
+HRRR_TLE_LAYER_CONFIGS.forEach(config => {
+    config.url = `static/${config.file}`;
+    config.layer = L.imageOverlay(
+        config.url,
+        HRRR_TLE_PLACEHOLDER_BOUNDS,
+        {zIndex: 13, opacity: 0, interactive: false}
+    );
+    HRRR_TLE_CONFIG_BY_NAME.set(config.label, config);
+    HRRR_TLE_CONFIG_BY_KEY.set(config.key, config);
+});
+
+let hrrrTLEMetadata = null;
+let hrrrTLEReady = false;
+let hrrrTLELastManifestVersion = '';
+let hrrrTLEManifestCheckInFlight = false;
 
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
@@ -2175,6 +2266,288 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', checkLightningCastUpdatesNow);
 window.addEventListener('online', checkLightningCastUpdatesNow);
 
+
+function validateHRRRTLEMetadata(metadata, expectedCycle = null) {
+    if (!metadata || metadata.metadata_mode !== 'hrrr_tle_dashboard_v3_3') {
+        throw new Error('Invalid HRRR-TLE metadata contract');
+    }
+    if (String(metadata.algorithm_version) !== '3.3') {
+        throw new Error('Unexpected HRRR-TLE algorithm version');
+    }
+    if (Number(metadata.members_available) !== 6) {
+        throw new Error(`HRRR-TLE dashboard requires 6/6 members; got ${metadata.members_available}`);
+    }
+    if (expectedCycle && metadata.latest_cycle_utc !== expectedCycle) {
+        throw new Error(
+            `HRRR-TLE package not synchronized: expected ${expectedCycle}, got ${metadata.latest_cycle_utc}`
+        );
+    }
+    const bounds = metadata.bounds;
+    if (
+        !Array.isArray(bounds) || bounds.length !== 2 ||
+        !Array.isArray(bounds[0]) || !Array.isArray(bounds[1]) ||
+        bounds[0].length !== 2 || bounds[1].length !== 2
+    ) {
+        throw new Error('HRRR-TLE metadata contains invalid Leaflet bounds');
+    }
+    if (!metadata.layers || Object.keys(metadata.layers).length !== HRRR_TLE_LAYER_CONFIGS.length) {
+        throw new Error('HRRR-TLE metadata layer inventory is incomplete');
+    }
+    return metadata;
+}
+
+function hrrrTLERasterUrl(config, metadata) {
+    const version = encodeURIComponent(metadata.generated_utc || metadata.latest_cycle_utc || Date.now());
+    const published = metadata.layers?.[config.key]?.file || config.file;
+    return `static/${published}?v=${version}`;
+}
+
+function preloadDashboardRaster(url) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(url);
+        image.onerror = () => reject(new Error(`Dashboard raster failed to preload: ${url}`));
+        image.src = url;
+    });
+}
+
+async function fetchHRRRTLEMetadata({expectedCycle = null} = {}) {
+    const response = await fetch(`${HRRR_TLE_METADATA_URL}?t=${Date.now()}`, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const metadata = validateHRRRTLEMetadata(await response.json(), expectedCycle);
+    const urls = HRRR_TLE_LAYER_CONFIGS.map(config => hrrrTLERasterUrl(config, metadata));
+
+    // Preload the entire synchronized package before swapping any layer URL.
+    await Promise.all(urls.map(preloadDashboardRaster));
+
+    HRRR_TLE_LAYER_CONFIGS.forEach((config, index) => {
+        const currentOpacity = Number(config.layer.options?.opacity);
+        config.layer.setBounds(metadata.bounds);
+        config.layer.setUrl(urls[index]);
+        config.layer.setOpacity(
+            hrrrTLEReady && Number.isFinite(currentOpacity) ? currentOpacity : 1.0
+        );
+    });
+
+    hrrrTLEMetadata = metadata;
+    hrrrTLEReady = true;
+    updateHRRRTLETimeBox();
+    if (typeof updateLegends === 'function') updateLegends();
+    return true;
+}
+
+function hrrrTLEManifestVersion(manifest) {
+    return [
+        manifest?.latest_cycle_utc || '',
+        manifest?.common_valid_end_utc || '',
+        manifest?.generated_utc || ''
+    ].join('|');
+}
+
+async function fetchHRRRTLEManifest() {
+    const response = await fetch(`${HRRR_TLE_MANIFEST_URL}?t=${Date.now()}`, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const manifest = await response.json();
+    if (
+        !manifest ||
+        manifest.metadata_mode !== 'hrrr_tle_dashboard_manifest_v1' ||
+        String(manifest.algorithm_version) !== '3.3' ||
+        !manifest.latest_cycle_utc
+    ) {
+        throw new Error('Invalid HRRR-TLE manifest');
+    }
+    return manifest;
+}
+
+async function refreshHRRRTLEFromManifest({forceMetadata = false} = {}) {
+    if (hrrrTLEManifestCheckInFlight) return false;
+    hrrrTLEManifestCheckInFlight = true;
+    try {
+        const manifest = await fetchHRRRTLEManifest();
+        const version = hrrrTLEManifestVersion(manifest);
+        if (!forceMetadata && version === hrrrTLELastManifestVersion) return false;
+        await fetchHRRRTLEMetadata({expectedCycle: manifest.latest_cycle_utc});
+        hrrrTLELastManifestVersion = version;
+        return true;
+    } catch (error) {
+        console.error('HRRR-TLE package refresh failed:', error);
+        if (!hrrrTLEReady) {
+            HRRR_TLE_LAYER_CONFIGS.forEach(config => config.layer.setOpacity(0));
+        }
+        return false;
+    } finally {
+        hrrrTLEManifestCheckInFlight = false;
+    }
+}
+
+function formatHRRRTLEUTC(value) {
+    if (!value) return 'Unknown';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : formatUTC(date);
+}
+
+function activeHRRRTLEConfigs() {
+    return HRRR_TLE_LAYER_CONFIGS.filter(config => activeLayerNames.has(config.label));
+}
+
+function hrrrTLELayerValidText(config, metadata) {
+    if (!metadata) return 'Loading synchronized 6-cycle package...';
+    if (Array.isArray(config.evolutionHours)) {
+        const start = new Date(metadata.common_valid_start_utc);
+        const end = new Date(metadata.common_valid_start_utc);
+        start.setUTCHours(start.getUTCHours() + config.evolutionHours[0]);
+        end.setUTCHours(end.getUTCHours() + config.evolutionHours[1]);
+        return `${formatUTC(start)} — ${formatUTC(end)}`;
+    }
+    return `${formatHRRRTLEUTC(metadata.common_valid_start_utc)} — ${formatHRRRTLEUTC(metadata.common_valid_end_utc)}`;
+}
+
+function formatHRRRTLETimeBox(config, metadata) {
+    if (!config) return '';
+    if (!metadata) {
+        return `
+            <strong>${config.label}</strong><br>
+            <span style="color:#ffeb3b;">Loading newest complete HRRR-TLE package...</span>
+        `;
+    }
+
+    let cycleDetail = '';
+    if (config.key === 'latest3') {
+        cycleDetail = `<br><span style="font-size:0.82em;color:#d0d0d0;">Cycles: ${(metadata.latest_three_cycles || []).join(', ')}</span>`;
+    } else if (config.key === 'prior3') {
+        cycleDetail = `<br><span style="font-size:0.82em;color:#d0d0d0;">Cycles: ${(metadata.prior_three_cycles || []).join(', ')}</span>`;
+    } else if (config.key === 'run_change') {
+        cycleDetail = `<br><span style="font-size:0.82em;color:#d0d0d0;">Signal threshold: ${metadata.run_change_signal_threshold || '2/3 members'}</span>`;
+    }
+
+    return `
+        <strong>${config.label}</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">HRRR anchor: ${formatHRRRTLEUTC(metadata.latest_cycle_utc)} | ${metadata.members_available}/6 cycles</span><br>
+        <span style="color:#ffeb3b;">Valid: ${hrrrTLELayerValidText(config, metadata)}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">FFG: ${formatHRRRTLEUTC(metadata.ffg_analysis_utc)} (age ${Number(metadata.ffg_age_hours).toFixed(1)} h) | ${metadata.neighborhood_km} km neighborhood</span>
+        ${cycleDetail}
+    `;
+}
+
+function updateHRRRTLETimeBox() {
+    const box = document.getElementById('hrrr-tle-time-box');
+    if (!box) return;
+    const active = activeHRRRTLEConfigs();
+    if (active.length === 0) {
+        box.style.display = 'none';
+        refreshLegendDockSummary();
+        return;
+    }
+    // If several HRRR-TLE layers are active, show the most recently found
+    // active layer's shared metadata; each layer retains its own legend.
+    box.innerHTML = formatHRRRTLETimeBox(active[active.length - 1], hrrrTLEMetadata);
+    box.style.display = 'block';
+    refreshLegendDockSummary();
+}
+
+function hrrrTLELegendShell(title, subtitle, body, footer = '') {
+    return `
+        <div style="box-sizing:border-box;width:100%;background:white;padding:9px;border-radius:5px;color:black;font-family:sans-serif;">
+            <strong style="display:block;font-size:13px;line-height:1.2;text-align:center;">${title}</strong>
+            <span style="display:block;margin-top:2px;font-size:9px;line-height:1.25;text-align:center;">${subtitle}</span>
+            <div style="margin-top:8px;">${body}</div>
+            ${footer ? `<span style="display:block;margin-top:7px;font-size:8px;line-height:1.2;text-align:center;color:#333;">${footer}</span>` : ''}
+        </div>
+    `;
+}
+
+function hrrrTLEDiscreteRows(items, columns = 2) {
+    return `
+        <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:7px 12px;">
+            ${items.map(item => `
+                <div style="display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:7px;">
+                    <span style="display:block;width:26px;height:11px;border:1px solid rgba(0,0,0,0.28);background:${item.color};"></span>
+                    <span style="font-size:9px;font-weight:700;line-height:1.15;">${item.label}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function buildHRRRTLELegendHTML(config) {
+    const note = 'HRRR time-lagged member frequency / consensus; NOT calibrated probability.';
+    if (config.legendType === 'ratio') {
+        const bins = [
+            ['0.75–1.00', '#ffff00'], ['1.00–1.25', '#ffa500'],
+            ['1.25–1.50', '#ff0000'], ['1.50–2.00', '#8b0000'],
+            ['2.00–2.50', '#ff00ff'], ['2.50–3.00', '#800080'],
+            ['3.00–4.00', '#0000ff'], ['4.00–5.00', '#00ffff'],
+            ['≥5.00', '#00ffff']
+        ].map(([label, color]) => ({label, color}));
+        return hrrrTLELegendShell(
+            config.label,
+            'Median of member 40-km neighborhood-maximum QPF / FFG ratios',
+            hrrrTLEDiscreteRows(bins, 3),
+            'Values <0.75 are transparent.'
+        );
+    }
+
+    if (config.legendType === 'runChange') {
+        return hrrrTLELegendShell(
+            config.label,
+            'Latest 3 cycles versus prior 3 cycles; signal threshold ≥2/3 members',
+            hrrrTLEDiscreteRows([
+                {label: 'Fading', color: '#4575b4'},
+                {label: 'Persistent', color: '#7b3294'},
+                {label: 'Emerging', color: '#fdae61'}
+            ], 3),
+            'Categorical run-to-run signal evolution.'
+        );
+    }
+
+    if (config.legendType === 'frequency3') {
+        return hrrrTLELegendShell(
+            config.label,
+            'Three-cycle FFG-exceedance consensus',
+            hrrrTLEDiscreteRows([
+                {label: '1/3 (33%)', color: '#ffcc80'},
+                {label: '2/3 (67%)', color: '#ef5350'},
+                {label: '3/3 (100%)', color: '#5e35b1'}
+            ], 3),
+            note
+        );
+    }
+
+    const allSix = [
+        {label: '1/6 (17%)', color: '#fff59d'},
+        {label: '2/6 (33%)', color: '#ffcc80'},
+        {label: '3/6 (50%)', color: '#ff8a65'},
+        {label: '4/6 (67%)', color: '#ef5350'},
+        {label: '5/6 (83%)', color: '#ab47bc'},
+        {label: '6/6 (100%)', color: '#5e35b1'}
+    ];
+    const items = config.legendType === 'frequency6Min2' ? allSix.slice(1) : allSix;
+    const subtitle = config.legendType === 'frequency6Min2'
+        ? 'FFG-exceedance member consensus; 1/6 support intentionally suppressed on display'
+        : 'HRRR-TLE member frequency / consensus';
+    return hrrrTLELegendShell(
+        config.label,
+        subtitle,
+        hrrrTLEDiscreteRows(items, 3),
+        note
+    );
+}
+
+function checkHRRRTLEUpdatesNow() {
+    refreshHRRRTLEFromManifest();
+}
+
+window.setInterval(() => {
+    if (!document.hidden) checkHRRRTLEUpdatesNow();
+}, HRRR_TLE_MANIFEST_POLL_INTERVAL_MS);
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkHRRRTLEUpdatesNow();
+});
+window.addEventListener('focus', checkHRRRTLEUpdatesNow);
+window.addEventListener('online', checkHRRRTLEUpdatesNow);
+
+
 async function fetchNWMMetadata() {
     try {
         const response = await fetch(
@@ -2328,6 +2701,7 @@ fetchEROCAMMetadata();
 fetchMRMSFlash24hMetadata();
 refreshGLMFromManifest({forceMetadata: true});
 refreshLightningCastFromManifest({forceMetadata: true});
+refreshHRRRTLEFromManifest({forceMetadata: true});
 fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
@@ -3033,6 +3407,9 @@ function updateLegends() {
         .filter(config => activeLayerNames.has(config.name))
         .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
     if (activeLayerNames.has(LIGHTNINGCAST_LAYER_NAME)) addLegendBlock(buildLightningCastLegendHTML());
+    HRRR_TLE_LAYER_CONFIGS
+        .filter(config => activeLayerNames.has(config.label))
+        .forEach(config => addLegendBlock(buildHRRRTLELegendHTML(config)));
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -3079,6 +3456,7 @@ map.on('overlayadd', function(eventLayer) {
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
     const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
+    const hrrrTLETimeBox = document.getElementById('hrrr-tle-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -3141,6 +3519,17 @@ map.on('overlayadd', function(eventLayer) {
             lightningCastTimeBox.style.display = 'block';
         }
         refreshLightningCastFromManifest({forceMetadata: !lightningCastReady});
+    }
+
+    if (HRRR_TLE_CONFIG_BY_NAME.has(eventLayer.name)) {
+        if (hrrrTLETimeBox) {
+            hrrrTLETimeBox.innerHTML = formatHRRRTLETimeBox(
+                HRRR_TLE_CONFIG_BY_NAME.get(eventLayer.name),
+                hrrrTLEMetadata
+            );
+            hrrrTLETimeBox.style.display = 'block';
+        }
+        refreshHRRRTLEFromManifest({forceMetadata: !hrrrTLEReady});
     }
 
     const glmConfig = glmConfigByName.get(eventLayer.name);
@@ -3280,6 +3669,7 @@ map.on('overlayremove', function(eventLayer) {
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
     const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
+    const hrrrTLETimeBox = document.getElementById('hrrr-tle-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
@@ -3309,6 +3699,10 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === LIGHTNINGCAST_LAYER_NAME) {
         if (lightningCastTimeBox) lightningCastTimeBox.style.display = 'none';
+    }
+
+    if (HRRR_TLE_CONFIG_BY_NAME.has(eventLayer.name)) {
+        window.setTimeout(updateHRRRTLETimeBox, 0);
     }
 
     if (glmConfigByName.has(eventLayer.name)) {
@@ -3455,6 +3849,44 @@ const dashboardSections = [
         ]
     },
     {
+        id: 'hrrr-tle',
+        title: 'HRRR-TLE Flash Flood Guidance - Experimental',
+        layers: [],
+        groups: [
+            {
+                id: 'hrrr-tle-core',
+                title: 'Core FFG Guidance',
+                openByDefault: true,
+                layers: HRRR_TLE_LAYER_CONFIGS
+                    .filter(config => config.group === 'Core FFG Guidance')
+                    .map(config => ({
+                        id: config.id, label: config.label, layer: config.layer,
+                        kind: 'raster', keywords: config.keywords
+                    }))
+            },
+            {
+                id: 'hrrr-tle-heavy-rain',
+                title: 'Heavy Rain / Persistence',
+                layers: HRRR_TLE_LAYER_CONFIGS
+                    .filter(config => config.group === 'Heavy Rain / Persistence')
+                    .map(config => ({
+                        id: config.id, label: config.label, layer: config.layer,
+                        kind: 'raster', keywords: config.keywords
+                    }))
+            },
+            {
+                id: 'hrrr-tle-timing',
+                title: 'Timing / Evolution',
+                layers: HRRR_TLE_LAYER_CONFIGS
+                    .filter(config => config.group === 'Timing / Evolution')
+                    .map(config => ({
+                        id: config.id, label: config.label, layer: config.layer,
+                        kind: 'raster', keywords: config.keywords
+                    }))
+            }
+        ]
+    },
+    {
         id: 'cam-3-9',
         title: 'CAM Nowcasts (+3h to +9h)',
         layers: [
@@ -3541,9 +3973,16 @@ function cleanLayerLabel(label) {
         .trim();
 }
 
+function getSectionLayerEntries(section) {
+    return [
+        ...(section.layers || []),
+        ...((section.groups || []).flatMap(group => group.layers || []))
+    ];
+}
+
 function getAllDashboardLayerEntries() {
     return [
-        ...dashboardSections.flatMap(section => section.layers),
+        ...dashboardSections.flatMap(getSectionLayerEntries),
         ...dashboardUtilityLayers
     ];
 }
@@ -3813,6 +4252,13 @@ function applyLayerSearch() {
             if (visible) visibleRows += 1;
         });
 
+        sectionEl.querySelectorAll('.dashboard-layer-group').forEach(groupEl => {
+            const groupRows = Array.from(groupEl.querySelectorAll('.layer-row'));
+            const groupVisible = groupRows.some(row => !row.hidden);
+            groupEl.hidden = query ? !groupVisible : false;
+            if (query && groupVisible) groupEl.open = true;
+        });
+
         const isExperimentalEmpty = sectionEl.dataset.sectionId === 'experimental' && rows.length === 0;
         const emptyNote = sectionEl.querySelector('.empty-section-note');
         const noteMatches = isExperimentalEmpty && (!query || 'experimental nldas-3 model research'.includes(query));
@@ -3842,7 +4288,7 @@ function renderDashboardSidebar() {
             section.open = Boolean(sectionConfig.openByDefault);
 
             const summary = document.createElement('summary');
-            const count = sectionConfig.layers.length;
+            const count = getSectionLayerEntries(sectionConfig).length;
             summary.innerHTML = `
                 <span class="section-title">${sectionConfig.title}</span>
                 <span class="section-count">${count}</span>
@@ -3857,7 +4303,27 @@ function renderDashboardSidebar() {
                 note.textContent = sectionConfig.emptyMessage || 'No layers registered.';
                 body.append(note);
             } else {
-                sectionConfig.layers.forEach(entry => body.append(renderLayerRow(entry)));
+                (sectionConfig.layers || []).forEach(entry => body.append(renderLayerRow(entry)));
+
+                (sectionConfig.groups || []).forEach(groupConfig => {
+                    const group = document.createElement('details');
+                    group.className = 'dashboard-layer-group';
+                    group.dataset.groupId = groupConfig.id;
+                    group.open = Boolean(groupConfig.openByDefault);
+
+                    const groupSummary = document.createElement('summary');
+                    groupSummary.innerHTML = `
+                        <span>${groupConfig.title}</span>
+                        <span class="section-count">${(groupConfig.layers || []).length}</span>
+                    `;
+
+                    const groupBody = document.createElement('div');
+                    groupBody.className = 'dashboard-layer-group-body';
+                    (groupConfig.layers || []).forEach(entry => groupBody.append(renderLayerRow(entry)));
+
+                    group.append(groupSummary, groupBody);
+                    body.append(group);
+                });
             }
 
             section.append(summary, body);
