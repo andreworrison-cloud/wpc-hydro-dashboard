@@ -1,0 +1,114 @@
+name: Update HRRR-TLE Flash Flood Guidance
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force rebuild even if the newest complete HRRR-TLE cycle is already published'
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # Wake hourly. The Python backend, not the cron clock, decides which HRRR
+    # cycle is ready by requiring the aligned six-member package through f12-f17.
+    - cron: '55 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-hrrr-tle
+  cancel-in-progress: false
+
+jobs:
+  update-hrrr-tle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            numpy scipy requests xarray cfgrib eccodes \
+            matplotlib cartopy pillow
+
+      - name: Verify GRIB decoder
+        run: |
+          python -m eccodes selfcheck
+          python -m cfgrib selfcheck
+
+      - name: Restore HRRR-TLE GRIB cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/hrrr_tle
+          key: hrrr-tle-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            hrrr-tle-${{ runner.os }}-
+
+      - name: Build newest complete HRRR-TLE package
+        shell: bash
+        run: |
+          set -euo pipefail
+          force_arg=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.force }}" == "true" ]]; then
+            force_arg="--force"
+          fi
+          python fetch_hrrr_tle.py --output-dir static ${force_arg}
+
+      - name: Validate generated package when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path("static")
+          manifest_path = root / "hrrr_tle_manifest.json"
+          if not manifest_path.exists():
+              raise SystemExit("No HRRR-TLE manifest exists after build.")
+
+          manifest = json.loads(manifest_path.read_text())
+          if manifest.get("metadata_mode") != "hrrr_tle_dashboard_manifest_v1":
+              raise SystemExit("Unexpected HRRR-TLE manifest contract.")
+
+          layers = manifest.get("layers") or {}
+          if len(layers) != 18:
+              raise SystemExit(f"Expected 18 HRRR-TLE dashboard overlays, found {len(layers)}.")
+
+          for key, item in layers.items():
+              p = root / item["file"]
+              if not p.exists():
+                  raise SystemExit(f"Missing overlay {key}: {p}")
+              with Image.open(p).convert("RGBA") as image:
+                  if image.width < 800 or image.height < 400:
+                      raise SystemExit(f"{key}: implausibly small image {image.size}")
+          print(f"Validated 18 HRRR-TLE overlays for {manifest['latest_cycle_utc']}.")
+          PY
+
+      - name: Commit updated dashboard products
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- static/hrrr_tle_*; then
+            echo "No HRRR-TLE product changes to commit."
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add static/hrrr_tle_*
+          git commit -m "Update HRRR-TLE flash flood guidance"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
