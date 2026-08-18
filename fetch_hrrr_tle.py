@@ -795,9 +795,28 @@ def build(output_dir: Path, force: bool = False) -> int:
             old = json.loads(manifest_path.read_text(encoding="utf-8"))
             same_tle = old.get("latest_cycle_utc") == latest_dt.strftime("%Y-%m-%dT%H:00:00Z")
             same_hrrr = old.get("latest_hrrr_diagnostic_cycle_utc") == latest_hrrr_dt.strftime("%Y-%m-%dT%H:00:00Z")
-            if same_tle and same_hrrr:
+
+            published_expected = list(LAYER_FILES.values()) + [
+                "hrrr_tle_metadata.json",
+                "hrrr_tle_manifest.json",
+            ]
+            missing_or_empty = []
+            for name in published_expected:
+                p = output_dir / name
+                minimum_size = 200 if p.suffix == ".png" else 50
+                if not p.exists() or p.stat().st_size < minimum_size:
+                    missing_or_empty.append(name)
+
+            if same_tle and same_hrrr and not missing_or_empty:
                 print("ℹ️ Newest HRRR diagnostics and HRRR-TLE package are already published; exiting without churn.")
                 return 0
+
+            if same_tle and same_hrrr and missing_or_empty:
+                print(
+                    "⚠️ Manifest cycles are current, but published files are incomplete; "
+                    "forcing a rebuild of the synchronized package."
+                )
+                print("Missing/incomplete:", ", ".join(missing_or_empty))
         except Exception:
             pass
 
