@@ -2,13 +2,15 @@
   "product": "MRMS Flash Flood Detector Rolling Maximum",
   "aggregation": "At each synchronized 10-minute analysis, diagnose the FFD category from QPE_FFGMAX, QPE_ARIMAX, CREST Unit Q, and SAC Unit Q; then retain the highest category reached at each grid cell during the rolling window.",
   "important_method_note": "The four input maxima are not independently maximized before applying the detector. Each category is calculated from inputs valid at the same analysis time.",
-  "window_start_utc": "2026-08-20T12:50:00Z",
-  "window_end_utc": "2026-08-21T12:40:00Z",
+  "window_start_utc": "2026-08-20T13:20:00Z",
+  "window_end_utc": "2026-08-21T13:10:00Z",
   "window_hours": 24,
   "expected_cycles": 144,
-  "processed_cycles": 144,
-  "completeness_fraction": 1.0,
-  "missing_times_utc": [],
+  "processed_cycles": 143,
+  "completeness_fraction": 0.9930555555555556,
+  "missing_times_utc": [
+    "2026-08-21T09:20:00Z"
+  ],
   "metadata_mode": "dashboard_compact",
   "input_products": [
     "CREST_MAXUNITSTREAMFLOW",
@@ -69,23 +71,23 @@
   "category_statistics": {
     "total_grid_cells": 24500000,
     "counts": {
-      "None": 24345098,
-      "Monitor": 137335,
-      "Flood Advisory": 13973,
-      "FFW Base": 3390,
+      "None": 24346049,
+      "Monitor": 136569,
+      "Flood Advisory": 13789,
+      "FFW Base": 3389,
       "FFW Considerable": 197,
       "FFW Catastrophic": 7
     },
     "percentages": {
-      "None": 99.36774693877551,
-      "Monitor": 0.5605510204081633,
-      "Flood Advisory": 0.057032653061224486,
-      "FFW Base": 0.01383673469387755,
+      "None": 99.37162857142857,
+      "Monitor": 0.5574244897959184,
+      "Flood Advisory": 0.05628163265306122,
+      "FFW Base": 0.01383265306122449,
       "FFW Considerable": 0.0008040816326530612,
       "FFW Catastrophic": 2.857142857142857e-05
     }
   },
-  "generated_time_utc": "2026-08-21T13:18:54.294347Z",
+  "generated_time_utc": "2026-08-21T13:54:09.028793Z",
   "outputs": {
     "png": "mrms_ffd_max24h.png",
     "metadata": "mrms_ffd_max24h_metadata.json"
