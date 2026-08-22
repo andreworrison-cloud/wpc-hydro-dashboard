@@ -2,8 +2,7 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-placefile loops, selects the newest scan common to both feeds, groups nested LightningCast contours into coherent storm objects, applies fixed whole-object East/West source ownership, and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus
-metadata and a compact manifest.
+placefile loops, selects the newest clean scan common to both feeds within the freshness window, groups nested LightningCast contours into coherent storm objects, applies the established v1E East/West ownership logic, and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus metadata and a compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
 """
@@ -145,9 +144,12 @@ class StormObject:
 
     @property
     def completeness_score(self) -> tuple[int, int, int, float]:
-        # Prefer objects with more closed contours, then more represented thresholds,
-        # then more total contours. Representative longitude is a stable tie-breaker.
-        return (self.closed_count, self.threshold_count, self.contour_count, -abs(self.representative_lon - OWNERSHIP_LONGITUDE))
+        return (
+            self.closed_count,
+            self.threshold_count,
+            self.contour_count,
+            -abs(self.representative_lon - OWNERSHIP_LONGITUDE),
+        )
 
 
 @dataclasses.dataclass
@@ -160,6 +162,8 @@ class ParsedPlacefile:
     contours_by_frame: dict[datetime, list[Contour]]
     threshold_colors: dict[int, set[tuple[int, int, int]]]
     invalid_coordinate_lines: int
+    invalid_lines_by_frame: dict[datetime, int]
+    invalid_line_examples_by_frame: dict[datetime, list[str]]
     discarded_short_contours: int
     satellite_names_seen: set[str]
     warnings: list[str]
@@ -228,11 +232,23 @@ def parse_placefile(text: str, expected_satellite: str) -> ParsedPlacefile:
     contours_by_frame: dict[datetime, list[Contour]] = defaultdict(list)
     threshold_colors: dict[int, set[tuple[int, int, int]]] = defaultdict(set)
     invalid_coordinate_lines = 0
+    invalid_lines_by_frame: dict[datetime, int] = defaultdict(int)
+    invalid_line_examples_by_frame: dict[datetime, list[str]] = defaultdict(list)
     discarded_short_contours = 0
     satellite_names_seen: set[str] = set()
     warnings: list[str] = []
     current_color: tuple[int, int, int] | None = None
     current: Contour | None = None
+
+    def record_invalid(frame_time: datetime | None, raw_value: str) -> None:
+        nonlocal invalid_coordinate_lines
+        invalid_coordinate_lines += 1
+        if frame_time is None:
+            return
+        invalid_lines_by_frame[frame_time] += 1
+        examples = invalid_line_examples_by_frame[frame_time]
+        if len(examples) < 5:
+            examples.append(raw_value[:240])
 
     def finalize() -> None:
         nonlocal current, discarded_short_contours
@@ -294,10 +310,10 @@ def parse_placefile(text: str, expected_satellite: str) -> ParsedPlacefile:
             if -90 <= lat <= 90 and -180 <= lon <= 180:
                 current.points.append((lon, lat))
             else:
-                invalid_coordinate_lines += 1
+                record_invalid(current.scan_time, line)
             continue
         if current is not None and line and not line.startswith(("Color:", "Line:", "TimeRange:")):
-            invalid_coordinate_lines += 1
+            record_invalid(current.scan_time, line)
 
     finalize()
     if not text.strip():
@@ -318,6 +334,8 @@ def parse_placefile(text: str, expected_satellite: str) -> ParsedPlacefile:
         contours_by_frame=dict(contours_by_frame),
         threshold_colors=dict(threshold_colors),
         invalid_coordinate_lines=invalid_coordinate_lines,
+        invalid_lines_by_frame=dict(invalid_lines_by_frame),
+        invalid_line_examples_by_frame=dict(invalid_line_examples_by_frame),
         discarded_short_contours=discarded_short_contours,
         satellite_names_seen=satellite_names_seen,
         warnings=warnings,
@@ -447,15 +465,9 @@ def storm_object_owner(storm: StormObject) -> str:
 
 
 def should_swap_to_alternate(primary: StormObject, alternate: StormObject) -> bool:
-    """Prefer the alternate family only when it is meaningfully more complete.
-
-    This specifically targets residual seam artifacts where one satellite contributes a
-    truncated/open family while the other satellite carries a more coherent version of
-    the same storm object.
-    """
+    """Use an overlapping opposite-satellite family only when it is materially more complete."""
     if alternate.completeness_score <= primary.completeness_score:
         return False
-    # Require a tangible improvement, not just a lateral swap.
     if alternate.closed_count > primary.closed_count:
         return True
     if alternate.threshold_count > primary.threshold_count:
@@ -481,8 +493,6 @@ def select_contours_for_render(
     used_west: set[int] = set()
     used_east: set[int] = set()
 
-    # Compare selected objects against opposite-satellite overlapping candidates and, when
-    # the opposite family is more complete, swap ownership to preserve a coherent family.
     for sat_name, selected_ids, objects, other_name, other_objects, other_selected in (
         ("West", west_selected, west_objects, "East", east_objects, east_selected),
         ("East", east_selected, east_objects, "West", west_objects, west_selected),
@@ -672,9 +682,79 @@ def render_product(
     }
 
 
+def common_frames_newest_first(east: ParsedPlacefile, west: ParsedPlacefile) -> list[datetime]:
+    return sorted(east.frame_times & west.frame_times, reverse=True)
+
+
+def frame_invalid_count(parsed: ParsedPlacefile, frame_time: datetime) -> int:
+    return int(parsed.invalid_lines_by_frame.get(frame_time, 0))
+
+
+def select_clean_common_frame(
+    east: ParsedPlacefile,
+    west: ParsedPlacefile,
+    fetched_at: datetime,
+    maximum_age_minutes: float,
+) -> tuple[datetime, dict[str, object]]:
+    common = common_frames_newest_first(east, west)
+    if not common:
+        raise RuntimeError("no scan time common to both GOES-East and GOES-West LightningCast loops")
+
+    skipped_dirty: list[dict[str, object]] = []
+    skipped_future: list[str] = []
+    stale_newest: datetime | None = None
+
+    for frame_time in common:
+        age_minutes = (fetched_at - frame_time).total_seconds() / 60.0
+        if age_minutes < -5:
+            skipped_future.append(iso_z(frame_time) or "unknown")
+            continue
+        if age_minutes > maximum_age_minutes:
+            if stale_newest is None:
+                stale_newest = frame_time
+            break
+
+        east_bad = frame_invalid_count(east, frame_time)
+        west_bad = frame_invalid_count(west, frame_time)
+        if east_bad or west_bad:
+            skipped_dirty.append({
+                "scan_time_utc": iso_z(frame_time),
+                "age_minutes": round(age_minutes, 2),
+                "GOES-East_invalid_lines": east_bad,
+                "GOES-West_invalid_lines": west_bad,
+            })
+            continue
+
+        return frame_time, {
+            "policy": "newest clean exact-common frame within freshness window",
+            "selected_frame_clean": True,
+            "selected_frame_age_minutes": round(age_minutes, 2),
+            "skipped_dirty_common_frames": skipped_dirty,
+            "skipped_future_common_frames": skipped_future,
+            "newest_common_frame_utc": iso_z(common[0]),
+            "newest_east_frame_utc": iso_z(max(east.frame_times)) if east.frame_times else None,
+            "newest_west_frame_utc": iso_z(max(west.frame_times)) if west.frame_times else None,
+        }
+
+    if skipped_dirty:
+        details = "; ".join(
+            f"{item['scan_time_utc']} East={item['GOES-East_invalid_lines']} West={item['GOES-West_invalid_lines']}"
+            for item in skipped_dirty[:5]
+        )
+        raise RuntimeError(
+            f"no clean common LightningCast frame within {maximum_age_minutes:.1f} minutes; dirty recent frames: {details}"
+        )
+
+    reference = stale_newest or common[0]
+    age_minutes = (fetched_at - reference).total_seconds() / 60.0
+    raise RuntimeError(
+        f"selected common frame is {age_minutes:.1f} minutes old; maximum is {maximum_age_minutes:.1f} minutes"
+    )
+
+
 def latest_common_frame(east: ParsedPlacefile, west: ParsedPlacefile) -> datetime | None:
-    common = east.frame_times & west.frame_times
-    return max(common) if common else None
+    common = common_frames_newest_first(east, west)
+    return common[0] if common else None
 
 
 def source_summary(parsed: ParsedPlacefile, fetch_meta: dict[str, object], frame_time: datetime) -> dict[str, object]:
@@ -690,10 +770,53 @@ def source_summary(parsed: ParsedPlacefile, fetch_meta: dict[str, object], frame
             for t in THRESHOLDS
         },
         "invalid_coordinate_lines": parsed.invalid_coordinate_lines,
+        "invalid_lines_by_frame": {
+            iso_z(frame): int(count) for frame, count in sorted(parsed.invalid_lines_by_frame.items())
+        },
+        "invalid_line_examples_by_frame": {
+            iso_z(frame): examples for frame, examples in sorted(parsed.invalid_line_examples_by_frame.items())
+        },
+        "selected_frame_invalid_lines": frame_invalid_count(parsed, frame_time),
         "discarded_short_contours": parsed.discarded_short_contours,
         "warnings": parsed.warnings,
         "fetch": fetch_meta,
     }
+
+
+def write_source_diagnostics(
+    output_dir: Path,
+    east: ParsedPlacefile,
+    west: ParsedPlacefile,
+    east_fetch: dict[str, object],
+    west_fetch: dict[str, object],
+    fetched_at: datetime,
+) -> None:
+    def one(parsed: ParsedPlacefile, fetch_meta: dict[str, object]) -> dict[str, object]:
+        return {
+            "newest_frame_utc": iso_z(max(parsed.frame_times)) if parsed.frame_times else None,
+            "frame_count": len(parsed.frame_times),
+            "invalid_coordinate_lines_total": parsed.invalid_coordinate_lines,
+            "invalid_lines_by_frame": {
+                iso_z(frame): int(count) for frame, count in sorted(parsed.invalid_lines_by_frame.items())
+            },
+            "invalid_line_examples_by_frame": {
+                iso_z(frame): examples for frame, examples in sorted(parsed.invalid_line_examples_by_frame.items())
+            },
+            "warnings": parsed.warnings,
+            "fetch": fetch_meta,
+        }
+
+    common = common_frames_newest_first(east, west)
+    payload = {
+        "diagnostic_mode": "lightningcast_source_integrity_v1",
+        "fetched_at_utc": iso_z(fetched_at),
+        "newest_common_frames_utc": [iso_z(frame) for frame in common[:12]],
+        "GOES-East": one(east, east_fetch),
+        "GOES-West": one(west, west_fetch),
+    }
+    (output_dir / "lightningcast_source_diagnostics.json").write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def write_outputs(
@@ -707,6 +830,7 @@ def write_outputs(
     frame_time: datetime,
     fetched_at: datetime,
     maximum_dimension: int,
+    frame_selection: dict[str, object],
 ) -> None:
     png_name = "lightningcast_conus_probability_60min.png"
     metadata_name = "lightningcast_conus_probability_60min_metadata.json"
@@ -717,6 +841,7 @@ def write_outputs(
     age_minutes = round((fetched_at - frame_time).total_seconds() / 60.0, 2)
     metadata = {
         "metadata_mode": "lightningcast_dashboard_v1e",
+        "generator_revision": "v1f_frame_scoped_integrity",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
         "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
@@ -726,6 +851,7 @@ def write_outputs(
         "forecast_window_end_utc": iso_z(frame_time + timedelta(minutes=60)),
         "fetched_at_utc": iso_z(fetched_at),
         "frame_age_minutes_at_fetch": age_minutes,
+        "frame_selection": frame_selection,
         "probability_thresholds_percent": list(THRESHOLDS),
         "standard_threshold_note": (
             "10%, 30%, 50%, 70%, and 90% are standard LightningCast probability categories; "
@@ -752,7 +878,8 @@ def write_outputs(
             "object_link_padding_degrees": OBJECT_LINK_PADDING_DEGREES,
             "representative_longitude_field": "mean longitude of the object's outermost available probability contour(s)",
             "note": (
-                "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. In the overlap region, a more complete opposite-satellite family may replace a truncated family, but no family is split across satellites. "
+                "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. "
+                "In the overlap region, a more complete opposite-satellite family may replace a truncated family, but no family is split across satellites. "
                 "Source contour geometry is never cut or altered at the ownership longitude."
             ),
         },
@@ -844,8 +971,49 @@ End:
         with Image.open(path) as image:
             assert image.mode == "RGBA"
             assert image.getchannel("A").getbbox() is not None
-    print("LightningCast production parser/rendering self-test passed.")
 
+    # Frame-scoped integrity test: newest West frame is malformed, previous common frame is clean.
+    east_integrity = '''Title: NOAA LightningCast loop -- GOES-East CONUS sector
+Refresh: 1
+TimeRange: 2026-08-08T16:05:17Z 2026-08-08T16:10:17Z
+Color: 080 201 134
+Line: 2, 0, "GOES-East CONUS scan time: 2026-08-08 16:05Z\\nP(LTG) >= 10% in next 60 minutes at every encompassed location."
+35.0, -105.0
+36.0, -105.0
+End:
+TimeRange: 2026-08-08T16:00:17Z 2026-08-08T16:05:17Z
+Color: 080 201 134
+Line: 2, 0, "GOES-East CONUS scan time: 2026-08-08 16:00Z\\nP(LTG) >= 10% in next 60 minutes at every encompassed location."
+35.0, -105.0
+36.0, -105.0
+End:
+'''
+    west_integrity = '''Title: NOAA LightningCast loop -- GOES-West CONUS sector
+Refresh: 1
+TimeRange: 2026-08-08T16:05:17Z 2026-08-08T16:10:17Z
+Color: 080 201 134
+Line: 2, 0, "GOES-West CONUS scan time: 2026-08-08 16:05Z\\nP(LTG) >= 10% in next 60 minutes at every encompassed location."
+35.0, -112.0
+nan, -111.0
+36.0, -112.0
+End:
+TimeRange: 2026-08-08T16:00:17Z 2026-08-08T16:05:17Z
+Color: 080 201 134
+Line: 2, 0, "GOES-West CONUS scan time: 2026-08-08 16:00Z\\nP(LTG) >= 10% in next 60 minutes at every encompassed location."
+35.0, -112.0
+36.0, -112.0
+End:
+'''
+    ei = parse_placefile(east_integrity, "East")
+    wi = parse_placefile(west_integrity, "West")
+    now = datetime(2026, 8, 8, 16, 10, tzinfo=UTC)
+    chosen, selection = select_clean_common_frame(ei, wi, now, 20.0)
+    assert iso_z(chosen) == "2026-08-08T16:00:00Z"
+    assert frame_invalid_count(wi, datetime(2026, 8, 8, 16, 5, tzinfo=UTC)) == 1
+    assert selection["selected_frame_clean"] is True
+    assert len(selection["skipped_dirty_common_frames"]) == 1
+
+    print("LightningCast production parser/rendering/frame-integrity self-test passed.")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -876,20 +1044,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         west_text, west_fetch = fetch_text(args.west_url, args.timeout_seconds, args.retries, args.maximum_bytes)
         east = parse_placefile(east_text, "East")
         west = parse_placefile(west_text, "West")
-        frame_time = latest_common_frame(east, west)
-        if frame_time is None:
-            raise RuntimeError("no scan time common to both GOES-East and GOES-West LightningCast loops")
-        age_minutes = (fetched_at - frame_time).total_seconds() / 60.0
-        if age_minutes < -5:
-            raise RuntimeError(f"selected common frame is {-age_minutes:.1f} minutes in the future")
-        if age_minutes > args.maximum_age_minutes:
-            raise RuntimeError(
-                f"selected common frame is {age_minutes:.1f} minutes old; maximum is {args.maximum_age_minutes:.1f} minutes"
-            )
+        write_source_diagnostics(output_dir, east, west, east_fetch, west_fetch, fetched_at)
+
         if east.invalid_coordinate_lines or west.invalid_coordinate_lines:
-            raise RuntimeError(
-                f"invalid coordinate lines parsed: East={east.invalid_coordinate_lines}, West={west.invalid_coordinate_lines}"
+            print(
+                f"Source loop integrity notice: invalid lines across full loops East={east.invalid_coordinate_lines}, West={west.invalid_coordinate_lines}",
+                file=sys.stderr,
             )
+            for label, parsed in (("East", east), ("West", west)):
+                for dirty_frame, count in sorted(parsed.invalid_lines_by_frame.items(), reverse=True)[:5]:
+                    examples = parsed.invalid_line_examples_by_frame.get(dirty_frame, [])
+                    sample = f"; example={examples[0]!r}" if examples else ""
+                    print(f"  GOES-{label} dirty frame {iso_z(dirty_frame)}: {count} invalid line(s){sample}", file=sys.stderr)
+
+        frame_time, frame_selection = select_clean_common_frame(
+            east, west, fetched_at, args.maximum_age_minutes
+        )
+        skipped = frame_selection.get("skipped_dirty_common_frames") or []
+        if skipped:
+            print(
+                f"Selected clean fallback common frame {iso_z(frame_time)} after skipping {len(skipped)} dirty newer common frame(s).",
+                file=sys.stderr,
+            )
+
         write_outputs(
             output_dir,
             args.east_url,
@@ -901,6 +1078,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             frame_time,
             fetched_at,
             args.maximum_render_dimension,
+            frame_selection,
         )
         print(f"LightningCast product built for {iso_z(frame_time)}")
         print(f"Output: {output_dir / 'lightningcast_conus_probability_60min.png'}")
