@@ -70,6 +70,11 @@ jobs:
           manifest = json.loads(manifest_path.read_text())
           if meta.get('metadata_mode') != 'lightningcast_dashboard_v1e':
               raise SystemExit('LightningCast metadata contract failed')
+          if meta.get('generator_revision') != 'v1f_frame_scoped_integrity':
+              raise SystemExit('LightningCast generator-revision contract failed')
+          selection = meta.get('frame_selection') or {}
+          if selection.get('selected_frame_clean') is not True:
+              raise SystemExit('LightningCast selected-frame integrity contract failed')
           if meta.get('product_role') != 'probability_of_lightning_next_60_minutes':
               raise SystemExit('LightningCast product-role contract failed')
           if meta.get('probability_thresholds_percent') != [10, 30, 50, 70, 90]:
@@ -83,6 +88,8 @@ jobs:
               raise SystemExit('LightningCast geometry-clipping safeguard failed')
           if ownership.get('cross_threshold_family_splitting') is not False:
               raise SystemExit('LightningCast object-family splitting safeguard failed')
+          if ownership.get('cross_satellite_family_splitting') is not False:
+              raise SystemExit('LightningCast cross-satellite family splitting safeguard failed')
           if any(ownership.get(key) is not False for key in ('summation', 'averaging', 'blending', 'gap_fill')):
               raise SystemExit('LightningCast source-ownership safeguards failed')
           rendering = meta.get('rendering') or {}
@@ -168,6 +175,7 @@ jobs:
             lightningcast_output/lightningcast_conus_probability_60min.png
             lightningcast_output/lightningcast_conus_probability_60min_metadata.json
             lightningcast_output/lightningcast_manifest.json
+            lightningcast_output/lightningcast_source_diagnostics.json
           if-no-files-found: warn
           retention-days: 3
           compression-level: 9
@@ -183,6 +191,9 @@ jobs:
           from pathlib import Path
           meta = json.loads(Path('lightningcast_output/lightningcast_conus_probability_60min_metadata.json').read_text())
           print(f"- Scan time: **{meta.get('scan_time_utc')}**")
+          selection = meta.get('frame_selection') or {}
+          print(f"- Frame policy: **{selection.get('policy')}**")
+          print(f"- Dirty newer common frames skipped: **{len(selection.get('skipped_dirty_common_frames') or [])}**")
           print(f"- Probability window ends: **{meta.get('forecast_window_end_utc')}**")
           print('- Standard thresholds: **10 / 30 / 50 / 70 / 90%**')
           render = meta.get('render_summary') or {}
@@ -195,4 +206,14 @@ jobs:
           PY
           else
             echo '- Generator did not produce metadata.' >> "$GITHUB_STEP_SUMMARY"
+            if [[ -f "$LIGHTNINGCAST_OUTPUT_DIR/lightningcast_source_diagnostics.json" ]]; then
+              python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          diag = json.loads(Path('lightningcast_output/lightningcast_source_diagnostics.json').read_text())
+          for sat in ('GOES-East', 'GOES-West'):
+              item = diag.get(sat) or {}
+              print(f"- {sat} newest frame: **{item.get('newest_frame_utc')}**; invalid loop lines: **{item.get('invalid_coordinate_lines_total')}**")
+          PY
+            fi
           fi
