@@ -2,13 +2,15 @@
   "product": "MRMS Flash Flood Detector Rolling Maximum",
   "aggregation": "At each synchronized 10-minute analysis, diagnose the FFD category from QPE_FFGMAX, QPE_ARIMAX, CREST Unit Q, and SAC Unit Q; then retain the highest category reached at each grid cell during the rolling window.",
   "important_method_note": "The four input maxima are not independently maximized before applying the detector. Each category is calculated from inputs valid at the same analysis time.",
-  "window_start_utc": "2026-08-30T15:20:00Z",
-  "window_end_utc": "2026-08-31T15:10:00Z",
+  "window_start_utc": "2026-08-30T15:50:00Z",
+  "window_end_utc": "2026-08-31T15:40:00Z",
   "window_hours": 24,
   "expected_cycles": 144,
-  "processed_cycles": 144,
-  "completeness_fraction": 1.0,
-  "missing_times_utc": [],
+  "processed_cycles": 143,
+  "completeness_fraction": 0.9930555555555556,
+  "missing_times_utc": [
+    "2026-08-30T23:00:00Z"
+  ],
   "metadata_mode": "dashboard_compact",
   "input_products": [
     "CREST_MAXUNITSTREAMFLOW",
@@ -69,23 +71,23 @@
   "category_statistics": {
     "total_grid_cells": 24500000,
     "counts": {
-      "None": 24426109,
-      "Monitor": 72482,
-      "Flood Advisory": 1059,
-      "FFW Base": 311,
-      "FFW Considerable": 26,
+      "None": 24425903,
+      "Monitor": 72596,
+      "Flood Advisory": 1143,
+      "FFW Base": 317,
+      "FFW Considerable": 28,
       "FFW Catastrophic": 13
     },
     "percentages": {
-      "None": 99.69840408163266,
-      "Monitor": 0.2958448979591837,
-      "Flood Advisory": 0.004322448979591837,
-      "FFW Base": 0.0012693877551020409,
-      "FFW Considerable": 0.00010612244897959184,
+      "None": 99.69756326530612,
+      "Monitor": 0.29631020408163267,
+      "Flood Advisory": 0.00466530612244898,
+      "FFW Base": 0.0012938775510204083,
+      "FFW Considerable": 0.00011428571428571428,
       "FFW Catastrophic": 5.306122448979592e-05
     }
   },
-  "generated_time_utc": "2026-08-31T15:50:59.986300Z",
+  "generated_time_utc": "2026-08-31T16:22:41.357071Z",
   "outputs": {
     "png": "mrms_ffd_max24h.png",
     "metadata": "mrms_ffd_max24h_metadata.json"
