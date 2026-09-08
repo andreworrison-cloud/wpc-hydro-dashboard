@@ -5,6 +5,13 @@ customStyle.innerHTML = `
     .leaflet-popup-pane { z-index: 7000 !important; }
     .leaflet-tooltip-pane { z-index: 6500 !important; }
 
+    /* MRMS RALA frames are categorical nearest-neighbor rasters. Keep the
+       browser from intermittently applying smooth interpolation while frames
+       swap or arrive from cache. */
+    img.mrms-rala-raster {
+        image-rendering: pixelated !important;
+    }
+
     .glm-trend-card {
         margin: 8px 8px 10px;
         overflow: hidden;
@@ -890,7 +897,10 @@ map.timeDimension = L.timeDimension({
 const dashboardTimeControl = L.control.timeDimension({
     position: 'bottomleft',
     autoPlay: true,
-    playerOptions: { transitionTime: 650, loop: true }
+    minSpeed: 1,
+    maxSpeed: 30,
+    speedStep: 1,
+    playerOptions: { transitionTime: 67, loop: true }
 }).addTo(map);
 
 function buildIEMRadarTimes() {
@@ -949,7 +959,7 @@ const mrmsRalaLayer = L.imageOverlay(
 function applyMRMSRALABrowserRendering() {
     const image = mrmsRalaLayer.getElement?.();
     if (!image) return;
-    image.style.imageRendering = 'pixelated';
+    image.style.setProperty('image-rendering', 'pixelated', 'important');
 }
 mrmsRalaLayer.on('add load', applyMRMSRALABrowserRendering);
 
@@ -2076,8 +2086,7 @@ async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
         mrmsRalaLayer.setUrl(url);
         mrmsRalaCurrentFrame = frame;
         mrmsRalaLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
-        const image = mrmsRalaLayer.getElement?.();
-        if (image) image.style.imageRendering = 'auto';
+        applyMRMSRALABrowserRendering();
         updateMRMSRALATimeBox();
         return true;
     } catch (error) {
