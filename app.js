@@ -244,7 +244,22 @@ function formatUTC(date) {
 // --- CUSTOM MAP PANES FOR STRICT Z-INDEX HAZARD PRIORITY ---
 map.createPane('labels');
 map.getPane('labels').style.zIndex = 600;
-map.getPane('labels').style.pointerEvents = 'none'; 
+map.getPane('labels').style.pointerEvents = 'none';
+
+// WPC-owned dark-reference cartography. Keep the base geography below all
+// meteorological/hydrological overlays, while selected reference boundaries
+// remain above raster data but below labels/UFVS annotations.
+map.createPane('wpcDarkBase');
+map.getPane('wpcDarkBase').style.zIndex = 180;
+map.getPane('wpcDarkBase').style.pointerEvents = 'none';
+
+map.createPane('mapReferenceBase');
+map.getPane('mapReferenceBase').style.zIndex = 230;
+map.getPane('mapReferenceBase').style.pointerEvents = 'none';
+
+map.createPane('mapReference');
+map.getPane('mapReference').style.zIndex = 575;
+map.getPane('mapReference').style.pointerEvents = 'none';
 
 map.createPane('watches');
 map.getPane('watches').style.zIndex = 410;
@@ -426,6 +441,224 @@ const usgsImageryTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest
     attribution: 'USGS The National Map — Orthoimagery and US Topo'
 });
 
+// WPC Dark Reference — WPC-owned Leaflet cartography designed specifically
+// for hydrometeorological analysis. Natural Earth provides the keyless global
+// country geometry; current U.S. Census TIGERweb services provide scalable U.S.
+// reference information. The United States is intentionally near-black while
+// neighboring land and water are dark gray so bright operational data dominate.
+const WPC_DARK_COUNTRIES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson';
+const WPC_DARK_PLACES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_populated_places_simple.geojson';
+const TIGER_CURRENT_WMS_URL = 'https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer';
+const TIGER_TRANSPORTATION_TILES_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/tile/{z}/{y}/{x}';
+
+function isUSReferenceFeature(feature) {
+    const properties = feature?.properties || {};
+    return properties.ADM0_A3 === 'USA'
+        || properties.SOV_A3 === 'US1'
+        || properties.SOVEREIGNT === 'United States of America'
+        || properties.ADMIN === 'United States of America';
+}
+
+const wpcDarkCountryPolygons = L.geoJSON(null, {
+    pane: 'wpcDarkBase',
+    interactive: false,
+    style: feature => ({
+        color: isUSReferenceFeature(feature) ? '#5e6670' : '#4a5058',
+        weight: isUSReferenceFeature(feature) ? 0.85 : 0.7,
+        opacity: 0.82,
+        fillColor: isUSReferenceFeature(feature) ? '#050608' : '#17191c',
+        fillOpacity: 1.0
+    })
+});
+const wpcDarkReferenceBase = L.layerGroup([wpcDarkCountryPolygons]);
+
+const wpcDarkCountryLabels = L.layerGroup();
+let wpcCountryLabelFeatures = [];
+const wpcMajorCitiesPlacesLayer = L.layerGroup();
+const wpcInternationalBoundariesLayer = L.geoJSON(null, {
+    pane: 'mapReference',
+    interactive: false,
+    style: {
+        color: 'rgba(210, 215, 220, 0.72)',
+        weight: 1.0,
+        opacity: 0.85,
+        fill: false
+    }
+});
+
+const wpcStateTerritoryNamesLayer = L.tileLayer.wms(TIGER_CURRENT_WMS_URL, {
+    layers: '81',
+    format: 'image/png',
+    transparent: true,
+    version: '1.3.0',
+    pane: 'labels',
+    opacity: 0.92,
+    attribution: 'U.S. Census Bureau TIGERweb'
+});
+
+const wpcCountyBoundariesLayer = L.tileLayer.wms(TIGER_CURRENT_WMS_URL, {
+    layers: '82',
+    format: 'image/png',
+    transparent: true,
+    version: '1.3.0',
+    pane: 'mapReference',
+    opacity: 0.72,
+    minZoom: 5,
+    attribution: 'U.S. Census Bureau TIGERweb'
+});
+
+const wpcUrbanAreasLayer = L.tileLayer.wms(TIGER_CURRENT_WMS_URL, {
+    layers: '88',
+    format: 'image/png',
+    transparent: true,
+    version: '1.3.0',
+    pane: 'mapReferenceBase',
+    opacity: 0.18,
+    minZoom: 5,
+    attribution: 'U.S. Census Bureau TIGERweb'
+});
+
+const wpcMajorRoadsLayer = L.tileLayer(TIGER_TRANSPORTATION_TILES_URL, {
+    pane: 'mapReferenceBase',
+    opacity: 0.30,
+    minZoom: 4,
+    maxZoom: 19,
+    attribution: 'U.S. Census Bureau TIGERweb Transportation'
+});
+
+function escapeWPCReferenceText(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function makeWPCReferenceLabel(text, options = {}) {
+    const size = options.size || '11px';
+    const weight = options.weight || '600';
+    const color = options.color || '#cfd5db';
+    const transform = options.transform || 'none';
+    const spacing = options.spacing || '0.01em';
+    const dot = options.dot ? '<span style="font-size:10px;margin-right:3px;">•</span>' : '';
+    const safeText = escapeWPCReferenceText(text);
+    return L.divIcon({
+        className: '',
+        iconSize: [150, 18],
+        iconAnchor: [0, 9],
+        html: `<div style="white-space:nowrap;pointer-events:none;color:${color};font:${weight} ${size}/1.05 Arial,Helvetica,sans-serif;text-transform:${transform};letter-spacing:${spacing};text-shadow:-1px -1px 1px #050608,1px -1px 1px #050608,-1px 1px 1px #050608,1px 1px 1px #050608;opacity:0.92;">${dot}${safeText}</div>`
+    });
+}
+
+let wpcMajorPlaceFeatures = [];
+
+function refreshWPCDarkCountryLabels() {
+    wpcDarkCountryLabels.clearLayers();
+    if (!map.hasLayer(wpcDarkCountryLabels) || !wpcCountryLabelFeatures.length) return;
+    const zoom = map.getZoom();
+    if (zoom > 6) return;
+
+    wpcCountryLabelFeatures.forEach(feature => {
+        const properties = feature?.properties || {};
+        const longitude = Number(properties.LABEL_X);
+        const latitude = Number(properties.LABEL_Y);
+        const label = properties.NAME_EN || properties.NAME_LONG || properties.ADMIN || properties.NAME;
+        if (!label || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+        const minLabel = Number(properties.MIN_LABEL ?? 2) || 2;
+        if (zoom + 0.5 < minLabel) return;
+        L.marker([latitude, longitude], {
+            pane: 'labels',
+            interactive: false,
+            keyboard: false,
+            icon: makeWPCReferenceLabel(label, {
+                size: '10px',
+                weight: '600',
+                color: isUSReferenceFeature(feature) ? '#d7dce1' : '#9ea5ab',
+                transform: 'uppercase',
+                spacing: '0.08em'
+            })
+        }).addTo(wpcDarkCountryLabels);
+    });
+}
+
+function refreshWPCMajorPlaceLabels() {
+    wpcMajorCitiesPlacesLayer.clearLayers();
+    if (!map.hasLayer(wpcMajorCitiesPlacesLayer) || !wpcMajorPlaceFeatures.length) return;
+
+    const zoom = map.getZoom();
+    const populationThreshold = zoom <= 4 ? 2000000
+        : zoom === 5 ? 750000
+        : zoom === 6 ? 250000
+        : zoom === 7 ? 100000
+        : 0;
+
+    wpcMajorPlaceFeatures.forEach(feature => {
+        const properties = feature?.properties || {};
+        const coordinates = feature?.geometry?.coordinates;
+        if (!Array.isArray(coordinates) || coordinates.length < 2) return;
+        const longitude = Number(coordinates[0]);
+        const latitude = Number(coordinates[1]);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+        const population = Number(properties.POP_MAX ?? properties.pop_max ?? 0) || 0;
+        const isCapital = Boolean(Number(properties.ADM0CAP ?? properties.adm0cap ?? 0))
+            || String(properties.CAPIN ?? properties.capin ?? '').trim().length > 0;
+        const isWorldCity = Boolean(Number(properties.WORLDCITY ?? properties.worldcity ?? 0));
+        if (population < populationThreshold && !(isCapital && zoom >= 4) && !(isWorldCity && zoom >= 4)) return;
+
+        const name = properties.NAMEPAR
+            || properties.namepar
+            || properties.NAME
+            || properties.name
+            || properties.NAMEASCII
+            || properties.nameascii;
+        if (!name) return;
+
+        L.marker([latitude, longitude], {
+            pane: 'labels',
+            interactive: false,
+            keyboard: false,
+            icon: makeWPCReferenceLabel(name, {
+                size: zoom >= 7 ? '11px' : '10px',
+                weight: isCapital ? '700' : '600',
+                color: isCapital ? '#f0f2f4' : '#c7cdd2',
+                dot: true
+            })
+        }).addTo(wpcMajorCitiesPlacesLayer);
+    });
+}
+
+fetch(WPC_DARK_COUNTRIES_URL)
+    .then(response => {
+        if (!response.ok) throw new Error(`Natural Earth countries HTTP ${response.status}`);
+        return response.json();
+    })
+    .then(data => {
+        wpcDarkCountryPolygons.addData(data);
+        wpcInternationalBoundariesLayer.addData(data);
+
+        wpcCountryLabelFeatures = Array.isArray(data.features) ? data.features : [];
+        refreshWPCDarkCountryLabels();
+    })
+    .catch(error => console.warn('WPC Dark Reference country geometry unavailable:', error));
+
+fetch(WPC_DARK_PLACES_URL)
+    .then(response => {
+        if (!response.ok) throw new Error(`Natural Earth populated places HTTP ${response.status}`);
+        return response.json();
+    })
+    .then(data => {
+        wpcMajorPlaceFeatures = Array.isArray(data.features) ? data.features : [];
+        refreshWPCMajorPlaceLabels();
+    })
+    .catch(error => console.warn('WPC Dark Reference populated places unavailable:', error));
+
+map.on('zoomend', () => {
+    refreshWPCDarkCountryLabels();
+    refreshWPCMajorPlaceLabels();
+});
+
 // WPC Black Canvas — a true near-black background with no external tile
 // dependency. State boundaries remain available through the dashboard's own
 // reference overlay so bright meteorological/hydrological fields retain maximum
@@ -436,8 +669,9 @@ const blackCanvasBase = L.layerGroup();
 // stand on its own with no underlying cartographic tiles.
 const blankBase = L.layerGroup();
 
-// Add default basemap
-esriDarkBase.addTo(map);
+// Add default basemap — WPC Dark Reference is the operational startup background.
+wpcDarkReferenceBase.addTo(map);
+map.getContainer().style.backgroundColor = '#25282b';
 
 // Floating reference labels for the Esri gray-canvas basemaps.
 const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
@@ -450,7 +684,7 @@ const esriLightLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest
     maxNativeZoom: 16,
     maxZoom: 19
 });
-esriDarkLabels.addTo(map);
+wpcDarkCountryLabels.addTo(map);
 
 // --- AUTO-TOGGLING GEOJSON STATE BORDERS ---
 const whiteBorders = L.geoJSON(null, {
@@ -478,7 +712,7 @@ whiteBorders.addTo(map);
 // their own place-name/reference content; only the Esri gray canvases need a
 // separate reference-label layer.
 map.on('baselayerchange', function(e) {
-    for (const referenceLayer of [esriDarkLabels, esriLightLabels]) {
+    for (const referenceLayer of [esriDarkLabels, esriLightLabels, wpcDarkCountryLabels]) {
         if (map.hasLayer(referenceLayer)) map.removeLayer(referenceLayer);
     }
     if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
@@ -487,13 +721,17 @@ map.on('baselayerchange', function(e) {
     const selectedBase = baseMapRegistry.find(base => base.layer === e.layer || base.label === e.name);
     if (!selectedBase) return;
 
-    // Canvas-only basemaps can set an explicit map background without fetching
-    // external tiles. Every tiled basemap resets this to the normal Leaflet value.
+    // Canvas-only and WPC-owned vector basemaps can set an explicit map
+    // background. Every standard tiled basemap resets this to Leaflet's normal
+    // container background.
     map.getContainer().style.backgroundColor = selectedBase.canvasColor || '';
 
-    if (selectedBase.referenceLayer && !map.hasLayer(selectedBase.referenceLayer)) {
-        selectedBase.referenceLayer.addTo(map);
-    }
+    const referenceLayers = selectedBase.referenceLayers
+        || (selectedBase.referenceLayer ? [selectedBase.referenceLayer] : []);
+    referenceLayers.forEach(referenceLayer => {
+        if (referenceLayer && !map.hasLayer(referenceLayer)) referenceLayer.addTo(map);
+    });
+    if (selectedBase.id === 'wpc-dark-reference') refreshWPCDarkCountryLabels();
     if (selectedBase.borderTone === 'white') {
         whiteBorders.addTo(map);
     } else if (selectedBase.borderTone === 'black') {
@@ -3952,6 +4190,7 @@ map.on('overlayremove', function(eventLayer) {
 // This registry is the single source of truth for layer order, labels, search,
 // sidebar selection, opacity utilities, and future experimental additions.
 const baseMapRegistry = [
+    {id: 'wpc-dark-reference', label: 'WPC Dark Reference', layer: wpcDarkReferenceBase, referenceLayers: [wpcDarkCountryLabels], borderTone: 'white', canvasColor: '#25282b'},
     {id: 'esri-dark', label: 'Esri Dark Gray', layer: esriDarkBase, referenceLayer: esriDarkLabels, borderTone: 'white'},
     {id: 'black-canvas', label: 'Black Canvas', layer: blackCanvasBase, borderTone: 'white', canvasColor: '#050608'},
     {id: 'esri-light', label: 'Esri Light Gray', layer: esriLightBase, referenceLayer: esriLightLabels, borderTone: 'black'},
@@ -4185,6 +4424,34 @@ const dashboardSections = [
 ];
 
 
+// Independent map-reference overlays. These controls are intentionally kept
+// outside the meteorological/hydrological data registry so they can be combined
+// with any basemap without changing primary data-layer counts or exclusivity.
+const mapReferenceOverlayConfigs = [
+    {refId: 'state-territory-names', label: 'State / Territory Names', layer: wpcStateTerritoryNamesLayer, defaultActive: true},
+    {refId: 'major-cities-places', label: 'Major Cities & Places', layer: wpcMajorCitiesPlacesLayer, defaultActive: true},
+    {refId: 'major-roads', label: 'Major Roads', layer: wpcMajorRoadsLayer, defaultActive: true},
+    {refId: 'county-boundaries', label: 'County Boundaries', layer: wpcCountyBoundariesLayer, defaultActive: false},
+    {refId: 'urban-areas', label: 'Urban Areas', layer: wpcUrbanAreasLayer, defaultActive: false},
+    {refId: 'international-boundaries', label: 'International Boundaries', layer: wpcInternationalBoundariesLayer, defaultActive: false},
+];
+
+function setMapReferenceOverlayVisible(config, isVisible) {
+    if (!config?.layer) return;
+    if (isVisible && !map.hasLayer(config.layer)) {
+        map.addLayer(config.layer);
+    } else if (!isVisible && map.hasLayer(config.layer)) {
+        map.removeLayer(config.layer);
+    }
+    if (config.refId === 'major-cities-places') refreshWPCMajorPlaceLabels();
+    const toggle = document.getElementById(`map-reference-${config.refId}-toggle`);
+    if (toggle) toggle.checked = Boolean(isVisible);
+}
+
+mapReferenceOverlayConfigs.forEach(config => {
+    if (config.defaultActive) setMapReferenceOverlayVisible(config, true);
+});
+
 const dashboardUtilityLayers = [];
 
 const layerEntriesById = new Map();
@@ -4374,6 +4641,13 @@ function renderUtilitySection(container) {
                 </span>
             </label>
         </div>
+        <div class="utility-toggle-field">
+            <div style="margin-bottom:6px;">
+                <strong>Map Reference Overlays</strong>
+                <small style="display:block;opacity:0.75;margin-top:2px;">Add scalable geographic context above any basemap.</small>
+            </div>
+            <div id="map-reference-overlay-controls"></div>
+        </div>
         <div class="opacity-control">
             <label for="layer-opacity">Selected raster opacity</label>
             <div class="opacity-row">
@@ -4416,6 +4690,27 @@ function renderUtilitySection(container) {
     ufvsDomainsToggle.checked = map.hasLayer(ufvsGeographicDomainsLayer);
     ufvsDomainsToggle.addEventListener('change', event => {
         setUFVSGeographicDomainsVisible(event.target.checked);
+    });
+
+    const mapReferenceControls = body.querySelector('#map-reference-overlay-controls');
+    mapReferenceOverlayConfigs.forEach(config => {
+        const row = document.createElement('label');
+        row.className = 'utility-toggle-row';
+        row.htmlFor = `map-reference-${config.refId}-toggle`;
+        row.style.marginTop = '4px';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = `map-reference-${config.refId}-toggle`;
+        input.checked = map.hasLayer(config.layer);
+        input.addEventListener('change', event => {
+            setMapReferenceOverlayVisible(config, event.target.checked);
+        });
+
+        const text = document.createElement('span');
+        text.textContent = config.label;
+        row.append(input, text);
+        mapReferenceControls.append(row);
     });
 
     body.querySelector('#layer-opacity').addEventListener('input', event => {
@@ -4461,6 +4756,9 @@ function renderUtilitySection(container) {
         map.fire('baselayerchange', {name: defaultBase.label, layer: defaultBase.layer});
         basemapSelect.value = defaultBase.id;
         setUFVSGeographicDomainsVisible(false);
+        mapReferenceOverlayConfigs.forEach(config => {
+            setMapReferenceOverlayVisible(config, Boolean(config.defaultActive));
+        });
         map.setView([39.8283, -98.5795], 5);
     });
 }
