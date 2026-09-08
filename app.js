@@ -887,99 +887,255 @@ map.on('baselayerchange', function(e) {
 });
 
 // --- RADAR LOOP TIME CONTROL ---
-// The NOAA MRMS RALA loop is now the primary radar timeline. The legacy IEM
-// NEXRAD loop remains available as a mutually-exclusive backup and uses the same
-// bottom-left time control when selected.
+// IEM and direct NOAA MRMS use intentionally separate speed controls because
+// their rendering paths are fundamentally different. IEM is a tiled WMS loop
+// and uses the conventional Leaflet.TimeDimension FPS slider. MRMS RALA swaps
+// a single near-native full-CONUS image per displayed frame, so its control is
+// an explicit scan-speed selector that changes how many native ~2-minute source
+// frames are advanced per sustainable visible update. This prevents the UI from
+// claiming 30-60 full-image swaps/sec that a browser cannot actually render.
 map.timeDimension = L.timeDimension({
     period: "PT2M"
 });
 
-const MRMS_RALA_DEFAULT_FPS = 30;
 const IEM_RADAR_DEFAULT_FPS = 5;
-const MRMS_RALA_MAX_FULL_FRAME_FPS = 30;
+const IEM_RADAR_MIN_FPS = 1;
+const IEM_RADAR_MAX_FPS = 10;
+const MRMS_RALA_VISIBLE_INTERVAL_MS = 250;
+const MRMS_RALA_DEFAULT_SPEED_PROFILE = 'very-fast';
+const MRMS_RALA_SPEED_PROFILES = Object.freeze({
+    normal:      {label: 'Normal',    frameStep: 1},
+    fast:        {label: 'Fast',      frameStep: 2},
+    'very-fast': {label: 'Very Fast', frameStep: 4},
+    rapid:       {label: 'Rapid',     frameStep: 8},
+    maximum:     {label: 'Maximum',   frameStep: 15}
+});
 
-// The IEM WMS loop is tile based and can follow the TimeDimension clock directly.
-// MRMS RALA is a single near-native full-CONUS image (~7000 px wide) per frame.
-// Above ~30 displayed image swaps per second, browser decode/composite cost becomes
-// the limiting factor. Preserve a responsive high-speed control by keeping the
-// actual MRMS image-swap clock <=30 Hz and advancing multiple source frames per
-// tick above that threshold. No interpolation or smoothing is introduced.
 let dashboardRadarSpeedMode = 'mrms';
-let dashboardRadarRequestedFPS = MRMS_RALA_DEFAULT_FPS;
+let iemRadarRequestedFPS = IEM_RADAR_DEFAULT_FPS;
+let mrmsRalaSpeedProfileId = MRMS_RALA_DEFAULT_SPEED_PROFILE;
+let mrmsRalaAnimationTimer = null;
+let mrmsRalaSpeedControl = null;
+let mrmsRalaSpeedSelect = null;
 
 const dashboardTimeControl = L.control.timeDimension({
     position: 'bottomleft',
-    autoPlay: true,
-    minSpeed: 1,
-    maxSpeed: 60,
+    autoPlay: false,
+    minSpeed: IEM_RADAR_MIN_FPS,
+    maxSpeed: IEM_RADAR_MAX_FPS,
     speedStep: 1,
-    playerOptions: { transitionTime: Math.round(1000 / MRMS_RALA_DEFAULT_FPS), loop: true }
+    playerOptions: {transitionTime: Math.round(1000 / IEM_RADAR_DEFAULT_FPS), loop: true}
 });
-
-// Keep manual step buttons meteorologically precise even when the animation is
-// using multi-frame advancement in MRMS high-speed mode.
-dashboardTimeControl._buttonBackwardClicked = function() {
-    this._timeDimension.previousTime(1);
-};
-dashboardTimeControl._buttonForwardClicked = function() {
-    this._timeDimension.nextTime(1);
-};
-
-// Route the stock Leaflet.TimeDimension speed slider through the dashboard's
-// feed-aware scheduler rather than directly changing only transitionTime.
-dashboardTimeControl._sliderSpeedValueChanged = function(newValue) {
-    setDashboardRadarAnimationFPS(newValue);
-};
 
 dashboardTimeControl.addTo(map);
 
-function syncDashboardRadarSpeedSlider() {
-    const slider = dashboardTimeControl?._sliderSpeed;
-    if (!slider || dashboardTimeControl._draggingSpeed) return;
-    if (Number.isFinite(dashboardRadarRequestedFPS)) {
-        slider.setValue(dashboardRadarRequestedFPS);
+function stockIEMSpeedControlContainer() {
+    return dashboardTimeControl?._sliderSpeed?._container?.parentElement || null;
+}
+
+function syncRadarSpeedControlVisibility() {
+    const iemControl = stockIEMSpeedControlContainer();
+    if (iemControl) iemControl.style.display = dashboardRadarSpeedMode === 'iem' ? '' : 'none';
+    if (mrmsRalaSpeedControl) {
+        mrmsRalaSpeedControl.style.display = dashboardRadarSpeedMode === 'mrms' ? '' : 'none';
     }
 }
 
-function setDashboardRadarAnimationFPS(fps) {
+function syncIEMRadarSpeedSlider() {
+    if (dashboardRadarSpeedMode !== 'iem') return;
+    const slider = dashboardTimeControl?._sliderSpeed;
+    if (!slider || dashboardTimeControl._draggingSpeed) return;
+    slider.setValue(iemRadarRequestedFPS);
+}
+
+function setIEMRadarAnimationFPS(fps) {
     const numeric = Number(fps);
     if (!Number.isFinite(numeric) || numeric <= 0) return false;
-
-    const requestedFPS = Math.min(60, Math.max(1, numeric));
-    let animationSteps = 1;
-    let schedulerFPS = requestedFPS;
-
-    if (dashboardRadarSpeedMode === 'mrms' && requestedFPS > MRMS_RALA_MAX_FULL_FRAME_FPS) {
-        animationSteps = Math.ceil(requestedFPS / MRMS_RALA_MAX_FULL_FRAME_FPS);
-        schedulerFPS = requestedFPS / animationSteps;
-    }
-
+    const requestedFPS = Math.min(IEM_RADAR_MAX_FPS, Math.max(IEM_RADAR_MIN_FPS, numeric));
+    iemRadarRequestedFPS = requestedFPS;
+    dashboardTimeControl._steps = 1;
     const player = dashboardTimeControl?._player;
     if (!player || typeof player.setTransitionTime !== 'function') return false;
-
-    dashboardRadarRequestedFPS = requestedFPS;
-    dashboardTimeControl._steps = animationSteps;
-
-    // setTransitionTime restarts an active player with player._steps, so update
-    // that private state first to make a live speed change take effect immediately.
-    player._steps = animationSteps;
-
-    // The stock control derives the speed-slider position from transitionTime.
-    // Suppress that one internal synchronization because in adaptive MRMS mode
-    // the scheduler rate is intentionally lower than the requested effective rate.
-    const previousDraggingState = Boolean(dashboardTimeControl._draggingSpeed);
-    dashboardTimeControl._draggingSpeed = true;
-    player.setTransitionTime(1000 / schedulerFPS);
-    dashboardTimeControl._draggingSpeed = previousDraggingState;
-    syncDashboardRadarSpeedSlider();
-
+    player._steps = 1;
+    player.setTransitionTime(1000 / requestedFPS);
+    syncIEMRadarSpeedSlider();
     return true;
 }
 
-// TimeDimension updates its controls on each timeload. Re-assert the requested
-// speed value so the MRMS 31-60 fps adaptive range remains visible and stable.
-map.timeDimension.on('timeload', syncDashboardRadarSpeedSlider);
-dashboardTimeControl._player.on('speedchange', syncDashboardRadarSpeedSlider);
+function syncMRMSRALAPlayButton() {
+    if (dashboardRadarSpeedMode !== 'mrms') return;
+    const button = dashboardTimeControl?._buttonPlayPause;
+    if (!button) return;
+    if (mrmsRalaAnimationTimer) {
+        L.DomUtil.addClass(button, 'pause');
+        L.DomUtil.removeClass(button, 'play');
+        button.title = 'Pause MRMS RALA loop';
+    } else {
+        L.DomUtil.removeClass(button, 'pause');
+        L.DomUtil.addClass(button, 'play');
+        button.title = 'Play MRMS RALA loop';
+    }
+}
+
+function stopMRMSRALAAnimation() {
+    if (mrmsRalaAnimationTimer) {
+        window.clearInterval(mrmsRalaAnimationTimer);
+        mrmsRalaAnimationTimer = null;
+    }
+    syncMRMSRALAPlayButton();
+}
+
+function tickMRMSRALAAnimation() {
+    if (
+        dashboardRadarSpeedMode !== 'mrms' ||
+        !map.hasLayer(mrmsRalaLayer) ||
+        !mrmsRalaReady ||
+        !mrmsRalaFresh ||
+        !mrmsRalaFrames.length
+    ) {
+        stopMRMSRALAAnimation();
+        return;
+    }
+
+    const profile = MRMS_RALA_SPEED_PROFILES[mrmsRalaSpeedProfileId]
+        || MRMS_RALA_SPEED_PROFILES[MRMS_RALA_DEFAULT_SPEED_PROFILE];
+    const times = map.timeDimension.getAvailableTimes();
+    if (!times.length) return;
+
+    let currentIndex = map.timeDimension.getCurrentTimeIndex();
+    if (!Number.isInteger(currentIndex) || currentIndex < 0) currentIndex = times.length - 1;
+    const candidateIndex = currentIndex + profile.frameStep;
+    // At high scan speeds, wrap cleanly to the first frame instead of carrying
+    // a modulo remainder. That preserves chronological forward motion and makes
+    // the profile's frameStep translate into the intended fast full-loop traversal.
+    const nextIndex = candidateIndex >= times.length ? 0 : candidateIndex;
+    map.timeDimension.setCurrentTimeIndex(nextIndex);
+
+    // Leaflet.TimeDimension's own player is intentionally stopped in MRMS mode;
+    // keep its shared play button visually synchronized with this MRMS timer.
+    window.requestAnimationFrame(syncMRMSRALAPlayButton);
+}
+
+function startMRMSRALAAnimation() {
+    if (dashboardRadarSpeedMode !== 'mrms' || mrmsRalaAnimationTimer) return;
+    const player = dashboardTimeControl?._player;
+    if (player?.isPlaying()) player.stop();
+    mrmsRalaAnimationTimer = window.setInterval(tickMRMSRALAAnimation, MRMS_RALA_VISIBLE_INTERVAL_MS);
+    syncMRMSRALAPlayButton();
+}
+
+function setMRMSRALASpeedProfile(profileId) {
+    if (!MRMS_RALA_SPEED_PROFILES[profileId]) return false;
+    mrmsRalaSpeedProfileId = profileId;
+    if (mrmsRalaSpeedSelect && mrmsRalaSpeedSelect.value !== profileId) {
+        mrmsRalaSpeedSelect.value = profileId;
+    }
+    return true;
+}
+
+function createMRMSRALASpeedControl() {
+    const container = dashboardTimeControl?._container;
+    if (!container || mrmsRalaSpeedControl) return;
+
+    const control = L.DomUtil.create(
+        'div',
+        'leaflet-control-timecontrol mrms-rala-speed-control',
+        container
+    );
+    control.title = 'MRMS RALA loop scan speed';
+    control.style.display = 'none';
+    control.style.padding = '0 7px';
+    control.style.whiteSpace = 'nowrap';
+    control.style.minWidth = '150px';
+
+    const label = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
+    label.textContent = 'MRMS speed ';
+    label.style.fontSize = '11px';
+    label.style.fontWeight = '600';
+
+    const select = L.DomUtil.create('select', 'mrms-rala-speed-select', control);
+    select.setAttribute('aria-label', 'MRMS RALA loop speed');
+    select.style.height = '22px';
+    select.style.margin = '2px 0 2px 4px';
+    select.style.fontSize = '11px';
+    select.style.verticalAlign = 'middle';
+
+    Object.entries(MRMS_RALA_SPEED_PROFILES).forEach(([id, profile]) => {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = profile.label;
+        select.append(option);
+    });
+    select.value = mrmsRalaSpeedProfileId;
+    select.addEventListener('change', event => setMRMSRALASpeedProfile(event.target.value));
+
+    L.DomEvent.disableClickPropagation(control);
+    L.DomEvent.disableScrollPropagation(control);
+    mrmsRalaSpeedControl = control;
+    mrmsRalaSpeedSelect = select;
+    syncRadarSpeedControlVisibility();
+}
+
+createMRMSRALASpeedControl();
+
+// IEM keeps the stock FPS slider exactly because that renderer responds well to
+// conventional FPS changes. MRMS has its own discrete scan-speed control above.
+dashboardTimeControl._sliderSpeedValueChanged = function(newValue) {
+    if (dashboardRadarSpeedMode === 'iem') setIEMRadarAnimationFPS(newValue);
+};
+
+// Manual step buttons always move exactly one native timeline frame and pause
+// the MRMS custom animation so frame-by-frame interrogation remains precise.
+dashboardTimeControl._buttonBackwardClicked = function() {
+    if (dashboardRadarSpeedMode === 'mrms') stopMRMSRALAAnimation();
+    this._timeDimension.previousTime(1);
+};
+dashboardTimeControl._buttonForwardClicked = function() {
+    if (dashboardRadarSpeedMode === 'mrms') stopMRMSRALAAnimation();
+    this._timeDimension.nextTime(1);
+};
+
+dashboardTimeControl._buttonPlayClicked = function() {
+    if (dashboardRadarSpeedMode === 'mrms') {
+        if (mrmsRalaAnimationTimer) stopMRMSRALAAnimation();
+        else startMRMSRALAAnimation();
+        return;
+    }
+    if (this._player.isPlaying()) this._player.stop();
+    else this._player.start(1);
+};
+
+// Leaflet.TimeDimension binds button handlers when addTo(map) creates the DOM.
+// The feed-aware handlers above therefore need to replace those original bound
+// callbacks explicitly; simply assigning private methods after addTo() is not enough.
+function rebindDashboardTimeControlButton(button, originalHandler, replacementHandler) {
+    if (!button || typeof originalHandler !== 'function' || typeof replacementHandler !== 'function') return;
+    L.DomEvent.off(button, 'click', originalHandler, dashboardTimeControl);
+    L.DomEvent.on(button, 'click', replacementHandler, dashboardTimeControl);
+}
+rebindDashboardTimeControlButton(
+    dashboardTimeControl._buttonBackward,
+    L.Control.TimeDimension.prototype._buttonBackwardClicked,
+    dashboardTimeControl._buttonBackwardClicked
+);
+rebindDashboardTimeControlButton(
+    dashboardTimeControl._buttonForward,
+    L.Control.TimeDimension.prototype._buttonForwardClicked,
+    dashboardTimeControl._buttonForwardClicked
+);
+rebindDashboardTimeControlButton(
+    dashboardTimeControl._buttonPlayPause,
+    L.Control.TimeDimension.prototype._buttonPlayClicked,
+    dashboardTimeControl._buttonPlayClicked
+);
+
+// The stock control re-syncs itself after timeline events. Reassert only the
+// active feed's presentation after those updates.
+map.timeDimension.on('timeload', function() {
+    if (dashboardRadarSpeedMode === 'iem') syncIEMRadarSpeedSlider();
+    else window.requestAnimationFrame(syncMRMSRALAPlayButton);
+});
+dashboardTimeControl._player.on('speedchange', syncIEMRadarSpeedSlider);
 
 function buildIEMRadarTimes() {
     const endTime = new Date();
@@ -994,22 +1150,33 @@ function buildIEMRadarTimes() {
     return times;
 }
 
-function activateIEMRadarTimeline({applyDefaultSpeed = false} = {}) {
-    if (applyDefaultSpeed) {
-        dashboardRadarSpeedMode = 'iem';
-        setDashboardRadarAnimationFPS(IEM_RADAR_DEFAULT_FPS);
-    }
+function activateIEMRadarTimeline({applyDefaultSpeed = false, autoPlay = true} = {}) {
+    dashboardRadarSpeedMode = 'iem';
+    stopMRMSRALAAnimation();
+    syncRadarSpeedControlVisibility();
+    if (applyDefaultSpeed) iemRadarRequestedFPS = IEM_RADAR_DEFAULT_FPS;
+    setIEMRadarAnimationFPS(iemRadarRequestedFPS);
+
     const times = buildIEMRadarTimes();
     map.timeDimension.setAvailableTimes(times, 'replace');
     if (times.length) map.timeDimension.setCurrentTime(times[times.length - 1]);
+
+    const player = dashboardTimeControl?._player;
+    if (autoPlay && player && !player.isPlaying()) player.start(1);
 }
 
-// Seed the shared timeline without overriding the primary MRMS default speed.
-activateIEMRadarTimeline({applyDefaultSpeed: false});
+// Seed the shared timeline without changing the active radar-speed mode or
+// starting the backup feed. Direct NOAA MRMS remains the dashboard default and
+// takes ownership as soon as its manifest is ready.
+const initialIEMRadarTimes = buildIEMRadarTimes();
+map.timeDimension.setAvailableTimes(initialIEMRadarTimes, 'replace');
+if (initialIEMRadarTimes.length) {
+    map.timeDimension.setCurrentTime(initialIEMRadarTimes[initialIEMRadarTimes.length - 1]);
+}
+syncRadarSpeedControlVisibility();
 window.setInterval(() => {
     if (map.hasLayer(radarTimeLayer) && !map.hasLayer(mrmsRalaLayer)) {
-        // Preserve any speed the forecaster selected while IEM is active.
-        activateIEMRadarTimeline({applyDefaultSpeed: false});
+        activateIEMRadarTimeline({applyDefaultSpeed: false, autoPlay: true});
     }
 }, 10 * 60 * 1000);
 
@@ -2196,14 +2363,27 @@ function warmMRMSRALALoopCache() {
     Promise.all(Array.from({length: workers}, worker)).catch(() => {});
 }
 
-function activateMRMSRALATimeline({jumpToLatest = true, applyDefaultSpeed = false} = {}) {
+function activateMRMSRALATimeline({jumpToLatest = true, applyDefaultSpeed = false, autoPlay = true} = {}) {
     if (!mrmsRalaFrames.length) return false;
+
     dashboardRadarSpeedMode = 'mrms';
-    if (applyDefaultSpeed) setDashboardRadarAnimationFPS(MRMS_RALA_DEFAULT_FPS);
+    const player = dashboardTimeControl?._player;
+    if (player?.isPlaying()) player.stop();
+
+    // Each feed owns its own speed state. The MRMS profile is initialized to
+    // Very Fast, then preserved independently when forecasters switch feeds.
+    if (applyDefaultSpeed && !MRMS_RALA_SPEED_PROFILES[mrmsRalaSpeedProfileId]) {
+        mrmsRalaSpeedProfileId = MRMS_RALA_DEFAULT_SPEED_PROFILE;
+    }
+    setMRMSRALASpeedProfile(mrmsRalaSpeedProfileId);
+    syncRadarSpeedControlVisibility();
+
     const times = mrmsRalaFrames.map(frame => frame.timeMillis);
     map.timeDimension.setAvailableTimes(times, 'replace');
     if (jumpToLatest) map.timeDimension.setCurrentTime(times[times.length - 1]);
     else showMRMSRALAFrame(map.timeDimension.getCurrentTime());
+
+    if (autoPlay) startMRMSRALAAnimation();
     return true;
 }
 
@@ -4892,14 +5072,27 @@ function enforceExclusiveRadarSelection(activeEntry) {
     });
 
     if (activeEntry.id === 'mrms-rala-direct') {
+        dashboardRadarSpeedMode = 'mrms';
+        const player = dashboardTimeControl?._player;
+        if (player?.isPlaying()) player.stop();
+        syncRadarSpeedControlVisibility();
         if (mrmsRalaReady && mrmsRalaFresh) {
-            activateMRMSRALATimeline({jumpToLatest: true});
+            activateMRMSRALATimeline({jumpToLatest: true, autoPlay: true});
             showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
         } else {
             refreshMRMSRALAFromManifest({forceMetadata: !mrmsRalaReady});
         }
     } else if (activeEntry.id === 'nexrad-loop') {
-        activateIEMRadarTimeline({applyDefaultSpeed: true});
+        activateIEMRadarTimeline({applyDefaultSpeed: false, autoPlay: true});
+    }
+}
+
+function handleRadarLayerDeactivate(entry) {
+    if (entry.id === 'mrms-rala-direct') {
+        stopMRMSRALAAnimation();
+    } else if (entry.id === 'nexrad-loop') {
+        const player = dashboardTimeControl?._player;
+        if (player?.isPlaying()) player.stop();
     }
 }
 
@@ -4919,8 +5112,8 @@ const dashboardSections = [
         id: 'radar-satellite',
         title: 'Radar and Satellite Data (Real-Time)',
         layers: [
-            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km two hour loop'},
-            {id: 'nexrad-loop', label: 'IEM NEXRAD Radar — Backup (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, defaultActive: false},
+            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km two hour loop'},
+            {id: 'nexrad-loop', label: 'IEM NEXRAD Radar — Backup (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: false},
             {id: 'mrms-ffd', label: 'MRMS DVD Flash Flood Detector', layer: ffdLayer, kind: 'vector'},
             {id: 'mrms-qpe-1h', label: 'MRMS 1-Hour QPE', layer: mrms1hr, kind: 'raster'},
             {id: 'mrms-qpe-24h', label: 'MRMS 24-Hour QPE', layer: mrms24hr, kind: 'raster'},
