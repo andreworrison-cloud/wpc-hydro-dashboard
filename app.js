@@ -343,10 +343,21 @@ if (readUFVSDomainsVisibility()) {
 }
 
 // --- BASEMAPS ---
+// Expanded operational/reference basemap suite. All selections remain mutually
+// exclusive through the existing sidebar basemap selector and do not count as
+// registered meteorological/hydrological data layers.
 
 // Esri Dark Gray
 const esriDarkBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 16,
+    maxNativeZoom: 16,
+    maxZoom: 19,
+    attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
+});
+
+// Esri Light Gray
+const esriLightBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 16,
+    maxZoom: 19,
     attribution: '© Esri, HERE, Garmin, © OpenStreetMap'
 });
 
@@ -356,10 +367,23 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     attribution: '© OpenStreetMap contributors'
 });
 
-// Esri World Imagery (Satellite)
-const esriWorldImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+// Esri World Street Map
+const esriWorldStreet = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
-    attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+    attribution: 'Tiles © Esri and contributors'
+});
+
+// OpenTopoMap
+const openTopoMap = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    maxNativeZoom: 17,
+    maxZoom: 19,
+    attribution: 'Map data © OpenStreetMap contributors, SRTM | Map style © OpenTopoMap (CC-BY-SA)'
+});
+
+// Humanitarian OpenStreetMap
+const humanitarianOSM = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors | Tiles courtesy Humanitarian OpenStreetMap Team / OSM France'
 });
 
 // Esri World Topographic
@@ -368,13 +392,57 @@ const esriWorldTopo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/s
     attribution: 'Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community'
 });
 
-// Add default basemap
-esriDarkBase.addTo(map); 
+// USGS The National Map — Topographic
+const usgsTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 16,
+    maxZoom: 20,
+    attribution: 'USGS The National Map'
+});
 
-// The floating text labels for the Dark Base
+// USGS The National Map — Shaded Relief
+const usgsShadedRelief = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 16,
+    maxZoom: 20,
+    attribution: 'USGS The National Map / 3DEP'
+});
+
+// Esri World Imagery (Satellite)
+const esriWorldImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+});
+
+// USGS The National Map — Imagery Only
+const usgsImageryOnly = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 16,
+    maxZoom: 20,
+    attribution: 'USDA / USGS The National Map — Orthoimagery'
+});
+
+// USGS The National Map — Imagery + Topographic Reference
+const usgsImageryTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', {
+    maxNativeZoom: 16,
+    maxZoom: 20,
+    attribution: 'USGS The National Map — Orthoimagery and US Topo'
+});
+
+// No external basemap. Useful when a meteorological/hydrological raster should
+// stand on its own with no underlying cartographic tiles.
+const blankBase = L.layerGroup();
+
+// Add default basemap
+esriDarkBase.addTo(map);
+
+// Floating reference labels for the Esri gray-canvas basemaps.
 const esriDarkLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     pane: 'labels',
-    maxZoom: 16
+    maxNativeZoom: 16,
+    maxZoom: 19
+});
+const esriLightLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+    pane: 'labels',
+    maxNativeZoom: 16,
+    maxZoom: 19
 });
 esriDarkLabels.addTo(map);
 
@@ -399,18 +467,27 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
 whiteBorders.addTo(map); 
 
 // DYNAMIC BASEMAP TOGGLE LOGIC
+// Keep state-border contrast and gray-canvas reference labels appropriate for
+// the selected background. USGS/OSM/Esri topo and street basemaps already carry
+// their own place-name/reference content; only the Esri gray canvases need a
+// separate reference-label layer.
 map.on('baselayerchange', function(e) {
-    if (map.hasLayer(esriDarkLabels)) map.removeLayer(esriDarkLabels); 
+    for (const referenceLayer of [esriDarkLabels, esriLightLabels]) {
+        if (map.hasLayer(referenceLayer)) map.removeLayer(referenceLayer);
+    }
     if (map.hasLayer(whiteBorders)) map.removeLayer(whiteBorders);
     if (map.hasLayer(blackBorders)) map.removeLayer(blackBorders);
 
-    if (e.name === "Esri Dark Gray") {
-        esriDarkLabels.addTo(map);
+    const selectedBase = baseMapRegistry.find(base => base.layer === e.layer || base.label === e.name);
+    if (!selectedBase) return;
+
+    if (selectedBase.referenceLayer && !map.hasLayer(selectedBase.referenceLayer)) {
+        selectedBase.referenceLayer.addTo(map);
+    }
+    if (selectedBase.borderTone === 'white') {
         whiteBorders.addTo(map);
-    } else if (e.name === "OpenStreetMap" || e.name === "Esri World Topographic") {
+    } else if (selectedBase.borderTone === 'black') {
         blackBorders.addTo(map);
-    } else if (e.name === "Esri World Imagery (Satellite)") {
-        whiteBorders.addTo(map);
     }
 });
 
@@ -639,28 +716,6 @@ const HRRR_TLE_METADATA_URL = 'static/hrrr_tle_metadata.json';
 const HRRR_TLE_MANIFEST_POLL_INTERVAL_MS = 3 * 60 * 1000;
 const HRRR_TLE_PLACEHOLDER_BOUNDS = [[23.0, -125.0], [50.5, -66.5]];
 
-const HRRR_DIAGNOSTIC_LAYER_CONFIGS = [
-    {id: 'hrrr-diag-max-ratio', key: 'hrrr_max_ratio',
-     label: 'Max FFG Exceedance Ratio — Next 12 Hours',
-     file: 'hrrr_latest_12h_max_ffg_ratio.png', legendType: 'ratio',
-     keywords: 'latest deterministic HRRR maximum FFG exceedance QPF ratio next 12 hours'},
-    {id: 'hrrr-diag-ffg-coverage', key: 'hrrr_ffg_coverage',
-     label: 'FFG Exceedance Areal Coverage — Next 12 Hours',
-     file: 'hrrr_latest_12h_ffg_exceedance_coverage.png', legendType: 'coverage',
-     keywords: 'latest deterministic HRRR FFG exceedance areal coverage 40 km next 12 hours'}
-];
-
-const HRRR_DIAGNOSTIC_CONFIG_BY_NAME = new Map();
-HRRR_DIAGNOSTIC_LAYER_CONFIGS.forEach(config => {
-    config.url = `static/${config.file}`;
-    config.layer = L.imageOverlay(
-        config.url,
-        HRRR_TLE_PLACEHOLDER_BOUNDS,
-        {zIndex: 13, opacity: 0, interactive: false}
-    );
-    HRRR_DIAGNOSTIC_CONFIG_BY_NAME.set(config.label, config);
-});
-
 const HRRR_TLE_LAYER_CONFIGS = [
     // Core FFG Guidance
     {id: 'hrrr-tle-ffg-consensus', key: 'ffg_consensus', group: 'Core FFG Guidance',
@@ -735,11 +790,6 @@ HRRR_TLE_LAYER_CONFIGS.forEach(config => {
     HRRR_TLE_CONFIG_BY_NAME.set(config.label, config);
     HRRR_TLE_CONFIG_BY_KEY.set(config.key, config);
 });
-
-const HRRR_ALL_LAYER_CONFIGS = [
-    ...HRRR_DIAGNOSTIC_LAYER_CONFIGS,
-    ...HRRR_TLE_LAYER_CONFIGS
-];
 
 let hrrrTLEMetadata = null;
 let hrrrTLEReady = false;
@@ -2294,7 +2344,7 @@ window.addEventListener('focus', checkLightningCastUpdatesNow);
 window.addEventListener('online', checkLightningCastUpdatesNow);
 
 
-function validateHRRRTLEMetadata(metadata, expectedCycle = null, expectedHRRRCycle = null) {
+function validateHRRRTLEMetadata(metadata, expectedCycle = null) {
     if (!metadata || metadata.metadata_mode !== 'hrrr_tle_dashboard_v3_3') {
         throw new Error('Invalid HRRR-TLE metadata contract');
     }
@@ -2309,14 +2359,6 @@ function validateHRRRTLEMetadata(metadata, expectedCycle = null, expectedHRRRCyc
             `HRRR-TLE package not synchronized: expected ${expectedCycle}, got ${metadata.latest_cycle_utc}`
         );
     }
-    if (
-        expectedHRRRCycle &&
-        metadata.latest_hrrr_diagnostic_cycle_utc !== expectedHRRRCycle
-    ) {
-        throw new Error(
-            `Latest-HRRR diagnostics not synchronized: expected ${expectedHRRRCycle}, got ${metadata.latest_hrrr_diagnostic_cycle_utc}`
-        );
-    }
     const bounds = metadata.bounds;
     if (
         !Array.isArray(bounds) || bounds.length !== 2 ||
@@ -2325,7 +2367,7 @@ function validateHRRRTLEMetadata(metadata, expectedCycle = null, expectedHRRRCyc
     ) {
         throw new Error('HRRR-TLE metadata contains invalid Leaflet bounds');
     }
-    if (!metadata.layers || Object.keys(metadata.layers).length !== HRRR_ALL_LAYER_CONFIGS.length) {
+    if (!metadata.layers || Object.keys(metadata.layers).length !== HRRR_TLE_LAYER_CONFIGS.length) {
         throw new Error('HRRR-TLE metadata layer inventory is incomplete');
     }
     return metadata;
@@ -2346,16 +2388,16 @@ function preloadDashboardRaster(url) {
     });
 }
 
-async function fetchHRRRTLEMetadata({expectedCycle = null, expectedHRRRCycle = null} = {}) {
+async function fetchHRRRTLEMetadata({expectedCycle = null} = {}) {
     const response = await fetch(`${HRRR_TLE_METADATA_URL}?t=${Date.now()}`, {cache: 'no-store'});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const metadata = validateHRRRTLEMetadata(await response.json(), expectedCycle, expectedHRRRCycle);
-    const urls = HRRR_ALL_LAYER_CONFIGS.map(config => hrrrTLERasterUrl(config, metadata));
+    const metadata = validateHRRRTLEMetadata(await response.json(), expectedCycle);
+    const urls = HRRR_TLE_LAYER_CONFIGS.map(config => hrrrTLERasterUrl(config, metadata));
 
     // Preload the entire synchronized package before swapping any layer URL.
     await Promise.all(urls.map(preloadDashboardRaster));
 
-    HRRR_ALL_LAYER_CONFIGS.forEach((config, index) => {
+    HRRR_TLE_LAYER_CONFIGS.forEach((config, index) => {
         const currentOpacity = Number(config.layer.options?.opacity);
         config.layer.setBounds(metadata.bounds);
         config.layer.setUrl(urls[index]);
@@ -2366,7 +2408,6 @@ async function fetchHRRRTLEMetadata({expectedCycle = null, expectedHRRRCycle = n
 
     hrrrTLEMetadata = metadata;
     hrrrTLEReady = true;
-    updateHRRRDiagnosticTimeBox();
     updateHRRRTLETimeBox();
     if (typeof updateLegends === 'function') updateLegends();
     return true;
@@ -2374,8 +2415,6 @@ async function fetchHRRRTLEMetadata({expectedCycle = null, expectedHRRRCycle = n
 
 function hrrrTLEManifestVersion(manifest) {
     return [
-        manifest?.latest_hrrr_diagnostic_cycle_utc || '',
-        manifest?.hrrr_diagnostic_valid_end_utc || '',
         manifest?.latest_cycle_utc || '',
         manifest?.common_valid_end_utc || '',
         manifest?.generated_utc || ''
@@ -2404,10 +2443,7 @@ async function refreshHRRRTLEFromManifest({forceMetadata = false} = {}) {
         const manifest = await fetchHRRRTLEManifest();
         const version = hrrrTLEManifestVersion(manifest);
         if (!forceMetadata && version === hrrrTLELastManifestVersion) return false;
-        await fetchHRRRTLEMetadata({
-            expectedCycle: manifest.latest_cycle_utc,
-            expectedHRRRCycle: manifest.latest_hrrr_diagnostic_cycle_utc
-        });
+        await fetchHRRRTLEMetadata({expectedCycle: manifest.latest_cycle_utc});
         hrrrTLELastManifestVersion = version;
         return true;
     } catch (error) {
@@ -2425,46 +2461,6 @@ function formatHRRRTLEUTC(value) {
     if (!value) return 'Unknown';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : formatUTC(date);
-}
-
-function activeHRRRDiagnosticConfigs() {
-    return HRRR_DIAGNOSTIC_LAYER_CONFIGS.filter(
-        config => activeLayerNames.has(config.label)
-    );
-}
-
-function formatHRRRDiagnosticTimeBox(config, metadata) {
-    if (!config) return '';
-    if (!metadata) {
-        return `
-            <strong>${config.label}</strong><br>
-            <span style="color:#ffeb3b;">Loading latest complete HRRR f01–f12 package...</span>
-        `;
-    }
-
-    return `
-        <strong>${config.label}</strong><br>
-        <span style="color:#4fc3f7;font-weight:bold;">Latest HRRR: ${formatHRRRTLEUTC(metadata.latest_hrrr_diagnostic_cycle_utc)}</span><br>
-        <span style="color:#ffeb3b;">Valid: ${formatHRRRTLEUTC(metadata.hrrr_diagnostic_valid_start_utc)} — ${formatHRRRTLEUTC(metadata.hrrr_diagnostic_valid_end_utc)}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">f${String(metadata.hrrr_diagnostic_fxx_start || 1).padStart(2,'0')}–f${String(metadata.hrrr_diagnostic_fxx_end || 12).padStart(2,'0')} | FFG: ${formatHRRRTLEUTC(metadata.hrrr_diagnostic_ffg_analysis_utc)} (age ${Number(metadata.hrrr_diagnostic_ffg_age_hours).toFixed(1)} h) | ${metadata.neighborhood_km} km neighborhood</span>
-    `;
-}
-
-function updateHRRRDiagnosticTimeBox() {
-    const box = document.getElementById('hrrr-diagnostics-time-box');
-    if (!box) return;
-    const active = activeHRRRDiagnosticConfigs();
-    if (active.length === 0) {
-        box.style.display = 'none';
-        refreshLegendDockSummary();
-        return;
-    }
-    box.innerHTML = formatHRRRDiagnosticTimeBox(
-        active[active.length - 1],
-        hrrrTLEMetadata
-    );
-    box.style.display = 'block';
-    refreshLegendDockSummary();
 }
 
 function activeHRRRTLEConfigs() {
@@ -2552,22 +2548,6 @@ function hrrrTLEDiscreteRows(items, columns = 2) {
 
 function buildHRRRTLELegendHTML(config) {
     const note = 'HRRR time-lagged member frequency / consensus; NOT calibrated probability.';
-    if (config.legendType === 'coverage') {
-        return hrrrTLELegendShell(
-            config.label,
-            'Percent of the 40-km neighborhood containing an FFG exceedance',
-            hrrrTLEDiscreteRows([
-                {label: '1–5%', color: '#e0f7fa'},
-                {label: '5–10%', color: '#c8e6c9'},
-                {label: '10–25%', color: '#fff59d'},
-                {label: '25–50%', color: '#ffb74d'},
-                {label: '50–75%', color: '#f44336'},
-                {label: '75–100%', color: '#9c27b0'}
-            ], 3),
-            'Latest deterministic HRRR, next 12 hours; values <1% are transparent.'
-        );
-    }
-
     if (config.legendType === 'ratio') {
         const bins = [
             ['0.75–1.00', '#ffff00'], ['1.00–1.25', '#ffa500'],
@@ -2990,7 +2970,6 @@ legendDockControl.onAdd = function () {
         'mrms-ffd-24h-time-box',
         'glm-time-box',
         'lightningcast-time-box',
-        'hrrr-diagnostics-time-box',
         'hrrr-tle-time-box',
         'nwm-time-box',
         'sport-time-box',
@@ -3506,9 +3485,6 @@ function updateLegends() {
         .filter(config => activeLayerNames.has(config.name))
         .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
     if (activeLayerNames.has(LIGHTNINGCAST_LAYER_NAME)) addLegendBlock(buildLightningCastLegendHTML());
-    HRRR_DIAGNOSTIC_LAYER_CONFIGS
-        .filter(config => activeLayerNames.has(config.label))
-        .forEach(config => addLegendBlock(buildHRRRTLELegendHTML(config)));
     HRRR_TLE_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.label))
         .forEach(config => addLegendBlock(buildHRRRTLELegendHTML(config)));
@@ -3558,7 +3534,6 @@ map.on('overlayadd', function(eventLayer) {
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
     const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
-    const hrrrDiagnosticsTimeBox = document.getElementById('hrrr-diagnostics-time-box');
     const hrrrTLETimeBox = document.getElementById('hrrr-tle-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
@@ -3622,17 +3597,6 @@ map.on('overlayadd', function(eventLayer) {
             lightningCastTimeBox.style.display = 'block';
         }
         refreshLightningCastFromManifest({forceMetadata: !lightningCastReady});
-    }
-
-    if (HRRR_DIAGNOSTIC_CONFIG_BY_NAME.has(eventLayer.name)) {
-        if (hrrrDiagnosticsTimeBox) {
-            hrrrDiagnosticsTimeBox.innerHTML = formatHRRRDiagnosticTimeBox(
-                HRRR_DIAGNOSTIC_CONFIG_BY_NAME.get(eventLayer.name),
-                hrrrTLEMetadata
-            );
-            hrrrDiagnosticsTimeBox.style.display = 'block';
-        }
-        refreshHRRRTLEFromManifest({forceMetadata: !hrrrTLEReady});
     }
 
     if (HRRR_TLE_CONFIG_BY_NAME.has(eventLayer.name)) {
@@ -3783,7 +3747,6 @@ map.on('overlayremove', function(eventLayer) {
     const mrmsFfd24hTimeBox = document.getElementById('mrms-ffd-24h-time-box');
     const glmTimeBox = document.getElementById('glm-time-box');
     const lightningCastTimeBox = document.getElementById('lightningcast-time-box');
-    const hrrrDiagnosticsTimeBox = document.getElementById('hrrr-diagnostics-time-box');
     const hrrrTLETimeBox = document.getElementById('hrrr-tle-time-box');
     const nwmTimeBox = document.getElementById('nwm-time-box');
     const sportTimeBox = document.getElementById('sport-time-box');
@@ -3814,10 +3777,6 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === LIGHTNINGCAST_LAYER_NAME) {
         if (lightningCastTimeBox) lightningCastTimeBox.style.display = 'none';
-    }
-
-    if (HRRR_DIAGNOSTIC_CONFIG_BY_NAME.has(eventLayer.name)) {
-        window.setTimeout(updateHRRRDiagnosticTimeBox, 0);
     }
 
     if (HRRR_TLE_CONFIG_BY_NAME.has(eventLayer.name)) {
@@ -3865,10 +3824,19 @@ map.on('overlayremove', function(eventLayer) {
 // This registry is the single source of truth for layer order, labels, search,
 // sidebar selection, opacity utilities, and future experimental additions.
 const baseMapRegistry = [
-    {id: 'esri-dark', label: 'Esri Dark Gray', layer: esriDarkBase},
-    {id: 'osm', label: 'OpenStreetMap', layer: osmLayer},
-    {id: 'esri-imagery', label: 'Esri World Imagery (Satellite)', layer: esriWorldImagery},
-    {id: 'esri-topo', label: 'Esri World Topographic', layer: esriWorldTopo}
+    {id: 'esri-dark', label: 'Esri Dark Gray', layer: esriDarkBase, referenceLayer: esriDarkLabels, borderTone: 'white'},
+    {id: 'esri-light', label: 'Esri Light Gray', layer: esriLightBase, referenceLayer: esriLightLabels, borderTone: 'black'},
+    {id: 'osm', label: 'OpenStreetMap', layer: osmLayer, borderTone: 'black'},
+    {id: 'esri-street', label: 'Esri World Street Map', layer: esriWorldStreet, borderTone: 'black'},
+    {id: 'humanitarian-osm', label: 'Humanitarian OpenStreetMap', layer: humanitarianOSM, borderTone: 'black'},
+    {id: 'opentopo', label: 'OpenTopoMap', layer: openTopoMap, borderTone: 'black'},
+    {id: 'esri-topo', label: 'Esri World Topographic', layer: esriWorldTopo, borderTone: 'black'},
+    {id: 'usgs-topo', label: 'USGS Topographic', layer: usgsTopo, borderTone: 'black'},
+    {id: 'usgs-shaded-relief', label: 'USGS Shaded Relief', layer: usgsShadedRelief, borderTone: 'black'},
+    {id: 'esri-imagery', label: 'Esri World Imagery (Satellite)', layer: esriWorldImagery, borderTone: 'white'},
+    {id: 'usgs-imagery', label: 'USGS Imagery', layer: usgsImageryOnly, borderTone: 'white'},
+    {id: 'usgs-imagery-topo', label: 'USGS Imagery + Topo', layer: usgsImageryTopo, borderTone: 'white'},
+    {id: 'none', label: 'No Basemap', layer: blankBase, borderTone: 'none'}
 ];
 
 function enforceExclusiveGLMSelection(activeEntry) {
@@ -3966,17 +3934,6 @@ const dashboardSections = [
             {id: 'rap-diff-adv', label: '700-400mb Diff Vorticity Advection', layer: diffAdvLayer, kind: 'raster'},
             {id: 'rap-div250', label: '250mb Divergence', layer: div250Layer, kind: 'raster'}
         ]
-    },
-    {
-        id: 'hrrr-diagnostics',
-        title: 'HRRR Flash Flood Diagnostics - Experimental',
-        layers: HRRR_DIAGNOSTIC_LAYER_CONFIGS.map(config => ({
-            id: config.id,
-            label: config.label,
-            layer: config.layer,
-            kind: 'raster',
-            keywords: config.keywords
-        }))
     },
     {
         id: 'hrrr-tle',
