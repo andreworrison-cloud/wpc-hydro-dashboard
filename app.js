@@ -426,6 +426,12 @@ const usgsImageryTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest
     attribution: 'USGS The National Map — Orthoimagery and US Topo'
 });
 
+// WPC Black Canvas — a true near-black background with no external tile
+// dependency. State boundaries remain available through the dashboard's own
+// reference overlay so bright meteorological/hydrological fields retain maximum
+// contrast without sacrificing basic geographic orientation.
+const blackCanvasBase = L.layerGroup();
+
 // No external basemap. Useful when a meteorological/hydrological raster should
 // stand on its own with no underlying cartographic tiles.
 const blankBase = L.layerGroup();
@@ -480,6 +486,10 @@ map.on('baselayerchange', function(e) {
 
     const selectedBase = baseMapRegistry.find(base => base.layer === e.layer || base.label === e.name);
     if (!selectedBase) return;
+
+    // Canvas-only basemaps can set an explicit map background without fetching
+    // external tiles. Every tiled basemap resets this to the normal Leaflet value.
+    map.getContainer().style.backgroundColor = selectedBase.canvasColor || '';
 
     if (selectedBase.referenceLayer && !map.hasLayer(selectedBase.referenceLayer)) {
         selectedBase.referenceLayer.addTo(map);
@@ -3943,6 +3953,7 @@ map.on('overlayremove', function(eventLayer) {
 // sidebar selection, opacity utilities, and future experimental additions.
 const baseMapRegistry = [
     {id: 'esri-dark', label: 'Esri Dark Gray', layer: esriDarkBase, referenceLayer: esriDarkLabels, borderTone: 'white'},
+    {id: 'black-canvas', label: 'Black Canvas', layer: blackCanvasBase, borderTone: 'white', canvasColor: '#050608'},
     {id: 'esri-light', label: 'Esri Light Gray', layer: esriLightBase, referenceLayer: esriLightLabels, borderTone: 'black'},
     {id: 'osm', label: 'OpenStreetMap', layer: osmLayer, borderTone: 'black'},
     {id: 'esri-street', label: 'Esri World Street Map', layer: esriWorldStreet, borderTone: 'black'},
