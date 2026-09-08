@@ -593,11 +593,13 @@ const wpcUrbanAreasLayer = createCensusViewportGeoJSONLayer(88, {
     pane: 'mapReferenceBase',
     minZoom: 5,
     style: {
-        color: 'rgba(115, 150, 175, 0.28)',
-        weight: 0.35,
-        opacity: 0.45,
-        fillColor: '#6c8ca4',
-        fillOpacity: 0.16
+        // Stronger cool-blue urban mask for reliable visibility on WPC Dark Reference.
+        // Keep below operational raster/vector layers so radar and warning colors dominate.
+        color: 'rgba(130, 205, 230, 0.78)',
+        weight: 0.65,
+        opacity: 0.85,
+        fillColor: '#4f9db8',
+        fillOpacity: 0.30
     }
 });
 
