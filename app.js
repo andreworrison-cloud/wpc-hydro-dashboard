@@ -887,13 +887,11 @@ map.on('baselayerchange', function(e) {
 });
 
 // --- RADAR LOOP TIME CONTROL ---
-// IEM and direct NOAA MRMS use intentionally separate speed controls because
-// their rendering paths are fundamentally different. IEM is a tiled WMS loop
-// and uses the conventional Leaflet.TimeDimension FPS slider. MRMS RALA swaps
-// a single near-native full-CONUS image per displayed frame, so its control is
-// an explicit scan-speed selector that changes how many native ~2-minute source
-// frames are advanced per sustainable visible update. This prevents the UI from
-// claiming 30-60 full-image swaps/sec that a browser cannot actually render.
+// The two radar feeds keep separate playback controls. IEM remains on the
+// conventional Leaflet.TimeDimension FPS control because the tiled WMS responds
+// correctly to it. Direct NOAA MRMS RALA uses an Operational Product Viewer-
+// style frame-delay control: every native source frame is preserved and shown in
+// chronological order, while the delay between frames changes from Slow to Fast.
 map.timeDimension = L.timeDimension({
     period: "PT2M"
 });
@@ -901,22 +899,20 @@ map.timeDimension = L.timeDimension({
 const IEM_RADAR_DEFAULT_FPS = 5;
 const IEM_RADAR_MIN_FPS = 1;
 const IEM_RADAR_MAX_FPS = 10;
-const MRMS_RALA_VISIBLE_INTERVAL_MS = 250;
-const MRMS_RALA_DEFAULT_SPEED_PROFILE = 'very-fast';
-const MRMS_RALA_SPEED_PROFILES = Object.freeze({
-    normal:      {label: 'Normal',    frameStep: 1},
-    fast:        {label: 'Fast',      frameStep: 2},
-    'very-fast': {label: 'Very Fast', frameStep: 4},
-    rapid:       {label: 'Rapid',     frameStep: 8},
-    maximum:     {label: 'Maximum',   frameStep: 15}
-});
+const MRMS_RALA_DEFAULT_FRAME_STEP_MS = 200;
+const MRMS_RALA_MIN_FRAME_STEP_MS = 100;
+const MRMS_RALA_MAX_FRAME_STEP_MS = 1000;
+const MRMS_RALA_FRAME_STEP_INCREMENT_MS = 50;
 
 let dashboardRadarSpeedMode = 'mrms';
 let iemRadarRequestedFPS = IEM_RADAR_DEFAULT_FPS;
-let mrmsRalaSpeedProfileId = MRMS_RALA_DEFAULT_SPEED_PROFILE;
+let mrmsRalaFrameStepMs = MRMS_RALA_DEFAULT_FRAME_STEP_MS;
 let mrmsRalaAnimationTimer = null;
+let mrmsRalaAnimationPlaying = false;
 let mrmsRalaSpeedControl = null;
-let mrmsRalaSpeedSelect = null;
+let mrmsRalaSpeedSlider = null;
+let mrmsRalaSpeedValue = null;
+let mrmsRalaTimelineEchoTime = null;
 
 const dashboardTimeControl = L.control.timeDimension({
     position: 'bottomleft',
@@ -966,7 +962,7 @@ function syncMRMSRALAPlayButton() {
     if (dashboardRadarSpeedMode !== 'mrms') return;
     const button = dashboardTimeControl?._buttonPlayPause;
     if (!button) return;
-    if (mrmsRalaAnimationTimer) {
+    if (mrmsRalaAnimationPlaying) {
         L.DomUtil.addClass(button, 'pause');
         L.DomUtil.removeClass(button, 'play');
         button.title = 'Pause MRMS RALA loop';
@@ -977,15 +973,24 @@ function syncMRMSRALAPlayButton() {
     }
 }
 
+function syncMRMSRALAFrameStepControl() {
+    if (mrmsRalaSpeedSlider) {
+        const speedPosition = MRMS_RALA_MAX_FRAME_STEP_MS - mrmsRalaFrameStepMs;
+        mrmsRalaSpeedSlider.value = String(speedPosition);
+    }
+    if (mrmsRalaSpeedValue) mrmsRalaSpeedValue.textContent = `${mrmsRalaFrameStepMs} ms`;
+}
+
 function stopMRMSRALAAnimation() {
+    mrmsRalaAnimationPlaying = false;
     if (mrmsRalaAnimationTimer) {
-        window.clearInterval(mrmsRalaAnimationTimer);
+        window.clearTimeout(mrmsRalaAnimationTimer);
         mrmsRalaAnimationTimer = null;
     }
     syncMRMSRALAPlayButton();
 }
 
-function tickMRMSRALAAnimation() {
+async function advanceMRMSRALAOneFrame() {
     if (
         dashboardRadarSpeedMode !== 'mrms' ||
         !map.hasLayer(mrmsRalaLayer) ||
@@ -994,46 +999,67 @@ function tickMRMSRALAAnimation() {
         !mrmsRalaFrames.length
     ) {
         stopMRMSRALAAnimation();
-        return;
+        return false;
     }
 
-    const profile = MRMS_RALA_SPEED_PROFILES[mrmsRalaSpeedProfileId]
-        || MRMS_RALA_SPEED_PROFILES[MRMS_RALA_DEFAULT_SPEED_PROFILE];
     const times = map.timeDimension.getAvailableTimes();
-    if (!times.length) return;
-
+    if (!times.length) return false;
     let currentIndex = map.timeDimension.getCurrentTimeIndex();
     if (!Number.isInteger(currentIndex) || currentIndex < 0) currentIndex = times.length - 1;
-    const candidateIndex = currentIndex + profile.frameStep;
-    // At high scan speeds, wrap cleanly to the first frame instead of carrying
-    // a modulo remainder. That preserves chronological forward motion and makes
-    // the profile's frameStep translate into the intended fast full-loop traversal.
-    const nextIndex = candidateIndex >= times.length ? 0 : candidateIndex;
-    map.timeDimension.setCurrentTimeIndex(nextIndex);
+    const nextIndex = (currentIndex + 1) % times.length;
+    const nextTime = times[nextIndex];
 
-    // Leaflet.TimeDimension's own player is intentionally stopped in MRMS mode;
-    // keep its shared play button visually synchronized with this MRMS timer.
-    window.requestAnimationFrame(syncMRMSRALAPlayButton);
+    // Display exactly the next native frame. No frame skipping, interpolation,
+    // temporal averaging, or synthetic frames are allowed in the MRMS loop.
+    const displayed = await showMRMSRALAFrame(nextTime);
+    if (!displayed) return false;
+
+    // Keep the shared time label/controls synchronized without asking the
+    // timeload listener to render the same frame a second time.
+    mrmsRalaTimelineEchoTime = nextTime;
+    map.timeDimension.setCurrentTimeIndex(nextIndex);
+    return true;
+}
+
+async function runMRMSRALAAnimationTick() {
+    if (!mrmsRalaAnimationPlaying) return;
+    const started = performance.now();
+    await advanceMRMSRALAOneFrame();
+    if (!mrmsRalaAnimationPlaying) return;
+    const elapsed = performance.now() - started;
+    const remaining = Math.max(0, mrmsRalaFrameStepMs - elapsed);
+    mrmsRalaAnimationTimer = window.setTimeout(runMRMSRALAAnimationTick, remaining);
 }
 
 function startMRMSRALAAnimation() {
-    if (dashboardRadarSpeedMode !== 'mrms' || mrmsRalaAnimationTimer) return;
+    if (dashboardRadarSpeedMode !== 'mrms' || mrmsRalaAnimationPlaying) return;
     const player = dashboardTimeControl?._player;
     if (player?.isPlaying()) player.stop();
-    mrmsRalaAnimationTimer = window.setInterval(tickMRMSRALAAnimation, MRMS_RALA_VISIBLE_INTERVAL_MS);
+    mrmsRalaAnimationPlaying = true;
+    mrmsRalaAnimationTimer = window.setTimeout(runMRMSRALAAnimationTick, mrmsRalaFrameStepMs);
     syncMRMSRALAPlayButton();
 }
 
-function setMRMSRALASpeedProfile(profileId) {
-    if (!MRMS_RALA_SPEED_PROFILES[profileId]) return false;
-    mrmsRalaSpeedProfileId = profileId;
-    if (mrmsRalaSpeedSelect && mrmsRalaSpeedSelect.value !== profileId) {
-        mrmsRalaSpeedSelect.value = profileId;
+function setMRMSRALAFrameStep(milliseconds) {
+    const numeric = Number(milliseconds);
+    if (!Number.isFinite(numeric)) return false;
+    const clamped = Math.min(
+        MRMS_RALA_MAX_FRAME_STEP_MS,
+        Math.max(MRMS_RALA_MIN_FRAME_STEP_MS, numeric)
+    );
+    mrmsRalaFrameStepMs = Math.round(clamped / MRMS_RALA_FRAME_STEP_INCREMENT_MS)
+        * MRMS_RALA_FRAME_STEP_INCREMENT_MS;
+    syncMRMSRALAFrameStepControl();
+
+    // Apply a changed viewer speed promptly without altering the frame sequence.
+    if (mrmsRalaAnimationPlaying) {
+        if (mrmsRalaAnimationTimer) window.clearTimeout(mrmsRalaAnimationTimer);
+        mrmsRalaAnimationTimer = window.setTimeout(runMRMSRALAAnimationTick, mrmsRalaFrameStepMs);
     }
     return true;
 }
 
-function createMRMSRALASpeedControl() {
+function createMRMSRALAFrameStepControl() {
     const container = dashboardTimeControl?._container;
     if (!container || mrmsRalaSpeedControl) return;
 
@@ -1042,50 +1068,63 @@ function createMRMSRALASpeedControl() {
         'leaflet-control-timecontrol mrms-rala-speed-control',
         container
     );
-    control.title = 'MRMS RALA loop scan speed';
+    control.title = 'MRMS RALA loop playback speed';
     control.style.display = 'none';
     control.style.padding = '0 7px';
     control.style.whiteSpace = 'nowrap';
-    control.style.minWidth = '150px';
+    control.style.minWidth = '230px';
 
-    const label = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
-    label.textContent = 'MRMS speed ';
-    label.style.fontSize = '11px';
-    label.style.fontWeight = '600';
+    const slow = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
+    slow.textContent = 'Slow';
+    slow.style.fontSize = '11px';
+    slow.style.fontWeight = '600';
 
-    const select = L.DomUtil.create('select', 'mrms-rala-speed-select', control);
-    select.setAttribute('aria-label', 'MRMS RALA loop speed');
-    select.style.height = '22px';
-    select.style.margin = '2px 0 2px 4px';
-    select.style.fontSize = '11px';
-    select.style.verticalAlign = 'middle';
+    const slider = L.DomUtil.create('input', 'mrms-rala-speed-slider', control);
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = String(MRMS_RALA_MAX_FRAME_STEP_MS - MRMS_RALA_MIN_FRAME_STEP_MS);
+    slider.step = String(MRMS_RALA_FRAME_STEP_INCREMENT_MS);
+    slider.setAttribute('aria-label', 'MRMS RALA playback speed from slow to fast');
+    slider.style.width = '105px';
+    slider.style.margin = '0 5px';
+    slider.style.verticalAlign = 'middle';
 
-    Object.entries(MRMS_RALA_SPEED_PROFILES).forEach(([id, profile]) => {
-        const option = document.createElement('option');
-        option.value = id;
-        option.textContent = profile.label;
-        select.append(option);
+    const fast = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
+    fast.textContent = 'Fast';
+    fast.style.fontSize = '11px';
+    fast.style.fontWeight = '600';
+
+    const value = L.DomUtil.create('span', 'mrms-rala-speed-value', control);
+    value.style.display = 'inline-block';
+    value.style.minWidth = '50px';
+    value.style.marginLeft = '6px';
+    value.style.fontSize = '10px';
+    value.style.opacity = '0.85';
+
+    slider.addEventListener('input', event => {
+        const speedPosition = Number(event.target.value);
+        setMRMSRALAFrameStep(MRMS_RALA_MAX_FRAME_STEP_MS - speedPosition);
     });
-    select.value = mrmsRalaSpeedProfileId;
-    select.addEventListener('change', event => setMRMSRALASpeedProfile(event.target.value));
 
     L.DomEvent.disableClickPropagation(control);
     L.DomEvent.disableScrollPropagation(control);
     mrmsRalaSpeedControl = control;
-    mrmsRalaSpeedSelect = select;
+    mrmsRalaSpeedSlider = slider;
+    mrmsRalaSpeedValue = value;
+    syncMRMSRALAFrameStepControl();
     syncRadarSpeedControlVisibility();
 }
 
-createMRMSRALASpeedControl();
+createMRMSRALAFrameStepControl();
 
-// IEM keeps the stock FPS slider exactly because that renderer responds well to
-// conventional FPS changes. MRMS has its own discrete scan-speed control above.
+// IEM keeps the stock FPS slider exactly because its tiled WMS renderer responds
+// correctly to conventional FPS changes. MRMS uses the viewer-style delay slider.
 dashboardTimeControl._sliderSpeedValueChanged = function(newValue) {
     if (dashboardRadarSpeedMode === 'iem') setIEMRadarAnimationFPS(newValue);
 };
 
 // Manual step buttons always move exactly one native timeline frame and pause
-// the MRMS custom animation so frame-by-frame interrogation remains precise.
+// the MRMS animation for precise frame-by-frame interrogation.
 dashboardTimeControl._buttonBackwardClicked = function() {
     if (dashboardRadarSpeedMode === 'mrms') stopMRMSRALAAnimation();
     this._timeDimension.previousTime(1);
@@ -1097,7 +1136,7 @@ dashboardTimeControl._buttonForwardClicked = function() {
 
 dashboardTimeControl._buttonPlayClicked = function() {
     if (dashboardRadarSpeedMode === 'mrms') {
-        if (mrmsRalaAnimationTimer) stopMRMSRALAAnimation();
+        if (mrmsRalaAnimationPlaying) stopMRMSRALAAnimation();
         else startMRMSRALAAnimation();
         return;
     }
@@ -1106,8 +1145,7 @@ dashboardTimeControl._buttonPlayClicked = function() {
 };
 
 // Leaflet.TimeDimension binds button handlers when addTo(map) creates the DOM.
-// The feed-aware handlers above therefore need to replace those original bound
-// callbacks explicitly; simply assigning private methods after addTo() is not enough.
+// Rebind those handlers explicitly so each feed gets its intended controls.
 function rebindDashboardTimeControlButton(button, originalHandler, replacementHandler) {
     if (!button || typeof originalHandler !== 'function' || typeof replacementHandler !== 'function') return;
     L.DomEvent.off(button, 'click', originalHandler, dashboardTimeControl);
@@ -1129,8 +1167,6 @@ rebindDashboardTimeControlButton(
     dashboardTimeControl._buttonPlayClicked
 );
 
-// The stock control re-syncs itself after timeline events. Reassert only the
-// active feed's presentation after those updates.
 map.timeDimension.on('timeload', function() {
     if (dashboardRadarSpeedMode === 'iem') syncIEMRadarSpeedSlider();
     else window.requestAnimationFrame(syncMRMSRALAPlayButton);
@@ -1202,17 +1238,42 @@ const mrmsRalaLayer = L.imageOverlay(
     mrmsRalaPlaceholderBounds,
     {zIndex: 11, opacity: 0, interactive: false, className: 'mrms-rala-raster'}
 );
+const mrmsRalaBufferLayer = L.imageOverlay(
+    MRMS_RALA_TRANSPARENT_PLACEHOLDER,
+    mrmsRalaPlaceholderBounds,
+    {zIndex: 11, opacity: 0, interactive: false, className: 'mrms-rala-raster'}
+);
+
+// Double-buffer the direct NOAA loop. The next full-resolution PNG is loaded
+// into the hidden overlay first; only after its browser load event completes do
+// we swap visibility. This mirrors the operational-viewer idea of changing the
+// playback delay without dropping native data frames, and avoids asking the
+// visible <img> element to download/decode a new 7000-pixel raster at the exact
+// moment it must be painted.
+let mrmsRalaVisibleLayer = mrmsRalaLayer;
+let mrmsRalaHiddenLayer = mrmsRalaBufferLayer;
 
 // The source raster is a native-resolution categorical display of reflectivity.
 // Prevent the browser from adding another bilinear-looking smoothing pass when
 // Leaflet scales the full-domain image during map zooms. This keeps the native
 // ~1-km MRMS structure visually crisp without changing any dBZ values.
-function applyMRMSRALABrowserRendering() {
-    const image = mrmsRalaLayer.getElement?.();
+function applyMRMSRALABrowserRendering(layer = mrmsRalaVisibleLayer) {
+    const image = layer?.getElement?.();
     if (!image) return;
     image.style.setProperty('image-rendering', 'pixelated', 'important');
 }
-mrmsRalaLayer.on('add load', applyMRMSRALABrowserRendering);
+[mrmsRalaLayer, mrmsRalaBufferLayer].forEach(layer => {
+    layer.on('add load', () => applyMRMSRALABrowserRendering(layer));
+});
+
+// The primary overlay remains the dashboard registry anchor. The hidden buffer
+// follows it on/off the map so the backup machinery cannot leak when MRMS is off.
+mrmsRalaLayer.on('add', () => {
+    if (!map.hasLayer(mrmsRalaBufferLayer)) mrmsRalaBufferLayer.addTo(map);
+});
+mrmsRalaLayer.on('remove', () => {
+    if (map.hasLayer(mrmsRalaBufferLayer)) map.removeLayer(mrmsRalaBufferLayer);
+});
 
 let mrmsRalaMetadata = null;
 let mrmsRalaReady = false;
@@ -1223,6 +1284,7 @@ let mrmsRalaFrames = [];
 let mrmsRalaCurrentFrame = null;
 let mrmsRalaFrameRequestSerial = 0;
 const mrmsRalaPreloadCache = new Map();
+const mrmsRalaLayerLoadState = new Map();
 
 function readMRMSRALAStoredOpacity() {
     try {
@@ -1261,9 +1323,9 @@ const mrmsRalaOpacityTarget = {
         } catch (error) {
             console.debug('Unable to persist MRMS RALA opacity preference:', error);
         }
-        mrmsRalaLayer.setOpacity(
-            map.hasLayer(mrmsRalaLayer) && mrmsRalaReady && mrmsRalaFresh ? opacity : 0
-        );
+        const visibleOpacity = map.hasLayer(mrmsRalaLayer) && mrmsRalaReady && mrmsRalaFresh ? opacity : 0;
+        mrmsRalaVisibleLayer.setOpacity(visibleOpacity);
+        mrmsRalaHiddenLayer.setOpacity(0);
         syncMRMSRALAOpacityWidgets(opacity);
         return this;
     }
@@ -2293,7 +2355,15 @@ function preloadMRMSRALAFrame(frame) {
     const promise = new Promise((resolve, reject) => {
         const image = new Image();
         image.decoding = 'async';
-        image.onload = () => resolve(url);
+        image.onload = async () => {
+            try {
+                if (typeof image.decode === 'function') await image.decode();
+            } catch (_) {
+                // onload already confirms the resource is usable; decode() may
+                // reject for browser-specific reasons without invalidating it.
+            }
+            resolve(url);
+        };
         image.onerror = () => reject(new Error(`MRMS RALA frame failed to preload: ${frame.valid_time_utc}`));
         image.src = url;
     }).catch(error => {
@@ -2321,24 +2391,109 @@ function nearestMRMSRALAFrame(timeMillis) {
     return best;
 }
 
+function loadMRMSRALAFrameIntoLayer(layer, frame) {
+    if (!layer || !frame) return Promise.reject(new Error('MRMS RALA buffer load is missing a layer or frame'));
+    const url = mrmsRalaFrameUrl(frame);
+    const prior = mrmsRalaLayerLoadState.get(layer);
+    if (prior?.frame?.valid_time_utc === frame.valid_time_utc) {
+        if (prior.loaded) return Promise.resolve({layer, frame, url});
+        if (prior.promise) return prior.promise;
+    }
+    if (typeof prior?.cancel === 'function') prior.cancel();
+
+    const token = Symbol(frame.valid_time_utc);
+    let cancelLoad = null;
+    const promise = new Promise((resolve, reject) => {
+        let timeoutId = null;
+        let settled = false;
+        const cleanup = () => {
+            if (timeoutId) window.clearTimeout(timeoutId);
+            layer.off('load', onLoad);
+            layer.off('error', onError);
+        };
+        const finishReject = error => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+        const onLoad = () => {
+            const state = mrmsRalaLayerLoadState.get(layer);
+            if (state?.token !== token || settled) return;
+            settled = true;
+            cleanup();
+            state.loaded = true;
+            state.promise = null;
+            state.cancel = null;
+            applyMRMSRALABrowserRendering(layer);
+            resolve({layer, frame, url});
+        };
+        const onError = () => {
+            const state = mrmsRalaLayerLoadState.get(layer);
+            if (state?.token !== token) return;
+            finishReject(new Error(`MRMS RALA frame failed to load into display buffer: ${frame.valid_time_utc}`));
+        };
+
+        cancelLoad = () => finishReject(new Error(`MRMS RALA buffer load superseded: ${frame.valid_time_utc}`));
+        layer.on('load', onLoad);
+        layer.on('error', onError);
+        timeoutId = window.setTimeout(onError, 15000);
+        layer.setUrl(url);
+    });
+
+    mrmsRalaLayerLoadState.set(layer, {
+        token, frame, url, loaded: false, promise,
+        cancel: () => cancelLoad?.()
+    });
+    return promise;
+}
+
+function nextMRMSRALAFrameAfter(frame) {
+    if (!frame || !mrmsRalaFrames.length) return null;
+    const index = mrmsRalaFrames.findIndex(item => item.valid_time_utc === frame.valid_time_utc);
+    if (index < 0) return null;
+    return mrmsRalaFrames[(index + 1) % mrmsRalaFrames.length];
+}
+
+function primeNextMRMSRALABuffer(frame) {
+    const nextFrame = nextMRMSRALAFrameAfter(frame);
+    if (!nextFrame || !mrmsRalaHiddenLayer) return;
+    loadMRMSRALAFrameIntoLayer(mrmsRalaHiddenLayer, nextFrame).catch(error => {
+        console.debug('MRMS RALA next-frame buffer preload skipped:', error);
+    });
+}
+
 async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
     if (!mrmsRalaReady || !mrmsRalaFresh) return false;
     const frame = nearestMRMSRALAFrame(timeMillis);
     if (!frame) return false;
     if (!force && mrmsRalaCurrentFrame?.valid_time_utc === frame.valid_time_utc) {
         updateMRMSRALATimeBox();
+        primeNextMRMSRALABuffer(frame);
         return true;
     }
 
     const requestSerial = ++mrmsRalaFrameRequestSerial;
+    const targetLayer = mrmsRalaHiddenLayer;
     try {
-        const url = await preloadMRMSRALAFrame(frame);
-        if (requestSerial !== mrmsRalaFrameRequestSerial) return false;
-        mrmsRalaLayer.setUrl(url);
+        await loadMRMSRALAFrameIntoLayer(targetLayer, frame);
+        if (requestSerial !== mrmsRalaFrameRequestSerial || targetLayer !== mrmsRalaHiddenLayer) return false;
+
+        // Swap already-loaded image buffers atomically. Every source frame is
+        // displayed; speed only controls how long we wait before requesting the
+        // next sequential frame.
+        const opacity = Number(mrmsRalaOpacityTarget.options.opacity);
+        targetLayer.setOpacity(opacity);
+        mrmsRalaVisibleLayer.setOpacity(0);
+        const previousVisible = mrmsRalaVisibleLayer;
+        mrmsRalaVisibleLayer = targetLayer;
+        mrmsRalaHiddenLayer = previousVisible;
+        mrmsRalaHiddenLayer.setOpacity(0);
+
         mrmsRalaCurrentFrame = frame;
-        mrmsRalaLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
-        applyMRMSRALABrowserRendering();
+        applyMRMSRALABrowserRendering(mrmsRalaVisibleLayer);
         updateMRMSRALATimeBox();
+        primeNextMRMSRALABuffer(frame);
         return true;
     } catch (error) {
         console.warn('MRMS RALA loop frame load failed:', error);
@@ -2347,8 +2502,11 @@ async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
 }
 
 function warmMRMSRALALoopCache() {
-    const frames = [...mrmsRalaFrames].reverse();
-    const workers = Math.min(6, frames.length);
+    // Warm the HTTP cache in chronological playback order. Keep concurrency
+    // modest so background prefetching does not compete with the next-frame
+    // display buffer or make the initial dashboard render sluggish.
+    const frames = [...mrmsRalaFrames];
+    const workers = Math.min(3, frames.length);
     let nextIndex = 0;
     const worker = async () => {
         while (nextIndex < frames.length) {
@@ -2370,12 +2528,11 @@ function activateMRMSRALATimeline({jumpToLatest = true, applyDefaultSpeed = fals
     const player = dashboardTimeControl?._player;
     if (player?.isPlaying()) player.stop();
 
-    // Each feed owns its own speed state. The MRMS profile is initialized to
-    // Very Fast, then preserved independently when forecasters switch feeds.
-    if (applyDefaultSpeed && !MRMS_RALA_SPEED_PROFILES[mrmsRalaSpeedProfileId]) {
-        mrmsRalaSpeedProfileId = MRMS_RALA_DEFAULT_SPEED_PROFILE;
-    }
-    setMRMSRALASpeedProfile(mrmsRalaSpeedProfileId);
+    // Each feed owns its own speed state. MRMS defaults to the same 200-ms
+    // frame-step concept exposed by the NOAA Operational Product Viewer, then
+    // preserves the forecaster's selected delay when switching feeds.
+    if (applyDefaultSpeed) mrmsRalaFrameStepMs = MRMS_RALA_DEFAULT_FRAME_STEP_MS;
+    syncMRMSRALAFrameStepControl();
     syncRadarSpeedControlVisibility();
 
     const times = mrmsRalaFrames.map(frame => frame.timeMillis);
@@ -2393,9 +2550,11 @@ function applyMRMSRALAFreshnessState() {
         mrmsRalaReady && Number.isFinite(age) && age <= MRMS_RALA_FRESHNESS_LIMIT_MINUTES
     );
     if (!mrmsRalaFresh) {
-        mrmsRalaLayer.setOpacity(0);
+        mrmsRalaVisibleLayer.setOpacity(0);
+        mrmsRalaHiddenLayer.setOpacity(0);
     } else if (map.hasLayer(mrmsRalaLayer)) {
-        mrmsRalaLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
+        mrmsRalaVisibleLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
+        mrmsRalaHiddenLayer.setOpacity(0);
     }
     updateMRMSRALATimeBox();
     return mrmsRalaFresh;
@@ -2517,6 +2676,7 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
             mrmsRalaMetadata = validated.manifest;
             mrmsRalaFrames = validated.frames;
             mrmsRalaLayer.setBounds(validated.bounds);
+            mrmsRalaBufferLayer.setBounds(validated.bounds);
             mrmsRalaReady = true;
             mrmsRalaLastManifestVersion = version;
             applyMRMSRALAFreshnessState();
@@ -2537,7 +2697,10 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
         return false;
     } catch (error) {
         console.error('MRMS RALA loop manifest check failed:', error);
-        if (!mrmsRalaReady) mrmsRalaLayer.setOpacity(0);
+        if (!mrmsRalaReady) {
+            mrmsRalaVisibleLayer.setOpacity(0);
+            mrmsRalaHiddenLayer.setOpacity(0);
+        }
         updateMRMSRALATimeBox();
         return false;
     } finally {
@@ -4174,6 +4337,11 @@ if (typeof legendDockCompactMedia.addEventListener === 'function') {
 map.timeDimension.on('timeload', function(event) {
     const currentTime = Number(event?.time ?? map.timeDimension.getCurrentTime());
     if (map.hasLayer(mrmsRalaLayer)) {
+        if (mrmsRalaTimelineEchoTime !== null && currentTime === mrmsRalaTimelineEchoTime) {
+            mrmsRalaTimelineEchoTime = null;
+            return;
+        }
+        mrmsRalaTimelineEchoTime = null;
         showMRMSRALAFrame(currentTime);
         return;
     }
@@ -4749,7 +4917,7 @@ map.on('overlayadd', function(eventLayer) {
         updateMRMSRALATimeBox();
         applyMRMSRALAFreshnessState();
         if (mrmsRalaReady && mrmsRalaFresh) {
-            activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: true});
+            activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: false});
             showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
         }
         refreshMRMSRALAFromManifest({forceMetadata: !mrmsRalaReady});
