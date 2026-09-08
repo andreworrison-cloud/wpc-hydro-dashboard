@@ -13,6 +13,15 @@ import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
+import sys
+
+# When a script is launched as ``python tools/<script>.py``, Python places the
+# tools directory (not the repository root) on sys.path.  Add the repository
+# root explicitly so the shared MRMS backend module can be imported reliably
+# both in GitHub Actions and during local diagnostic runs.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
 from PIL import Image
