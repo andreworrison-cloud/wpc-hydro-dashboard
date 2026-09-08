@@ -43,7 +43,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libeccodes0
           python -m pip install --upgrade pip
-          python -m pip install numpy requests pillow pyproj rasterio eccodes
+          python -m pip install numpy requests pillow pyproj rasterio eccodes matplotlib basemap
           python -m eccodes selfcheck
 
       - name: Run offline renderer self-test
@@ -75,11 +75,26 @@ jobs:
           fi
           python tools/validate_mrms_rala.py diagnostics/mrms_rala ${extra}
 
+      - name: Compare NCEP and NODD exact-frame payloads
+        if: ${{ inputs.source_mode == 'auto' }}
+        run: |
+          python tools/compare_rala_official_sources.py \
+            --output diagnostics/mrms_rala/mrms_rala_official_source_parity.json \
+            --max-common-age-minutes 20
+
+      - name: Build geographic placement preview
+        run: |
+          python tools/build_rala_geographic_preview.py diagnostics/mrms_rala
+
+      - name: Build weak-echo threshold previews
+        run: |
+          python tools/build_rala_threshold_previews.py diagnostics/mrms_rala
+
       - name: Upload diagnostic artifact
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: mrms-rala-backend-diagnostic
+          name: mrms-rala-backend-final-validation
           path: |
             diagnostics/mrms_rala/
             diagnostics/mrms_rala_self_test/
