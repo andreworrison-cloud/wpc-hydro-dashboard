@@ -553,7 +553,7 @@ for fragment in required_black_canvas_fragments:
 required_wpc_dark_reference_fragments = [
     "const WPC_DARK_COUNTRIES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson';",
     "const WPC_DARK_PLACES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_populated_places_simple.geojson';",
-    "const TIGER_CURRENT_WMS_URL = 'https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer';",
+    "const TIGER_CURRENT_MAPSERVER_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer';",
     "const TIGER_TRANSPORTATION_TILES_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/tile/{z}/{y}/{x}';",
     "const wpcDarkReferenceBase = L.layerGroup([wpcDarkCountryPolygons]);",
     "{id: 'wpc-dark-reference', label: 'WPC Dark Reference'",
@@ -572,10 +572,26 @@ required_wpc_dark_reference_fragments = [
     "refId: 'international-boundaries'",
     "map-reference-overlay-controls",
     "setMapReferenceOverlayVisible",
+    "function censusQueryUrl(layerId, bounds, maxAllowableOffset",
+    "function createCensusViewportGeoJSONLayer(layerId, options = {})",
+    "const wpcCountyBoundariesLayer = createCensusViewportGeoJSONLayer(82",
+    "const wpcUrbanAreasLayer = createCensusViewportGeoJSONLayer(88",
+    "function loadWPCStateTerritoryLabels()",
+    "loadWPCStateTerritoryLabels();",
 ]
 for fragment in required_wpc_dark_reference_fragments:
     if fragment not in app:
         errors.append(f"Missing WPC Dark Reference contract: {fragment}")
+
+
+# The broken TIGERweb WMS implementation must not be reintroduced. The three
+# reference controls use the official TIGERweb REST/GeoJSON API instead.
+for forbidden in [
+    "const TIGER_CURRENT_WMS_URL =",
+    "L.tileLayer.wms(TIGER_CURRENT_WMS_URL",
+]:
+    if forbidden in app:
+        errors.append(f"Legacy broken TIGERweb WMS reference path is still present: {forbidden}")
 
 # WPC Dark Reference must be the first basemap entry so startup and Restore
 # Defaults resolve to it without special-case menu logic.
