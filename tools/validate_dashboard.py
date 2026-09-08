@@ -764,8 +764,15 @@ if "mrms-rala-loop-v2" not in index:
     )
 
 
-if "mrms-rala-loop-v2-6-speed-tuning" not in index:
-    errors.append("MRMS RALA v2.6 speed-tuning cache-busting token is missing from index.html.")
+if "mrms-rala-loop-v2-7-adaptive-speed" not in index:
+    errors.append("MRMS RALA v2.7 adaptive-speed cache-busting token is missing from index.html.")
+
+if "MRMS_RALA_MAX_FULL_FRAME_FPS = 30" not in app:
+    errors.append("MRMS RALA adaptive high-speed render threshold is missing from app.js.")
+if "animationSteps = Math.ceil(requestedFPS / MRMS_RALA_MAX_FULL_FRAME_FPS)" not in app:
+    errors.append("MRMS RALA adaptive frame-stepping logic is missing from app.js.")
+if "dashboardRadarSpeedMode = 'iem'" not in app or "dashboardRadarSpeedMode = 'mrms'" not in app:
+    errors.append("Per-feed radar speed-mode switching is incomplete in app.js.")
 
 if errors:
     print("Dashboard validation FAILED:")
