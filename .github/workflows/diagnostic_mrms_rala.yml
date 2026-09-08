@@ -1,0 +1,87 @@
+name: Diagnostic MRMS RALA Backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_mode:
+        description: 'Official source discovery mode'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - ncep
+          - nodd
+      allow_stale:
+        description: 'Diagnostic only: permit a stale source so rendering can still be tested'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  mrms-rala-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install GRIB and rendering dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+          python -m pip install --upgrade pip
+          python -m pip install numpy requests pillow pyproj rasterio eccodes
+          python -m eccodes selfcheck
+
+      - name: Run offline renderer self-test
+        run: |
+          python fetch_mrms_rala.py --self-test --output-dir diagnostics/mrms_rala_self_test
+
+      - name: Build latest official MRMS RALA diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          extra=""
+          if [[ "${{ inputs.allow_stale }}" == "true" ]]; then
+            extra="--allow-stale"
+          fi
+          python fetch_mrms_rala.py \
+            --output-dir diagnostics/mrms_rala \
+            --source-mode "${{ inputs.source_mode }}" \
+            --freshness-minutes 20 \
+            --output-width 6400 \
+            ${extra}
+
+      - name: Validate diagnostic package
+        shell: bash
+        run: |
+          set -euo pipefail
+          extra=""
+          if [[ "${{ inputs.allow_stale }}" == "true" ]]; then
+            extra="--allow-stale"
+          fi
+          python tools/validate_mrms_rala.py diagnostics/mrms_rala ${extra}
+
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrms-rala-backend-diagnostic
+          path: |
+            diagnostics/mrms_rala/
+            diagnostics/mrms_rala_self_test/
+          if-no-files-found: warn
+          retention-days: 7
