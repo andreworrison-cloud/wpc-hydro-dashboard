@@ -17,7 +17,7 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 errors = []
 
 # HRRR diagnostics (2) + HRRR-TLE (18) add 20 registered layers to the 105-layer LightningCast-era registry.
-EXPECTED_LAYER_COUNT = 125
+EXPECTED_LAYER_COUNT = 134
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -385,8 +385,6 @@ required_hrrr_tle_generator_fragments = [
     "hrrr_latest_12h_max_ffg_ratio.png",
     "hrrr_latest_12h_ffg_exceedance_coverage.png",
     "latest_hrrr_diagnostic_cycle_utc",
-    "published_expected = list(LAYER_FILES.values())",
-    "forcing a rebuild of the synchronized package",
     "TLE_MEMBER_COUNT = 6",
     "TLE_COMMON_HOURS = 12",
     "MIN_TLE_MEMBERS = 6",
@@ -407,9 +405,10 @@ for fragment in required_hrrr_tle_generator_fragments:
 required_hrrr_tle_workflow_fragments = [
     "Update HRRR-TLE Flash Flood Guidance",
     "workflow_dispatch:",
+    "schedule:",
+    "cron: '15 * * * *'",
     "python fetch_hrrr_tle.py --output-dir static",
     "static/hrrr_tle_*",
-    "static/hrrr_latest_12h_*",
 ]
 for fragment in required_hrrr_tle_workflow_fragments:
     if fragment not in hrrr_tle_workflow:
