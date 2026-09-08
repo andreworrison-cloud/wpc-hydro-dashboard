@@ -211,7 +211,13 @@ required_mrms_rala_fragments = [
     "layer-opacity-label",
     "maxSpeed: 30",
     "speedStep: 1",
-    "playerOptions: { transitionTime: 67, loop: true }",
+    "MRMS_RALA_DEFAULT_FPS = 15",
+    "IEM_RADAR_DEFAULT_FPS = 2",
+    "setDashboardRadarAnimationFPS",
+    "playerOptions: { transitionTime: Math.round(1000 / MRMS_RALA_DEFAULT_FPS), loop: true }",
+    "activateIEMRadarTimeline({applyDefaultSpeed: true})",
+    "activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: true})",
+    "opacity: 0.7, layers: 'nexrad-n0q-wmst'",
 ]
 for fragment in required_mrms_rala_fragments:
     if fragment not in app:
@@ -756,6 +762,10 @@ if "mrms-rala-loop-v2" not in index:
     errors.append(
         "Frontend cache-busting token for MRMS RALA Phase 2 integration is missing."
     )
+
+
+if "mrms-rala-loop-v2-5-per-feed-defaults" not in index:
+    errors.append("MRMS RALA per-feed speed/opacity cache-busting token is missing from index.html.")
 
 if errors:
     print("Dashboard validation FAILED:")
