@@ -214,21 +214,24 @@ required_mrms_rala_fragments = [
     "speedStep: 1",
     "IEM_RADAR_DEFAULT_FPS = 5",
     "IEM_RADAR_MAX_FPS = 10",
-    "MRMS_RALA_VISIBLE_INTERVAL_MS = 250",
-    "MRMS_RALA_DEFAULT_SPEED_PROFILE = 'very-fast'",
-    "MRMS_RALA_SPEED_PROFILES",
-    "normal:      {label: 'Normal',    frameStep: 1}",
-    "fast:        {label: 'Fast',      frameStep: 2}",
-    "'very-fast': {label: 'Very Fast', frameStep: 4}",
-    "rapid:       {label: 'Rapid',     frameStep: 8}",
-    "maximum:     {label: 'Maximum',   frameStep: 15}",
+    "MRMS_RALA_DEFAULT_FRAME_STEP_MS = 200",
+    "MRMS_RALA_MIN_FRAME_STEP_MS = 100",
+    "MRMS_RALA_MAX_FRAME_STEP_MS = 1000",
+    "MRMS_RALA_FRAME_STEP_INCREMENT_MS = 50",
     "setIEMRadarAnimationFPS",
-    "setMRMSRALASpeedProfile",
-    "mrms-rala-speed-select",
+    "setMRMSRALAFrameStep",
+    "mrms-rala-speed-slider",
+    "slow.textContent = 'Slow'",
+    "fast.textContent = 'Fast'",
     "playerOptions: {transitionTime: Math.round(1000 / IEM_RADAR_DEFAULT_FPS), loop: true}",
     "activateIEMRadarTimeline({applyDefaultSpeed: false, autoPlay: true})",
-    "activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: true})",
+    "activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: false})",
     "opacity: 0.7, layers: 'nexrad-n0q-wmst'",
+    "const nextIndex = (currentIndex + 1) % times.length",
+    "loadMRMSRALAFrameIntoLayer",
+    "mrmsRalaBufferLayer",
+    "primeNextMRMSRALABuffer",
+    "const workers = Math.min(3, frames.length)",
 ]
 for fragment in required_mrms_rala_fragments:
     if fragment not in app:
@@ -775,17 +778,19 @@ if "mrms-rala-loop-v2" not in index:
     )
 
 
-if "mrms-rala-loop-v2-9-split-speed-controls" not in index:
-    errors.append("MRMS RALA v2.9 split-speed cache-busting token is missing from index.html.")
+if "mrms-rala-loop-v2-10-viewer-style-speed" not in index:
+    errors.append("MRMS RALA v2.10 viewer-style speed cache-busting token is missing from index.html.")
 
-if "MRMS_RALA_VISIBLE_INTERVAL_MS = 250" not in app:
-    errors.append("MRMS RALA sustainable scan-update interval is missing from app.js.")
-if "maximum:     {label: 'Maximum',   frameStep: 15}" not in app:
-    errors.append("MRMS RALA Maximum scan-speed profile is missing from app.js.")
-if "const nextIndex = candidateIndex >= times.length ? 0 : candidateIndex" not in app:
-    errors.append("MRMS RALA scan-speed clean-wrap logic is missing from app.js.")
-if "mrms-rala-speed-select" not in app or "IEM_RADAR_MAX_FPS = 10" not in app:
-    errors.append("Independent MRMS/IEM radar speed controls are incomplete in app.js.")
+if "MRMS_RALA_DEFAULT_FRAME_STEP_MS = 200" not in app:
+    errors.append("MRMS RALA viewer-style 200-ms default frame step is missing from app.js.")
+if "const nextIndex = (currentIndex + 1) % times.length" not in app:
+    errors.append("MRMS RALA sequential all-frame loop logic is missing from app.js.")
+if "frameStep:" in app and "MRMS_RALA_SPEED_PROFILES" in app:
+    errors.append("Legacy MRMS frame-skipping speed profiles are still present in app.js.")
+if "mrms-rala-speed-slider" not in app or "IEM_RADAR_MAX_FPS = 10" not in app:
+    errors.append("Independent viewer-style MRMS / FPS IEM controls are incomplete in app.js.")
+if "mrmsRalaBufferLayer" not in app or "loadMRMSRALAFrameIntoLayer" not in app:
+    errors.append("MRMS RALA double-buffer rendering is incomplete in app.js.")
 if "dashboardRadarSpeedMode = 'iem'" not in app or "dashboardRadarSpeedMode = 'mrms'" not in app:
     errors.append("Per-feed radar speed-mode switching is incomplete in app.js.")
 
