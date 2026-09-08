@@ -14,6 +14,7 @@ lightningcast_workflow = (ROOT / ".github" / "workflows" / "update_lightningcast
 hrrr_tle_generator = (ROOT / "fetch_hrrr_tle.py").read_text(encoding="utf-8")
 hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").read_text(encoding="utf-8")
 mrms_rala_generator = (ROOT / "fetch_mrms_rala.py").read_text(encoding="utf-8")
+mrms_rala_loop_generator = (ROOT / "fetch_mrms_rala_loop.py").read_text(encoding="utf-8")
 mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").read_text(encoding="utf-8")
 
 errors = []
@@ -61,8 +62,8 @@ if (
 
 required_labels = [
     "Active Hydro Warnings & Advisories",
-    "NEXRAD Radar (2-Hour Loop)",
-    "MRMS RALA — Direct NOAA (Experimental)",
+    "MRMS RALA — Direct NOAA (2-Hour Loop)",
+    "IEM NEXRAD Radar — Backup (2-Hour Loop)",
     "MRMS FLASH CREST Unit Q — Rolling 24-Hour Maximum",
     "MRMS FLASH FFD — Rolling 24-Hour Maximum Category",
     "GOES GLM Controlled Mosaic — Latest 5-Minute FED",
@@ -116,18 +117,18 @@ antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
 if radar_start >= 0 and antecedent_start > radar_start:
     radar_block = app[radar_start:antecedent_start]
 
-    # Phase 2 keeps the existing IEM NEXRAD loop first and adds the direct NOAA
-    # MRMS RALA layer immediately after it for controlled side-by-side testing.
-    parallel_radar_labels = [
-        "{id: 'nexrad-loop'",
+    # Direct NOAA MRMS RALA is now the primary looping radar. The prior IEM
+    # NEXRAD loop remains immediately beneath it as a mutually-exclusive backup.
+    primary_radar_labels = [
         "{id: 'mrms-rala-direct'",
+        "{id: 'nexrad-loop'",
         "{id: 'mrms-ffd'",
     ]
-    parallel_radar_positions = [radar_block.find(label) for label in parallel_radar_labels]
-    if any(position < 0 for position in parallel_radar_positions):
-        errors.append("Radar section is missing the Phase 2 direct MRMS RALA placement contract.")
-    elif parallel_radar_positions != sorted(parallel_radar_positions):
-        errors.append("Direct MRMS RALA is not positioned immediately after the existing NEXRAD loop.")
+    primary_radar_positions = [radar_block.find(label) for label in primary_radar_labels]
+    if any(position < 0 for position in primary_radar_positions):
+        errors.append("Radar section is missing the primary MRMS RALA / IEM backup contract.")
+    elif primary_radar_positions != sorted(primary_radar_positions):
+        errors.append("Primary MRMS RALA and IEM backup radar are not in the required order.")
 
     radar_labels = [
         "{id: 'mrms-qpe-24h'",
@@ -183,62 +184,84 @@ if antecedent_start >= 0 and rap_start > antecedent_start:
             "required order."
         )
 
-# Confirm Phase 2 direct NOAA MRMS RALA, automatic freshness handling,
-# dynamic legend/time box, and the reusable selected-raster opacity control.
+# Confirm direct NOAA MRMS RALA looping, freshness handling, data-branch
+# publication, discoverable opacity, and IEM backup behavior.
 required_mrms_rala_fragments = [
-    "MRMS RALA — Direct NOAA (Experimental)",
-    "static/mrms_rala/mrms_rala_conus_latest.png",
-    "static/mrms_rala/mrms_rala_metadata.json",
-    "static/mrms_rala/mrms_rala_manifest.json",
-    "mrms_rala_dashboard_v1",
-    "mrms_rala_dashboard_manifest_v1",
+    "MRMS RALA — Direct NOAA (2-Hour Loop)",
+    "IEM NEXRAD Radar — Backup (2-Hour Loop)",
+    "MRMS_RALA_DATA_ROOT",
+    "mrms-rala-data",
+    "mrms_rala_loop_manifest_v2",
     "MRMS_RALA_FRESHNESS_LIMIT_MINUTES = 20",
-    "MRMS_RALA_DEFAULT_OPACITY = 0.70",
-    "wpc-mrms-rala-opacity-v1",
+    "MRMS_RALA_DEFAULT_OPACITY = 0.85",
+    "wpc-mrms-rala-opacity-v2",
     "mrmsRalaOpacityTarget",
+    "mrms-rala-opacity-inline",
+    "image.style.imageRendering = 'pixelated'",
+    "activateMRMSRALATimeline",
+    "showMRMSRALAFrame",
+    "warmMRMSRALALoopCache",
     "refreshMRMSRALAFromManifest",
-    "applyMRMSRALAFreshnessState",
     "buildMRMSRALALegendHTML",
     "mrms-rala-time-box",
     "visible_minimum_dbz) !== 5.0",
     "display.resampling !== 'nearest-neighbor'",
     "display.smoothing !== false",
+    "exclusiveGroup: 'radar-primary'",
     "layer-opacity-label",
 ]
 for fragment in required_mrms_rala_fragments:
     if fragment not in app:
-        errors.append(f"Missing direct MRMS RALA integration fragment: {fragment}")
+        errors.append(f"Missing looping MRMS RALA integration fragment: {fragment}")
 
 required_mrms_rala_generator_fragments = [
     'NCEP_DIR = "https://mrms.ncep.noaa.gov/2D/ReflectivityAtLowestAltitude/"',
     'NODD_ROOT = "https://noaa-mrms-pds.s3.amazonaws.com"',
     'NODD_PREFIX_ROOT = "CONUS/ReflectivityAtLowestAltitude_00.50"',
     'MIN_VISIBLE_DBZ = 5.0',
-    'DEFAULT_FRESHNESS_MINUTES = 20.0',
     'Resampling.nearest',
-    '"metadata_mode": "mrms_rala_dashboard_v1"',
-    '"metadata_mode": "mrms_rala_dashboard_manifest_v1"',
-    '"transactional_publish": True',
 ]
 for fragment in required_mrms_rala_generator_fragments:
     if fragment not in mrms_rala_generator:
-        errors.append(f"Missing MRMS RALA generator contract fragment: {fragment}")
+        errors.append(f"Missing base MRMS RALA generator contract fragment: {fragment}")
+
+required_mrms_rala_loop_generator_fragments = [
+    'METADATA_MODE = "mrms_rala_loop_manifest_v2"',
+    'loop_minutes',
+    'reused_cached_frames',
+    'new_frames_rendered',
+    'Official NOAA MRMS only',
+    'NCEP MRMS HTTPS is preferred',
+    'output-width',
+]
+for fragment in required_mrms_rala_loop_generator_fragments:
+    if fragment not in mrms_rala_loop_generator:
+        errors.append(f"Missing MRMS RALA loop-generator contract fragment: {fragment}")
 
 required_mrms_rala_workflow_fragments = [
-    "name: Update MRMS RALA Direct NOAA",
-    "actions/checkout@v5",
+    "name: Update MRMS RALA Direct NOAA Loop",
+    "workflow_dispatch:",
+    "actions/checkout@v6",
     "actions/setup-python@v6",
-    "cron: '3,13,23,33,43,53 * * * *'",
-    '--source-mode "${SOURCE_MODE:-auto}"',
-    "--freshness-minutes 20",
-    "--output-width 6400",
-    'python tools/validate_mrms_rala.py "$MRMS_RALA_OUTPUT_DIR"',
-    "publish_dir='static/mrms_rala'",
-    'git pull --rebase origin "$BRANCH_NAME"',
+    "fetch_mrms_rala_loop.py",
+    "tools/validate_mrms_rala_loop.py",
+    "--loop-minutes 120",
+    "--output-width 7000",
+    "mrms-rala-data",
+    "git push --force origin HEAD:refs/heads/mrms-rala-data",
+    "cancel-in-progress: false",
 ]
 for fragment in required_mrms_rala_workflow_fragments:
     if fragment not in mrms_rala_workflow:
-        errors.append(f"Missing MRMS RALA production workflow fragment: {fragment}")
+        errors.append(f"Missing MRMS RALA looping workflow fragment: {fragment}")
+
+# This feed is intentionally dispatched by cron-job.org. Native GitHub Actions
+# scheduling is not allowed because update latency is operationally important.
+if re.search(r"(?m)^\s{2}schedule:\s*$", mrms_rala_workflow):
+    errors.append(
+        "MRMS RALA workflow unexpectedly contains a GitHub Actions schedule; "
+        "cron-job.org should trigger workflow_dispatch instead."
+    )
 
 # Confirm the rolling MRMS FLASH files, metadata, legends, and time boxes are
 # wired into the dashboard.
@@ -723,7 +746,7 @@ if "glm-v1" not in index and "glm-v2" not in index:
     errors.append(
         "Frontend cache-busting token for GOES GLM integration is missing."
     )
-if "mrms-rala-phase2-v1" not in index:
+if "mrms-rala-loop-v2" not in index:
     errors.append(
         "Frontend cache-busting token for MRMS RALA Phase 2 integration is missing."
     )
@@ -736,7 +759,7 @@ if errors:
 
 print(
     "Dashboard validation passed: "
-    f"{len(ids)} registered layers; menu order, direct MRMS RALA/opacity/freshness, MRMS FLASH order, "
+    f"{len(ids)} registered layers; menu order, looping MRMS RALA/opacity/freshness, MRMS FLASH order, "
     "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
