@@ -894,14 +894,14 @@ map.timeDimension = L.timeDimension({
     period: "PT2M"
 });
 
-const MRMS_RALA_DEFAULT_FPS = 15;
-const IEM_RADAR_DEFAULT_FPS = 2;
+const MRMS_RALA_DEFAULT_FPS = 30;
+const IEM_RADAR_DEFAULT_FPS = 5;
 
 const dashboardTimeControl = L.control.timeDimension({
     position: 'bottomleft',
     autoPlay: true,
     minSpeed: 1,
-    maxSpeed: 30,
+    maxSpeed: 60,
     speedStep: 1,
     playerOptions: { transitionTime: Math.round(1000 / MRMS_RALA_DEFAULT_FPS), loop: true }
 }).addTo(map);
@@ -909,7 +909,7 @@ const dashboardTimeControl = L.control.timeDimension({
 function setDashboardRadarAnimationFPS(fps) {
     const numeric = Number(fps);
     if (!Number.isFinite(numeric) || numeric <= 0) return false;
-    const clamped = Math.min(30, Math.max(1, numeric));
+    const clamped = Math.min(60, Math.max(1, numeric));
     const player = dashboardTimeControl?._player;
     if (!player || typeof player.setTransitionTime !== 'function') return false;
     player.setTransitionTime(Math.round(1000 / clamped));
