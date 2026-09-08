@@ -764,8 +764,8 @@ if "mrms-rala-loop-v2" not in index:
     )
 
 
-if "mrms-rala-loop-v2-5-per-feed-defaults" not in index:
-    errors.append("MRMS RALA per-feed speed/opacity cache-busting token is missing from index.html.")
+if "mrms-rala-loop-v2-6-speed-tuning" not in index:
+    errors.append("MRMS RALA v2.6 speed-tuning cache-busting token is missing from index.html.")
 
 if errors:
     print("Dashboard validation FAILED:")
