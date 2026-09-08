@@ -197,7 +197,7 @@ required_mrms_rala_fragments = [
     "wpc-mrms-rala-opacity-v2",
     "mrmsRalaOpacityTarget",
     "mrms-rala-opacity-inline",
-    "image.style.imageRendering = 'pixelated'",
+    "image.style.setProperty('image-rendering', 'pixelated', 'important')",
     "activateMRMSRALATimeline",
     "showMRMSRALAFrame",
     "warmMRMSRALALoopCache",
@@ -209,10 +209,16 @@ required_mrms_rala_fragments = [
     "display.smoothing !== false",
     "exclusiveGroup: 'radar-primary'",
     "layer-opacity-label",
+    "maxSpeed: 30",
+    "speedStep: 1",
+    "playerOptions: { transitionTime: 67, loop: true }",
 ]
 for fragment in required_mrms_rala_fragments:
     if fragment not in app:
         errors.append(f"Missing looping MRMS RALA integration fragment: {fragment}")
+
+if "image.style.imageRendering = 'auto'" in app:
+    errors.append("MRMS RALA frame swaps can still reset browser rendering to smooth interpolation.")
 
 required_mrms_rala_generator_fragments = [
     'NCEP_DIR = "https://mrms.ncep.noaa.gov/2D/ReflectivityAtLowestAltitude/"',
