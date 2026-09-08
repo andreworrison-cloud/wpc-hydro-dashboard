@@ -1,0 +1,157 @@
+name: Update MRMS RALA Direct NOAA
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_mode:
+        description: 'Official MRMS source mode (auto keeps NCEP primary with NODD fallback)'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - ncep
+          - nodd
+  schedule:
+    # Phase 2 parallel test cadence: one newest-frame refresh every 10 minutes.
+    # Offset from the top of the hour to reduce scheduled-run congestion.
+    - cron: '3,13,23,33,43,53 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-mrms-rala-direct
+  cancel-in-progress: true
+
+jobs:
+  update-mrms-rala:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: '1'
+      MRMS_RALA_OUTPUT_DIR: mrms_rala_operational_staging
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 20
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install MRMS decoding and rendering dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0
+          python -m pip install --upgrade pip
+          python -m pip install numpy requests pillow pyproj rasterio eccodes
+          python -m eccodes selfcheck
+
+      - name: Validate MRMS RALA generator syntax
+        run: |
+          python -m py_compile fetch_mrms_rala.py tools/validate_mrms_rala.py
+
+      - name: Build newest fresh official MRMS RALA frame
+        env:
+          SOURCE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.source_mode || 'auto' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MRMS_RALA_OUTPUT_DIR"
+          python fetch_mrms_rala.py \
+            --output-dir "$MRMS_RALA_OUTPUT_DIR" \
+            --source-mode "${SOURCE_MODE:-auto}" \
+            --freshness-minutes 20 \
+            --output-width 6400
+
+      - name: Validate dashboard-ready MRMS RALA package
+        run: |
+          python tools/validate_mrms_rala.py "$MRMS_RALA_OUTPUT_DIR"
+
+      - name: Publish newest MRMS RALA frame and push with retry
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Sync before touching tracked static files. The RALA build lives in an
+          # untracked staging directory, so other dashboard workflows remain safe.
+          git pull --rebase origin "$BRANCH_NAME"
+
+          publish_dir='static/mrms_rala'
+          mkdir -p "$publish_dir"
+
+          decision=$(python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          def parse(value):
+              if not value:
+                  return None
+              return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
+
+          new_meta = json.loads(Path('mrms_rala_operational_staging/mrms_rala_metadata.json').read_text())
+          new_time = parse(new_meta.get('source_valid_time_utc'))
+          old_path = Path('static/mrms_rala/mrms_rala_metadata.json')
+          old_time = None
+          if old_path.exists():
+              try:
+                  old_time = parse(json.loads(old_path.read_text()).get('source_valid_time_utc'))
+              except Exception:
+                  old_time = None
+
+          if new_time is None:
+              raise SystemExit('New MRMS RALA metadata has no valid source time.')
+          print('publish' if old_time is None or new_time > old_time else 'skip')
+          PY
+          )
+
+          if [[ "$decision" != 'publish' ]]; then
+            echo 'Repository already contains this MRMS RALA frame or a newer one; nothing to publish.'
+            exit 0
+          fi
+
+          publish=(
+            mrms_rala_conus_latest.png
+            mrms_rala_metadata.json
+            mrms_rala_manifest.json
+            mrms_rala_source_diagnostics.json
+          )
+          for name in "${publish[@]}"; do
+            cp -f "$MRMS_RALA_OUTPUT_DIR/$name" "$publish_dir/$name"
+            git add -- "$publish_dir/$name"
+          done
+
+          if git diff --cached --quiet; then
+            echo 'MRMS RALA files are unchanged.'
+            exit 0
+          fi
+
+          valid_time=$(python -c "import json; print(json.load(open('$MRMS_RALA_OUTPUT_DIR/mrms_rala_metadata.json'))['source_valid_time_utc'])")
+          git commit -m "Update direct NOAA MRMS RALA ${valid_time}"
+
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${BRANCH_NAME}"; then
+              echo "MRMS RALA ${valid_time} published successfully."
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo 'MRMS RALA push failed after three attempts.' >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+            git pull --rebase origin "$BRANCH_NAME"
+          done

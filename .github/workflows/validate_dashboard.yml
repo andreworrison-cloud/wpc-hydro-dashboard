@@ -8,8 +8,15 @@ on:
       - 'index.html'
       - 'style.css'
       - 'tools/validate_dashboard.py'
+      - 'fetch_glm_mosaic.py'
+      - '.github/workflows/update_glm_mosaic.yml'
+      - 'fetch_lightningcast.py'
+      - '.github/workflows/update_lightningcast.yml'
       - 'fetch_hrrr_tle.py'
       - '.github/workflows/update_hrrr_tle.yml'
+      - 'fetch_mrms_rala.py'
+      - 'tools/validate_mrms_rala.py'
+      - '.github/workflows/update_mrms_rala.yml'
       - '.github/workflows/validate_dashboard.yml'
   push:
     paths:
@@ -17,29 +24,44 @@ on:
       - 'index.html'
       - 'style.css'
       - 'tools/validate_dashboard.py'
+      - 'fetch_glm_mosaic.py'
+      - '.github/workflows/update_glm_mosaic.yml'
+      - 'fetch_lightningcast.py'
+      - '.github/workflows/update_lightningcast.yml'
       - 'fetch_hrrr_tle.py'
       - '.github/workflows/update_hrrr_tle.yml'
+      - 'fetch_mrms_rala.py'
+      - 'tools/validate_mrms_rala.py'
+      - '.github/workflows/update_mrms_rala.yml'
       - '.github/workflows/validate_dashboard.yml'
+
+permissions:
+  contents: read
 
 jobs:
   validate-dashboard:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Check JavaScript syntax
         run: node --check app.js
+
+      - name: Check MRMS RALA Python syntax
+        run: python -m py_compile fetch_mrms_rala.py tools/validate_mrms_rala.py
 
       - name: Validate menu order and required layers
         run: python tools/validate_dashboard.py
