@@ -15,7 +15,9 @@ on:
       - 'fetch_hrrr_tle.py'
       - '.github/workflows/update_hrrr_tle.yml'
       - 'fetch_mrms_rala.py'
+      - 'fetch_mrms_rala_loop.py'
       - 'tools/validate_mrms_rala.py'
+      - 'tools/validate_mrms_rala_loop.py'
       - '.github/workflows/update_mrms_rala.yml'
       - '.github/workflows/validate_dashboard.yml'
   push:
@@ -31,7 +33,9 @@ on:
       - 'fetch_hrrr_tle.py'
       - '.github/workflows/update_hrrr_tle.yml'
       - 'fetch_mrms_rala.py'
+      - 'fetch_mrms_rala_loop.py'
       - 'tools/validate_mrms_rala.py'
+      - 'tools/validate_mrms_rala_loop.py'
       - '.github/workflows/update_mrms_rala.yml'
       - '.github/workflows/validate_dashboard.yml'
 
@@ -45,7 +49,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v5
@@ -61,7 +65,7 @@ jobs:
         run: node --check app.js
 
       - name: Check MRMS RALA Python syntax
-        run: python -m py_compile fetch_mrms_rala.py tools/validate_mrms_rala.py
+        run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
 
       - name: Validate menu order and required layers
         run: python tools/validate_dashboard.py

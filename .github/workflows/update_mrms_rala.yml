@@ -1,10 +1,10 @@
-name: Update MRMS RALA Direct NOAA
+name: Update MRMS RALA Direct NOAA Loop
 
 on:
   workflow_dispatch:
     inputs:
       source_mode:
-        description: 'Official MRMS source mode (auto keeps NCEP primary with NODD fallback)'
+        description: 'Official MRMS source mode (auto prefers NCEP with NODD fallback)'
         required: true
         default: 'auto'
         type: choice
@@ -12,32 +12,35 @@ on:
           - auto
           - ncep
           - nodd
-  schedule:
-    # Phase 2 parallel test cadence: one newest-frame refresh every 10 minutes.
-    # Offset from the top of the hour to reduce scheduled-run congestion.
-    - cron: '3,13,23,33,43,53 * * * *'
+      rebuild_full_loop:
+        description: 'Ignore the rolling cache and rebuild the complete two-hour loop'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 concurrency:
-  group: update-mrms-rala-direct
-  cancel-in-progress: true
+  group: update-mrms-rala-direct-loop
+  cancel-in-progress: false
 
 jobs:
-  update-mrms-rala:
+  update-mrms-rala-loop:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       PYTHONUNBUFFERED: '1'
-      MRMS_RALA_OUTPUT_DIR: mrms_rala_operational_staging
+      MRMS_RALA_OUTPUT_DIR: mrms_rala_loop_publish
+      MRMS_RALA_CACHE_DIR: mrms_rala_loop_cache
+      MRMS_RALA_DATA_BRANCH: mrms-rala-data
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - name: Checkout dashboard code
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 20
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -55,103 +58,78 @@ jobs:
           python -m pip install numpy requests pillow pyproj rasterio eccodes
           python -m eccodes selfcheck
 
-      - name: Validate MRMS RALA generator syntax
+      - name: Validate MRMS loop code
         run: |
-          python -m py_compile fetch_mrms_rala.py tools/validate_mrms_rala.py
+          python -m py_compile \
+            fetch_mrms_rala.py \
+            fetch_mrms_rala_loop.py \
+            tools/validate_mrms_rala_loop.py
 
-      - name: Build newest fresh official MRMS RALA frame
+      - name: Restore prior rolling-loop package from data branch
         env:
-          SOURCE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.source_mode || 'auto' }}
+          REBUILD_FULL_LOOP: ${{ inputs.rebuild_full_loop }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MRMS_RALA_CACHE_DIR"
+          mkdir -p "$MRMS_RALA_CACHE_DIR"
+
+          if [[ "${REBUILD_FULL_LOOP:-false}" == 'true' ]]; then
+            echo 'Full MRMS loop rebuild requested; prior data branch will not be used as a frame cache.'
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "$MRMS_RALA_DATA_BRANCH" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "$MRMS_RALA_DATA_BRANCH"
+            git archive FETCH_HEAD | tar -x -C "$MRMS_RALA_CACHE_DIR"
+            echo "Restored prior MRMS loop package from $MRMS_RALA_DATA_BRANCH."
+          else
+            echo 'No prior MRMS RALA data branch exists; the first run will build the complete loop.'
+          fi
+
+      - name: Build rolling two-hour NOAA MRMS RALA loop
+        env:
+          SOURCE_MODE: ${{ inputs.source_mode }}
         shell: bash
         run: |
           set -euo pipefail
           rm -rf "$MRMS_RALA_OUTPUT_DIR"
-          python fetch_mrms_rala.py \
+          python fetch_mrms_rala_loop.py \
             --output-dir "$MRMS_RALA_OUTPUT_DIR" \
+            --cache-dir "$MRMS_RALA_CACHE_DIR" \
             --source-mode "${SOURCE_MODE:-auto}" \
+            --loop-minutes 120 \
+            --max-frames 75 \
             --freshness-minutes 20 \
-            --output-width 6400
+            --output-width 7000
 
-      - name: Validate dashboard-ready MRMS RALA package
-        run: |
-          python tools/validate_mrms_rala.py "$MRMS_RALA_OUTPUT_DIR"
+      - name: Validate rolling MRMS RALA package
+        run: python tools/validate_mrms_rala_loop.py "$MRMS_RALA_OUTPUT_DIR" --minimum-frames 45
 
-      - name: Publish newest MRMS RALA frame and push with retry
-        env:
-          BRANCH_NAME: ${{ github.ref_name }}
+      - name: Publish current loop to history-free data branch
         shell: bash
         run: |
           set -euo pipefail
 
+          valid_time=$(python -c "import json; print(json.load(open('$MRMS_RALA_OUTPUT_DIR/mrms_rala_loop_manifest.json'))['latest_valid_time_utc'])")
+          publish_tree="$RUNNER_TEMP/mrms-rala-data-worktree"
+          rm -rf "$publish_tree"
+
+          # Use a worktree so the checkout action's authenticated git configuration
+          # is preserved. Every update is a new orphan commit force-pushed to the
+          # dedicated data branch; the main dashboard branch never accumulates
+          # thousands of radar PNG revisions in git history.
+          git worktree add --detach "$publish_tree" HEAD
+          pushd "$publish_tree" >/dev/null
+          git switch --orphan mrms-rala-data-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -a "$GITHUB_WORKSPACE/$MRMS_RALA_OUTPUT_DIR/." .
+
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          git commit -m "MRMS RALA rolling loop through ${valid_time}"
+          git push --force origin HEAD:refs/heads/mrms-rala-data
+          popd >/dev/null
 
-          # Sync before touching tracked static files. The RALA build lives in an
-          # untracked staging directory, so other dashboard workflows remain safe.
-          git pull --rebase origin "$BRANCH_NAME"
-
-          publish_dir='static/mrms_rala'
-          mkdir -p "$publish_dir"
-
-          decision=$(python - <<'PY'
-          import json
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          def parse(value):
-              if not value:
-                  return None
-              return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
-
-          new_meta = json.loads(Path('mrms_rala_operational_staging/mrms_rala_metadata.json').read_text())
-          new_time = parse(new_meta.get('source_valid_time_utc'))
-          old_path = Path('static/mrms_rala/mrms_rala_metadata.json')
-          old_time = None
-          if old_path.exists():
-              try:
-                  old_time = parse(json.loads(old_path.read_text()).get('source_valid_time_utc'))
-              except Exception:
-                  old_time = None
-
-          if new_time is None:
-              raise SystemExit('New MRMS RALA metadata has no valid source time.')
-          print('publish' if old_time is None or new_time > old_time else 'skip')
-          PY
-          )
-
-          if [[ "$decision" != 'publish' ]]; then
-            echo 'Repository already contains this MRMS RALA frame or a newer one; nothing to publish.'
-            exit 0
-          fi
-
-          publish=(
-            mrms_rala_conus_latest.png
-            mrms_rala_metadata.json
-            mrms_rala_manifest.json
-            mrms_rala_source_diagnostics.json
-          )
-          for name in "${publish[@]}"; do
-            cp -f "$MRMS_RALA_OUTPUT_DIR/$name" "$publish_dir/$name"
-            git add -- "$publish_dir/$name"
-          done
-
-          if git diff --cached --quiet; then
-            echo 'MRMS RALA files are unchanged.'
-            exit 0
-          fi
-
-          valid_time=$(python -c "import json; print(json.load(open('$MRMS_RALA_OUTPUT_DIR/mrms_rala_metadata.json'))['source_valid_time_utc'])")
-          git commit -m "Update direct NOAA MRMS RALA ${valid_time}"
-
-          for attempt in 1 2 3; do
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "MRMS RALA ${valid_time} published successfully."
-              exit 0
-            fi
-            if [[ "$attempt" -eq 3 ]]; then
-              echo 'MRMS RALA push failed after three attempts.' >&2
-              exit 1
-            fi
-            sleep $((attempt * 10))
-            git pull --rebase origin "$BRANCH_NAME"
-          done
+          echo "MRMS RALA rolling loop through ${valid_time} published to branch ${MRMS_RALA_DATA_BRANCH}."
