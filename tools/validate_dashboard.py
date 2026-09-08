@@ -16,8 +16,9 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 
 errors = []
 
-# HRRR diagnostics (2) + HRRR-TLE (18) add 20 registered layers to the 105-layer LightningCast-era registry.
-EXPECTED_LAYER_COUNT = 134
+# Current registry total: 121 dashboard data/config entries + 14 basemap entries.
+# Black Canvas is additive and does not remove or replace any existing layer.
+EXPECTED_LAYER_COUNT = 135
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -538,6 +539,15 @@ if len(ids) != EXPECTED_LAYER_COUNT:
     errors.append(
         f"Expected {EXPECTED_LAYER_COUNT} registered layers, found {len(ids)}."
     )
+
+required_black_canvas_fragments = [
+    "const blackCanvasBase = L.layerGroup();",
+    "{id: 'black-canvas', label: 'Black Canvas'",
+    "canvasColor: '#050608'",
+]
+for fragment in required_black_canvas_fragments:
+    if fragment not in app:
+        errors.append(f"Missing Black Canvas basemap contract: {fragment}")
 
 if ids.count(LIGHTNINGCAST_LAYER_ID) != 1:
     errors.append(
