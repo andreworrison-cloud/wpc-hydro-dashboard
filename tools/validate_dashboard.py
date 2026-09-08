@@ -405,14 +405,20 @@ for fragment in required_hrrr_tle_generator_fragments:
 required_hrrr_tle_workflow_fragments = [
     "Update HRRR-TLE Flash Flood Guidance",
     "workflow_dispatch:",
-    "schedule:",
-    "cron: '15 * * * *'",
     "python fetch_hrrr_tle.py --output-dir static",
     "static/hrrr_tle_*",
 ]
 for fragment in required_hrrr_tle_workflow_fragments:
     if fragment not in hrrr_tle_workflow:
         errors.append(f"Missing HRRR-TLE workflow contract: {fragment}")
+
+# HRRR-TLE is dispatched externally by cron-job.org. Do not require or reintroduce
+# a GitHub Actions native schedule; workflow_dispatch is the intentional trigger.
+if re.search(r"(?m)^\s{2}schedule:\s*$", hrrr_tle_workflow):
+    errors.append(
+        "HRRR-TLE workflow unexpectedly contains a GitHub Actions schedule; "
+        "cron-job.org should trigger workflow_dispatch instead."
+    )
 
 required_ufvs_utility_fragments = [
     "UFVS Geographic Domains",
