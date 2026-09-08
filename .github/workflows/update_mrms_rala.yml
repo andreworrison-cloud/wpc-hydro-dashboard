@@ -40,7 +40,9 @@ jobs:
       - name: Checkout dashboard code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -80,8 +82,10 @@ jobs:
           fi
 
           if git ls-remote --exit-code --heads origin "$MRMS_RALA_DATA_BRANCH" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "$MRMS_RALA_DATA_BRANCH"
-            git archive FETCH_HEAD | tar -x -C "$MRMS_RALA_CACHE_DIR"
+            git fetch --no-tags --depth=1 origin \
+              "refs/heads/$MRMS_RALA_DATA_BRANCH:refs/remotes/origin/$MRMS_RALA_DATA_BRANCH"
+            git archive "refs/remotes/origin/$MRMS_RALA_DATA_BRANCH" | \
+              tar -x -C "$MRMS_RALA_CACHE_DIR"
             echo "Restored prior MRMS loop package from $MRMS_RALA_DATA_BRANCH."
           else
             echo 'No prior MRMS RALA data branch exists; the first run will build the complete loop.'
