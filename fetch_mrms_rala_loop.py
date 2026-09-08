@@ -75,11 +75,14 @@ def cached_frame_path(cache_dir: Path, candidate) -> Path:
 
 def save_rgba_png(rgba: np.ndarray, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # Lossless PNG either way; moderate compression is substantially faster for
+    # the one-time 2-hour seed build and incremental operational updates.
+    # This changes file size only, never radar pixels, colors, or transparency.
     Image.fromarray(rgba, mode="RGBA").save(
         destination,
         format="PNG",
-        optimize=True,
-        compress_level=9,
+        optimize=False,
+        compress_level=6,
     )
     if destination.stat().st_size < 10_000:
         raise RuntimeError(f"Rendered loop frame is implausibly small: {destination}")
