@@ -894,14 +894,27 @@ map.timeDimension = L.timeDimension({
     period: "PT2M"
 });
 
+const MRMS_RALA_DEFAULT_FPS = 15;
+const IEM_RADAR_DEFAULT_FPS = 2;
+
 const dashboardTimeControl = L.control.timeDimension({
     position: 'bottomleft',
     autoPlay: true,
     minSpeed: 1,
     maxSpeed: 30,
     speedStep: 1,
-    playerOptions: { transitionTime: 67, loop: true }
+    playerOptions: { transitionTime: Math.round(1000 / MRMS_RALA_DEFAULT_FPS), loop: true }
 }).addTo(map);
+
+function setDashboardRadarAnimationFPS(fps) {
+    const numeric = Number(fps);
+    if (!Number.isFinite(numeric) || numeric <= 0) return false;
+    const clamped = Math.min(30, Math.max(1, numeric));
+    const player = dashboardTimeControl?._player;
+    if (!player || typeof player.setTransitionTime !== 'function') return false;
+    player.setTransitionTime(Math.round(1000 / clamped));
+    return true;
+}
 
 function buildIEMRadarTimes() {
     const endTime = new Date();
@@ -916,22 +929,25 @@ function buildIEMRadarTimes() {
     return times;
 }
 
-function activateIEMRadarTimeline() {
+function activateIEMRadarTimeline({applyDefaultSpeed = false} = {}) {
+    if (applyDefaultSpeed) setDashboardRadarAnimationFPS(IEM_RADAR_DEFAULT_FPS);
     const times = buildIEMRadarTimes();
     map.timeDimension.setAvailableTimes(times, 'replace');
     if (times.length) map.timeDimension.setCurrentTime(times[times.length - 1]);
 }
 
-activateIEMRadarTimeline();
+// Seed the shared timeline without overriding the primary MRMS default speed.
+activateIEMRadarTimeline({applyDefaultSpeed: false});
 window.setInterval(() => {
     if (map.hasLayer(radarTimeLayer) && !map.hasLayer(mrmsRalaLayer)) {
-        activateIEMRadarTimeline();
+        // Preserve any speed the forecaster selected while IEM is active.
+        activateIEMRadarTimeline({applyDefaultSpeed: false});
     }
 }, 10 * 60 * 1000);
 
 // --- IEM NEXRAD BACKUP LOOP ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
-    format: 'image/png', transparent: true, opacity: 0.6, layers: 'nexrad-n0q-wmst', attribution: "Data © IEM"
+    format: 'image/png', transparent: true, opacity: 0.7, layers: 'nexrad-n0q-wmst', attribution: "Data © IEM"
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 
@@ -2112,8 +2128,9 @@ function warmMRMSRALALoopCache() {
     Promise.all(Array.from({length: workers}, worker)).catch(() => {});
 }
 
-function activateMRMSRALATimeline({jumpToLatest = true} = {}) {
+function activateMRMSRALATimeline({jumpToLatest = true, applyDefaultSpeed = false} = {}) {
     if (!mrmsRalaFrames.length) return false;
+    if (applyDefaultSpeed) setDashboardRadarAnimationFPS(MRMS_RALA_DEFAULT_FPS);
     const times = mrmsRalaFrames.map(frame => frame.timeMillis);
     map.timeDimension.setAvailableTimes(times, 'replace');
     if (jumpToLatest) map.timeDimension.setCurrentTime(times[times.length - 1]);
@@ -4483,7 +4500,7 @@ map.on('overlayadd', function(eventLayer) {
         updateMRMSRALATimeBox();
         applyMRMSRALAFreshnessState();
         if (mrmsRalaReady && mrmsRalaFresh) {
-            activateMRMSRALATimeline({jumpToLatest: true});
+            activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: true});
             showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
         }
         refreshMRMSRALAFromManifest({forceMetadata: !mrmsRalaReady});
@@ -4813,7 +4830,7 @@ function enforceExclusiveRadarSelection(activeEntry) {
             refreshMRMSRALAFromManifest({forceMetadata: !mrmsRalaReady});
         }
     } else if (activeEntry.id === 'nexrad-loop') {
-        activateIEMRadarTimeline();
+        activateIEMRadarTimeline({applyDefaultSpeed: true});
     }
 }
 
