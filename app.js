@@ -879,73 +879,89 @@ map.on('baselayerchange', function(e) {
     }
 });
 
-// --- TIME LOOP LOGIC (NOW AUTO-UPDATING) ---
+// --- RADAR LOOP TIME CONTROL ---
+// The NOAA MRMS RALA loop is now the primary radar timeline. The legacy IEM
+// NEXRAD loop remains available as a mutually-exclusive backup and uses the same
+// bottom-left time control when selected.
 map.timeDimension = L.timeDimension({
-    period: "PT10M"
+    period: "PT2M"
 });
 
-L.control.timeDimension({
+const dashboardTimeControl = L.control.timeDimension({
     position: 'bottomleft',
     autoPlay: true,
-    playerOptions: { transitionTime: 500, loop: true }
+    playerOptions: { transitionTime: 650, loop: true }
 }).addTo(map);
 
-function updateTimeDimension() {
+function buildIEMRadarTimes() {
     const endTime = new Date();
     endTime.setMinutes(Math.floor(endTime.getMinutes() / 10) * 10);
     endTime.setSeconds(0);
     endTime.setMilliseconds(0);
-
     const startTime = new Date(endTime.getTime() - 2 * 60 * 60 * 1000);
-    
-    let newTimes = [];
-    let curr = new Date(startTime);
-    while (curr <= endTime) {
-        newTimes.push(curr.getTime());
-        curr = new Date(curr.getTime() + 10 * 60 * 1000); 
+    const times = [];
+    for (let current = new Date(startTime); current <= endTime; current = new Date(current.getTime() + 10 * 60 * 1000)) {
+        times.push(current.getTime());
     }
-    
-    map.timeDimension.setAvailableTimes(newTimes, 'replace');
+    return times;
 }
 
-updateTimeDimension();
-setInterval(updateTimeDimension, 10 * 60 * 1000); 
+function activateIEMRadarTimeline() {
+    const times = buildIEMRadarTimes();
+    map.timeDimension.setAvailableTimes(times, 'replace');
+    if (times.length) map.timeDimension.setCurrentTime(times[times.length - 1]);
+}
 
-// --- LOOPING RADAR LAYER ---
+activateIEMRadarTimeline();
+window.setInterval(() => {
+    if (map.hasLayer(radarTimeLayer) && !map.hasLayer(mrmsRalaLayer)) {
+        activateIEMRadarTimeline();
+    }
+}, 10 * 60 * 1000);
+
+// --- IEM NEXRAD BACKUP LOOP ---
 const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi", {
     format: 'image/png', transparent: true, opacity: 0.6, layers: 'nexrad-n0q-wmst', attribution: "Data © IEM"
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
-radarTimeLayer.addTo(map);
 
-// --- DIRECT NOAA MRMS RALA — PHASE 2 PARALLEL INTEGRATION ---
-// This latest-frame overlay intentionally remains separate from the existing IEM
-// NEXRAD two-hour loop during the Phase 2 operational comparison. The backend
-// publishes only official NCEP/NODD MRMS data; the browser hides the layer when
-// its valid time exceeds the same 20-minute freshness contract used server-side.
-const MRMS_RALA_LAYER_NAME = 'MRMS RALA — Direct NOAA (Experimental)';
-const MRMS_RALA_IMAGE_URL = 'static/mrms_rala/mrms_rala_conus_latest.png';
-const MRMS_RALA_METADATA_URL = 'static/mrms_rala/mrms_rala_metadata.json';
-const MRMS_RALA_MANIFEST_URL = 'static/mrms_rala/mrms_rala_manifest.json';
-const MRMS_RALA_MANIFEST_POLL_INTERVAL_MS = 90 * 1000;
-const MRMS_RALA_MANIFEST_RETRY_DELAYS_MS = [0, 3000, 8000];
+// --- DIRECT NOAA MRMS RALA — OPERATIONAL TWO-HOUR LOOP ---
+const MRMS_RALA_LAYER_NAME = 'MRMS RALA — Direct NOAA (2-Hour Loop)';
+const MRMS_RALA_DATA_ROOT = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/mrms-rala-data';
+const MRMS_RALA_MANIFEST_URL = `${MRMS_RALA_DATA_ROOT}/mrms_rala_loop_manifest.json`;
+const MRMS_RALA_MANIFEST_POLL_INTERVAL_MS = 60 * 1000;
 const MRMS_RALA_FRESHNESS_LIMIT_MINUTES = 20;
-const MRMS_RALA_DEFAULT_OPACITY = 0.70;
-const MRMS_RALA_OPACITY_STORAGE_KEY = 'wpc-mrms-rala-opacity-v1';
+const MRMS_RALA_DEFAULT_OPACITY = 0.85;
+const MRMS_RALA_OPACITY_STORAGE_KEY = 'wpc-mrms-rala-opacity-v2';
 const MRMS_RALA_TRANSPARENT_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const mrmsRalaPlaceholderBounds = [[20.0, -130.0], [55.0, -60.0]];
 
 const mrmsRalaLayer = L.imageOverlay(
     MRMS_RALA_TRANSPARENT_PLACEHOLDER,
     mrmsRalaPlaceholderBounds,
-    {zIndex: 11, opacity: 0, interactive: false}
+    {zIndex: 11, opacity: 0, interactive: false, className: 'mrms-rala-raster'}
 );
+
+// The source raster is a native-resolution categorical display of reflectivity.
+// Prevent the browser from adding another bilinear-looking smoothing pass when
+// Leaflet scales the full-domain image during map zooms. This keeps the native
+// ~1-km MRMS structure visually crisp without changing any dBZ values.
+function applyMRMSRALABrowserRendering() {
+    const image = mrmsRalaLayer.getElement?.();
+    if (!image) return;
+    image.style.imageRendering = 'pixelated';
+}
+mrmsRalaLayer.on('add load', applyMRMSRALABrowserRendering);
 
 let mrmsRalaMetadata = null;
 let mrmsRalaReady = false;
 let mrmsRalaFresh = false;
 let mrmsRalaLastManifestVersion = '';
 let mrmsRalaManifestCheckInFlight = false;
+let mrmsRalaFrames = [];
+let mrmsRalaCurrentFrame = null;
+let mrmsRalaFrameRequestSerial = 0;
+const mrmsRalaPreloadCache = new Map();
 
 function readMRMSRALAStoredOpacity() {
     try {
@@ -955,6 +971,21 @@ function readMRMSRALAStoredOpacity() {
         console.debug('MRMS RALA opacity preference is unavailable:', error);
     }
     return MRMS_RALA_DEFAULT_OPACITY;
+}
+
+function syncMRMSRALAOpacityWidgets(opacity) {
+    const percent = String(Math.round(opacity * 100));
+    const inlineSlider = document.getElementById('mrms-rala-opacity-inline');
+    const inlineValue = document.getElementById('mrms-rala-opacity-inline-value');
+    if (inlineSlider && inlineSlider.value !== percent) inlineSlider.value = percent;
+    if (inlineValue) inlineValue.textContent = `${percent}%`;
+
+    if (selectedDashboardLayerId === 'mrms-rala-direct') {
+        const genericSlider = document.getElementById('layer-opacity');
+        const genericValue = document.getElementById('opacity-value');
+        if (genericSlider) genericSlider.value = percent;
+        if (genericValue) genericValue.textContent = `${percent}%`;
+    }
 }
 
 const mrmsRalaOpacityTarget = {
@@ -969,11 +1000,17 @@ const mrmsRalaOpacityTarget = {
         } catch (error) {
             console.debug('Unable to persist MRMS RALA opacity preference:', error);
         }
-        mrmsRalaLayer.setOpacity(mrmsRalaReady && mrmsRalaFresh ? opacity : 0);
-        updateMRMSRALATimeBox();
+        mrmsRalaLayer.setOpacity(
+            map.hasLayer(mrmsRalaLayer) && mrmsRalaReady && mrmsRalaFresh ? opacity : 0
+        );
+        syncMRMSRALAOpacityWidgets(opacity);
         return this;
     }
 };
+
+// MRMS RALA is the primary baseline radar. It remains transparent until the
+// rolling NOAA manifest and latest frame pass freshness/validation checks.
+mrmsRalaLayer.addTo(map);
 
 // --- MRMS & SATELLITE QPE LAYERS ---
 const mrmsOptions = { format: 'image/png', transparent: true, opacity: 0.65, attribution: "Data © IEM / NCEP" };
@@ -1940,21 +1977,18 @@ function mrmsRalaAgeMinutes(validTime) {
     return Math.max(0, (Date.now() - parsed.getTime()) / 60000);
 }
 
-function validateMRMSRALAMetadata(metadata, expectedValidTime = null) {
-    if (!metadata || metadata.metadata_mode !== 'mrms_rala_dashboard_v1') {
-        throw new Error('Invalid MRMS RALA metadata mode');
+function validateMRMSRALAManifest(manifest) {
+    if (!manifest || manifest.metadata_mode !== 'mrms_rala_loop_manifest_v2') {
+        throw new Error('Invalid MRMS RALA loop manifest');
     }
-    if (metadata.product !== 'ReflectivityAtLowestAltitude' || metadata.region !== 'CONUS') {
+    if (manifest.product !== 'ReflectivityAtLowestAltitude' || manifest.region !== 'CONUS') {
         throw new Error('Unexpected MRMS RALA product or region');
     }
-    if (expectedValidTime && metadata.source_valid_time_utc !== expectedValidTime) {
-        throw new Error(
-            `MRMS RALA valid-time mismatch: expected ${expectedValidTime}, ` +
-            `found ${metadata.source_valid_time_utc || 'none'}`
-        );
+    if (!manifest.latest_valid_time_utc || !Array.isArray(manifest.frames) || manifest.frames.length < 2) {
+        throw new Error('MRMS RALA loop manifest has an incomplete frame inventory');
     }
 
-    const display = metadata.display || {};
+    const display = manifest.display || {};
     if (String(display.projection || '').toUpperCase() !== 'EPSG:3857') {
         throw new Error(`MRMS RALA expected EPSG:3857 image, found ${display.projection || 'none'}`);
     }
@@ -1967,39 +2001,127 @@ function validateMRMSRALAMetadata(metadata, expectedValidTime = null) {
     if (!Array.isArray(display.color_table) || display.color_table.length < 10) {
         throw new Error('MRMS RALA color-table metadata is missing or incomplete');
     }
+    const bounds = validateRasterBounds(display.leaflet_bounds, MRMS_RALA_LAYER_NAME);
 
-    return {
-        metadata,
-        bounds: validateRasterBounds(display.leaflet_bounds, MRMS_RALA_LAYER_NAME)
-    };
-}
-
-function mrmsRalaRasterUrl(metadata) {
-    const version = encodeURIComponent(
-        metadata?.generated_utc || metadata?.source_valid_time_utc || Date.now()
-    );
-    return `${MRMS_RALA_IMAGE_URL}?v=${version}`;
-}
-
-function preloadMRMSRALAImage(url) {
-    return new Promise((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(url);
-        image.onerror = () => reject(new Error('MRMS RALA raster failed to preload'));
-        image.src = url;
+    let previousTime = Number.NEGATIVE_INFINITY;
+    const frames = manifest.frames.map(item => {
+        const millis = new Date(item.valid_time_utc || '').getTime();
+        if (!Number.isFinite(millis) || millis <= previousTime || !item.png) {
+            throw new Error('MRMS RALA loop frames are invalid or not strictly chronological');
+        }
+        previousTime = millis;
+        return {...item, timeMillis: millis};
     });
+    const latest = frames[frames.length - 1];
+    if (latest.valid_time_utc !== manifest.latest_valid_time_utc) {
+        throw new Error('MRMS RALA loop latest time does not match its final frame');
+    }
+
+    return {manifest, frames, bounds};
+}
+
+function mrmsRalaFrameUrl(frame) {
+    return `${MRMS_RALA_DATA_ROOT}/${frame.png}?v=${encodeURIComponent(frame.valid_time_utc)}`;
+}
+
+function preloadMRMSRALAFrame(frame) {
+    if (!frame) return Promise.reject(new Error('No MRMS RALA frame was supplied'));
+    const url = mrmsRalaFrameUrl(frame);
+    if (mrmsRalaPreloadCache.has(url)) return mrmsRalaPreloadCache.get(url);
+
+    const promise = new Promise((resolve, reject) => {
+        const image = new Image();
+        image.decoding = 'async';
+        image.onload = () => resolve(url);
+        image.onerror = () => reject(new Error(`MRMS RALA frame failed to preload: ${frame.valid_time_utc}`));
+        image.src = url;
+    }).catch(error => {
+        mrmsRalaPreloadCache.delete(url);
+        throw error;
+    });
+    mrmsRalaPreloadCache.set(url, promise);
+    return promise;
+}
+
+function nearestMRMSRALAFrame(timeMillis) {
+    if (!mrmsRalaFrames.length) return null;
+    const target = Number(timeMillis);
+    if (!Number.isFinite(target)) return mrmsRalaFrames[mrmsRalaFrames.length - 1];
+    let best = mrmsRalaFrames[0];
+    let bestDifference = Math.abs(best.timeMillis - target);
+    for (let index = 1; index < mrmsRalaFrames.length; index += 1) {
+        const candidate = mrmsRalaFrames[index];
+        const difference = Math.abs(candidate.timeMillis - target);
+        if (difference < bestDifference) {
+            best = candidate;
+            bestDifference = difference;
+        }
+    }
+    return best;
+}
+
+async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
+    if (!mrmsRalaReady || !mrmsRalaFresh) return false;
+    const frame = nearestMRMSRALAFrame(timeMillis);
+    if (!frame) return false;
+    if (!force && mrmsRalaCurrentFrame?.valid_time_utc === frame.valid_time_utc) {
+        updateMRMSRALATimeBox();
+        return true;
+    }
+
+    const requestSerial = ++mrmsRalaFrameRequestSerial;
+    try {
+        const url = await preloadMRMSRALAFrame(frame);
+        if (requestSerial !== mrmsRalaFrameRequestSerial) return false;
+        mrmsRalaLayer.setUrl(url);
+        mrmsRalaCurrentFrame = frame;
+        mrmsRalaLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
+        const image = mrmsRalaLayer.getElement?.();
+        if (image) image.style.imageRendering = 'auto';
+        updateMRMSRALATimeBox();
+        return true;
+    } catch (error) {
+        console.warn('MRMS RALA loop frame load failed:', error);
+        return false;
+    }
+}
+
+function warmMRMSRALALoopCache() {
+    const frames = [...mrmsRalaFrames].reverse();
+    const workers = Math.min(6, frames.length);
+    let nextIndex = 0;
+    const worker = async () => {
+        while (nextIndex < frames.length) {
+            const frame = frames[nextIndex++];
+            try {
+                await preloadMRMSRALAFrame(frame);
+            } catch (error) {
+                console.debug('MRMS RALA background preload skipped:', error);
+            }
+        }
+    };
+    Promise.all(Array.from({length: workers}, worker)).catch(() => {});
+}
+
+function activateMRMSRALATimeline({jumpToLatest = true} = {}) {
+    if (!mrmsRalaFrames.length) return false;
+    const times = mrmsRalaFrames.map(frame => frame.timeMillis);
+    map.timeDimension.setAvailableTimes(times, 'replace');
+    if (jumpToLatest) map.timeDimension.setCurrentTime(times[times.length - 1]);
+    else showMRMSRALAFrame(map.timeDimension.getCurrentTime());
+    return true;
 }
 
 function applyMRMSRALAFreshnessState() {
-    const age = mrmsRalaAgeMinutes(mrmsRalaMetadata?.source_valid_time_utc);
+    const age = mrmsRalaAgeMinutes(mrmsRalaMetadata?.latest_valid_time_utc);
     mrmsRalaFresh = Boolean(
-        mrmsRalaReady &&
-        Number.isFinite(age) &&
-        age <= MRMS_RALA_FRESHNESS_LIMIT_MINUTES
+        mrmsRalaReady && Number.isFinite(age) && age <= MRMS_RALA_FRESHNESS_LIMIT_MINUTES
     );
-    mrmsRalaLayer.setOpacity(
-        mrmsRalaFresh ? Number(mrmsRalaOpacityTarget.options.opacity) : 0
-    );
+    if (!mrmsRalaFresh) {
+        mrmsRalaLayer.setOpacity(0);
+    } else if (map.hasLayer(mrmsRalaLayer)) {
+        mrmsRalaLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
+    }
     updateMRMSRALATimeBox();
     return mrmsRalaFresh;
 }
@@ -2008,28 +2130,48 @@ function formatMRMSRALATimeBox(metadata) {
     if (!metadata) {
         return `
             <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
-            <span style="color:#ffeb3b;">Loading latest official MRMS reflectivity...</span>
+            <span style="color:#ffeb3b;">Loading official NOAA MRMS loop...</span>
         `;
     }
 
-    const age = mrmsRalaAgeMinutes(metadata.source_valid_time_utc);
-    const ageText = Number.isFinite(age) ? `${age.toFixed(1)} min old` : 'age unavailable';
+    const latestAge = mrmsRalaAgeMinutes(metadata.latest_valid_time_utc);
+    const ageText = Number.isFinite(latestAge) ? `${latestAge.toFixed(1)} min old` : 'age unavailable';
     const opacity = Math.round(Number(mrmsRalaOpacityTarget.options.opacity) * 100);
+    const currentTime = mrmsRalaCurrentFrame?.valid_time_utc || metadata.latest_valid_time_utc;
+    const frameCount = Number(metadata.frame_count || mrmsRalaFrames.length || 0);
+    const spacing = Number(metadata.median_frame_spacing_minutes);
+    const spacingText = Number.isFinite(spacing) ? `${spacing.toFixed(1)}-min median spacing` : 'native MRMS cadence';
+
     if (!mrmsRalaFresh) {
         return `
             <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
-            <span style="color:#ff8a80;font-weight:bold;">STALE — raster hidden</span><br>
-            <span style="color:#ffeb3b;">Valid: ${formatMetadataUTC(metadata.source_valid_time_utc)} (${ageText})</span><br>
+            <span style="color:#ff8a80;font-weight:bold;">STALE — radar hidden</span><br>
+            <span style="color:#ffeb3b;">Latest: ${formatMetadataUTC(metadata.latest_valid_time_utc)} (${ageText})</span><br>
             <span style="font-size:0.82em;color:#d0d0d0;">Waiting for a fresh NOAA MRMS update (&le; ${MRMS_RALA_FRESHNESS_LIMIT_MINUTES} min).</span>
         `;
     }
 
     return `
         <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
-        <span style="color:#4fc3f7;font-weight:bold;">Valid: ${formatMetadataUTC(metadata.source_valid_time_utc)}</span><br>
-        <span style="color:#ffeb3b;">${metadata.source_provider || 'Official NOAA MRMS'} &bull; ${ageText}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">Reflectivity &ge;5 dBZ displayed &bull; opacity ${opacity}%</span>
+        <span style="color:#4fc3f7;font-weight:bold;">Frame: ${formatMetadataUTC(currentTime)}</span><br>
+        <span style="color:#ffeb3b;">Latest: ${formatMetadataUTC(metadata.latest_valid_time_utc)} &bull; ${ageText}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">${frameCount} frames &bull; ${spacingText} &bull; &ge;5 dBZ</span>
+        <div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.18);">
+            <label for="mrms-rala-opacity-inline" style="display:flex;justify-content:space-between;gap:10px;font-size:0.82em;color:#e6e6e6;">
+                <span>Radar opacity</span><strong id="mrms-rala-opacity-inline-value">${opacity}%</strong>
+            </label>
+            <input id="mrms-rala-opacity-inline" type="range" min="10" max="100" step="5" value="${opacity}" style="width:100%;margin-top:3px;">
+        </div>
     `;
+}
+
+function bindMRMSRALAOpacityControl() {
+    const slider = document.getElementById('mrms-rala-opacity-inline');
+    if (!slider || slider.dataset.bound === '1') return;
+    slider.dataset.bound = '1';
+    slider.addEventListener('input', event => {
+        mrmsRalaOpacityTarget.setOpacity(Number(event.target.value) / 100);
+    });
 }
 
 function updateMRMSRALATimeBox() {
@@ -2042,6 +2184,7 @@ function updateMRMSRALATimeBox() {
     }
     box.innerHTML = formatMRMSRALATimeBox(mrmsRalaMetadata);
     box.style.display = 'block';
+    bindMRMSRALAOpacityControl();
     refreshLegendDockSummary();
 }
 
@@ -2076,91 +2219,51 @@ function buildMRMSRALALegendHTML() {
     `;
 }
 
-async function fetchMRMSRALAMetadata({expectedValidTime = null} = {}) {
-    const response = await fetch(`${MRMS_RALA_METADATA_URL}?t=${Date.now()}`, {cache: 'no-store'});
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const metadata = await response.json();
-    const validated = validateMRMSRALAMetadata(metadata, expectedValidTime);
-    const rasterUrl = mrmsRalaRasterUrl(metadata);
-    await preloadMRMSRALAImage(rasterUrl);
-
-    mrmsRalaLayer.setBounds(validated.bounds);
-    mrmsRalaLayer.setUrl(rasterUrl);
-    mrmsRalaMetadata = metadata;
-    mrmsRalaReady = true;
-    applyMRMSRALAFreshnessState();
-    if (typeof updateLegends === 'function') updateLegends();
-    return true;
-}
-
 function mrmsRalaManifestVersion(manifest) {
-    return [manifest?.latest_valid_time_utc || '', manifest?.generated_utc || ''].join('|');
-}
-
-function waitForMRMSRALARefresh(milliseconds) {
-    return new Promise(resolve => window.setTimeout(resolve, milliseconds));
+    return [manifest?.latest_valid_time_utc || '', manifest?.generated_utc || '', manifest?.frame_count || ''].join('|');
 }
 
 async function fetchMRMSRALAManifest() {
     const response = await fetch(`${MRMS_RALA_MANIFEST_URL}?t=${Date.now()}`, {cache: 'no-store'});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const manifest = await response.json();
-    if (
-        !manifest ||
-        manifest.metadata_mode !== 'mrms_rala_dashboard_manifest_v1' ||
-        !manifest.latest_valid_time_utc
-    ) {
-        throw new Error('Invalid MRMS RALA manifest');
-    }
-    return manifest;
+    return response.json();
 }
 
 async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
     if (mrmsRalaManifestCheckInFlight) return false;
     mrmsRalaManifestCheckInFlight = true;
     try {
-        const manifest = await fetchMRMSRALAManifest();
-        const manifestAge = mrmsRalaAgeMinutes(manifest.latest_valid_time_utc);
-        if (manifestAge > MRMS_RALA_FRESHNESS_LIMIT_MINUTES) {
-            if (mrmsRalaMetadata?.source_valid_time_utc === manifest.latest_valid_time_utc) {
-                applyMRMSRALAFreshnessState();
-            } else {
-                mrmsRalaFresh = false;
-                mrmsRalaLayer.setOpacity(0);
-                updateMRMSRALATimeBox();
-            }
-            console.warn(`MRMS RALA manifest is stale (${manifestAge.toFixed(1)} minutes old); raster hidden.`);
-            return false;
-        }
+        const rawManifest = await fetchMRMSRALAManifest();
+        const validated = validateMRMSRALAManifest(rawManifest);
+        const version = mrmsRalaManifestVersion(rawManifest);
+        const changed = forceMetadata || !version || version !== mrmsRalaLastManifestVersion;
 
-        const version = mrmsRalaManifestVersion(manifest);
-        if (!forceMetadata && version && version === mrmsRalaLastManifestVersion) {
+        if (changed) {
+            mrmsRalaMetadata = validated.manifest;
+            mrmsRalaFrames = validated.frames;
+            mrmsRalaLayer.setBounds(validated.bounds);
+            mrmsRalaReady = true;
+            mrmsRalaLastManifestVersion = version;
             applyMRMSRALAFreshnessState();
-            return false;
+
+            if (mrmsRalaFresh) {
+                await preloadMRMSRALAFrame(mrmsRalaFrames[mrmsRalaFrames.length - 1]);
+                if (map.hasLayer(mrmsRalaLayer)) {
+                    activateMRMSRALATimeline({jumpToLatest: true});
+                    await showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
+                }
+                warmMRMSRALALoopCache();
+            }
+            if (typeof updateLegends === 'function') updateLegends();
+            return true;
         }
 
-        for (const delay of MRMS_RALA_MANIFEST_RETRY_DELAYS_MS) {
-            if (delay > 0) await waitForMRMSRALARefresh(delay);
-            try {
-                await fetchMRMSRALAMetadata({expectedValidTime: manifest.latest_valid_time_utc});
-                mrmsRalaLastManifestVersion = version;
-                return true;
-            } catch (error) {
-                console.warn('MRMS RALA package not synchronized yet:', error);
-            }
-        }
-        console.warn('MRMS RALA manifest changed, but the synchronized raster package is not available yet.');
+        applyMRMSRALAFreshnessState();
         return false;
     } catch (error) {
-        console.error('MRMS RALA manifest check failed:', error);
-        applyMRMSRALAFreshnessState();
-        if (forceMetadata && !mrmsRalaReady) {
-            try {
-                return await fetchMRMSRALAMetadata();
-            } catch (fallbackError) {
-                console.error('Initial MRMS RALA metadata fetch failed:', fallbackError);
-            }
-        }
+        console.error('MRMS RALA loop manifest check failed:', error);
+        if (!mrmsRalaReady) mrmsRalaLayer.setOpacity(0);
+        updateMRMSRALATimeBox();
         return false;
     } finally {
         mrmsRalaManifestCheckInFlight = false;
@@ -3792,18 +3895,21 @@ if (typeof legendDockCompactMedia.addEventListener === 'function') {
     });
 }
 
-// Update radar loop timestamps dynamically as player plays
-map.timeDimension.on('timeload', function() {
+// Update the active radar source as the shared time player advances.
+map.timeDimension.on('timeload', function(event) {
+    const currentTime = Number(event?.time ?? map.timeDimension.getCurrentTime());
+    if (map.hasLayer(mrmsRalaLayer)) {
+        showMRMSRALAFrame(currentTime);
+        return;
+    }
+
     const radarTimeBox = document.getElementById('radar-time-box');
-    if (radarTimeBox && radarTimeBox.style.display === 'block') {
-        const hasRadar = Array.from(activeLayerNames).some(name => name.includes('NEXRAD Radar'));
-        if (hasRadar) {
-            const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
-            radarTimeBox.innerHTML = `
-                <strong>NEXRAD Radar Loop</strong><br>
-                <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
-            `;
-        }
+    if (radarTimeBox && radarTimeBox.style.display === 'block' && map.hasLayer(radarTimeLayer)) {
+        const currentFrameTime = new Date(currentTime);
+        radarTimeBox.innerHTML = `
+            <strong>IEM NEXRAD Backup Loop</strong><br>
+            <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
+        `;
     }
 });
 
@@ -4365,11 +4471,12 @@ map.on('overlayadd', function(eventLayer) {
     }
 
     if (eventLayer.name === MRMS_RALA_LAYER_NAME) {
-        if (mrmsRalaTimeBox) {
-            mrmsRalaTimeBox.innerHTML = formatMRMSRALATimeBox(mrmsRalaMetadata);
-            mrmsRalaTimeBox.style.display = 'block';
-        }
+        updateMRMSRALATimeBox();
         applyMRMSRALAFreshnessState();
+        if (mrmsRalaReady && mrmsRalaFresh) {
+            activateMRMSRALATimeline({jumpToLatest: true});
+            showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
+        }
         refreshMRMSRALAFromManifest({forceMetadata: !mrmsRalaReady});
     }
 
@@ -4535,7 +4642,7 @@ map.on('overlayadd', function(eventLayer) {
         radarTimeBox.style.display = 'block';
         const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
         radarTimeBox.innerHTML = `
-            <strong>NEXRAD Radar Loop</strong><br>
+            <strong>IEM NEXRAD Backup Loop</strong><br>
             <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
         `;
     }
@@ -4651,7 +4758,7 @@ map.on('overlayremove', function(eventLayer) {
 
 // --- SIDEBAR LAYER REGISTRY & CONTROLS ---
 // This registry is the single source of truth for layer order, labels, search,
-// sidebar selection, opacity utilities, and future experimental additions.
+// sidebar selection, opacity utilities, and future additions.
 const baseMapRegistry = [
     {id: 'wpc-dark-reference', label: 'WPC Dark Reference', layer: wpcDarkReferenceBase, referenceLayers: [wpcDarkCountryLabels], borderTone: 'white', canvasColor: '#25282b'},
     {id: 'esri-dark', label: 'Esri Dark Gray', layer: esriDarkBase, referenceLayer: esriDarkLabels, borderTone: 'white'},
@@ -4678,6 +4785,29 @@ function enforceExclusiveGLMSelection(activeEntry) {
     });
 }
 
+function enforceExclusiveRadarSelection(activeEntry) {
+    getAllDashboardLayerEntries().forEach(entry => {
+        if (
+            entry !== activeEntry &&
+            entry.exclusiveGroup === 'radar-primary' &&
+            map.hasLayer(entry.layer)
+        ) {
+            setDashboardLayerActive(entry, false);
+        }
+    });
+
+    if (activeEntry.id === 'mrms-rala-direct') {
+        if (mrmsRalaReady && mrmsRalaFresh) {
+            activateMRMSRALATimeline({jumpToLatest: true});
+            showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
+        } else {
+            refreshMRMSRALAFromManifest({forceMetadata: !mrmsRalaReady});
+        }
+    } else if (activeEntry.id === 'nexrad-loop') {
+        activateIEMRadarTimeline();
+    }
+}
+
 const dashboardSections = [
     {
         id: 'hazards',
@@ -4694,8 +4824,8 @@ const dashboardSections = [
         id: 'radar-satellite',
         title: 'Radar and Satellite Data (Real-Time)',
         layers: [
-            {id: 'nexrad-loop', label: 'NEXRAD Radar (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, defaultActive: true},
-            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD lowest altitude 0.5 km experimental'},
+            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km two hour loop'},
+            {id: 'nexrad-loop', label: 'IEM NEXRAD Radar — Backup (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, defaultActive: false},
             {id: 'mrms-ffd', label: 'MRMS DVD Flash Flood Detector', layer: ffdLayer, kind: 'vector'},
             {id: 'mrms-qpe-1h', label: 'MRMS 1-Hour QPE', layer: mrms1hr, kind: 'raster'},
             {id: 'mrms-qpe-24h', label: 'MRMS 24-Hour QPE', layer: mrms24hr, kind: 'raster'},
@@ -5390,7 +5520,8 @@ setTimeout(() => {
     if (map.hasLayer(watchesLayer)) activeLayerNames.add("Active Hydro Watches");
     if (map.hasLayer(mpdLayer)) activeLayerNames.add("WPC Active MPDs");
     if (map.hasLayer(eroLayer)) activeLayerNames.add("Day 1 ERO (Real-Time)");
-    if (map.hasLayer(radarTimeLayer)) activeLayerNames.add("NEXRAD Radar (2-Hour Loop)");
+    if (map.hasLayer(mrmsRalaLayer)) activeLayerNames.add(MRMS_RALA_LAYER_NAME);
+    if (map.hasLayer(radarTimeLayer)) activeLayerNames.add('IEM NEXRAD Radar — Backup (2-Hour Loop)');
     
     if (map.hasLayer(ffdLayer)) activeLayerNames.add("MRMS DVD Flash Flood Detector");
     if (map.hasLayer(mrms1hr)) activeLayerNames.add("MRMS 1-Hour QPE");
@@ -5402,9 +5533,13 @@ setTimeout(() => {
         radarTimeBox.style.display = 'block';
         const currentFrameTime = new Date(map.timeDimension.getCurrentTime());
         radarTimeBox.innerHTML = `
-            <strong>NEXRAD Radar Loop</strong><br>
+            <strong>IEM NEXRAD Backup Loop</strong><br>
             <span style="color: #ffeb3b; font-weight: bold; font-size: 1.05em;">Frame: ${formatUTC(currentFrameTime)}</span>
         `;
+    }
+    if (map.hasLayer(mrmsRalaLayer)) {
+        updateMRMSRALATimeBox();
+        if (mrmsRalaReady && mrmsRalaFresh) activateMRMSRALATimeline({jumpToLatest: true});
     }
     
     const ffdTimeBox = document.getElementById('ffd-time-box');
