@@ -16,9 +16,10 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 
 errors = []
 
-# Current registry total: 121 dashboard data/config entries + 14 basemap entries.
-# Black Canvas is additive and does not remove or replace any existing layer.
-EXPECTED_LAYER_COUNT = 135
+# Current registry total: 121 dashboard data/config entries + 15 basemap entries.
+# WPC Dark Reference is additive and becomes the operational default; Black Canvas
+# and every previously registered layer/basemap remain present.
+EXPECTED_LAYER_COUNT = 136
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -548,6 +549,50 @@ required_black_canvas_fragments = [
 for fragment in required_black_canvas_fragments:
     if fragment not in app:
         errors.append(f"Missing Black Canvas basemap contract: {fragment}")
+
+required_wpc_dark_reference_fragments = [
+    "const WPC_DARK_COUNTRIES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson';",
+    "const WPC_DARK_PLACES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_populated_places_simple.geojson';",
+    "const TIGER_CURRENT_WMS_URL = 'https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer';",
+    "const TIGER_TRANSPORTATION_TILES_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/tile/{z}/{y}/{x}';",
+    "const wpcDarkReferenceBase = L.layerGroup([wpcDarkCountryPolygons]);",
+    "{id: 'wpc-dark-reference', label: 'WPC Dark Reference'",
+    "canvasColor: '#25282b'",
+    "wpcDarkReferenceBase.addTo(map);",
+    "wpcDarkCountryLabels.addTo(map);",
+    "map.createPane('wpcDarkBase')",
+    "map.createPane('mapReferenceBase')",
+    "map.createPane('mapReference')",
+    "const mapReferenceOverlayConfigs = [",
+    "refId: 'state-territory-names'",
+    "refId: 'major-cities-places'",
+    "refId: 'major-roads'",
+    "refId: 'county-boundaries'",
+    "refId: 'urban-areas'",
+    "refId: 'international-boundaries'",
+    "map-reference-overlay-controls",
+    "setMapReferenceOverlayVisible",
+]
+for fragment in required_wpc_dark_reference_fragments:
+    if fragment not in app:
+        errors.append(f"Missing WPC Dark Reference contract: {fragment}")
+
+# WPC Dark Reference must be the first basemap entry so startup and Restore
+# Defaults resolve to it without special-case menu logic.
+base_registry_start = app.find("const baseMapRegistry = [")
+if base_registry_start < 0:
+    errors.append("Basemap registry is missing.")
+else:
+    base_registry_window = app[base_registry_start:base_registry_start + 700]
+    wpc_pos = base_registry_window.find("{id: 'wpc-dark-reference', label: 'WPC Dark Reference'")
+    esri_pos = base_registry_window.find("{id: 'esri-dark', label: 'Esri Dark Gray'")
+    black_pos = base_registry_window.find("{id: 'black-canvas', label: 'Black Canvas'")
+    if not (wpc_pos >= 0 and esri_pos > wpc_pos and black_pos > esri_pos):
+        errors.append("WPC Dark Reference is not the first/default basemap while preserving Esri Dark and Black Canvas.")
+
+# Preserve the exact white state-border styling Andrew approved for dark maps.
+if "style: { color: 'rgba(255, 255, 255, 0.8)', weight: 1.5, fillOpacity: 0 }" not in app:
+    errors.append("Approved white state-border styling changed unexpectedly.")
 
 if ids.count(LIGHTNINGCAST_LAYER_ID) != 1:
     errors.append(
