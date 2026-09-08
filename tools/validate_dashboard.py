@@ -13,13 +13,15 @@ lightningcast_generator = (ROOT / "fetch_lightningcast.py").read_text(encoding="
 lightningcast_workflow = (ROOT / ".github" / "workflows" / "update_lightningcast.yml").read_text(encoding="utf-8")
 hrrr_tle_generator = (ROOT / "fetch_hrrr_tle.py").read_text(encoding="utf-8")
 hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").read_text(encoding="utf-8")
+mrms_rala_generator = (ROOT / "fetch_mrms_rala.py").read_text(encoding="utf-8")
+mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").read_text(encoding="utf-8")
 
 errors = []
 
-# Current registry total: 121 dashboard data/config entries + 15 basemap entries.
+# Current registry total: 122 dashboard data/config entries + 15 basemap entries.
 # WPC Dark Reference is additive and becomes the operational default; Black Canvas
 # and every previously registered layer/basemap remain present.
-EXPECTED_LAYER_COUNT = 136
+EXPECTED_LAYER_COUNT = 137
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -60,6 +62,7 @@ if (
 required_labels = [
     "Active Hydro Warnings & Advisories",
     "NEXRAD Radar (2-Hour Loop)",
+    "MRMS RALA — Direct NOAA (Experimental)",
     "MRMS FLASH CREST Unit Q — Rolling 24-Hour Maximum",
     "MRMS FLASH FFD — Rolling 24-Hour Maximum Category",
     "GOES GLM Controlled Mosaic — Latest 5-Minute FED",
@@ -112,6 +115,20 @@ radar_start = app.find("title: 'Radar and Satellite Data (Real-Time)'")
 antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
 if radar_start >= 0 and antecedent_start > radar_start:
     radar_block = app[radar_start:antecedent_start]
+
+    # Phase 2 keeps the existing IEM NEXRAD loop first and adds the direct NOAA
+    # MRMS RALA layer immediately after it for controlled side-by-side testing.
+    parallel_radar_labels = [
+        "{id: 'nexrad-loop'",
+        "{id: 'mrms-rala-direct'",
+        "{id: 'mrms-ffd'",
+    ]
+    parallel_radar_positions = [radar_block.find(label) for label in parallel_radar_labels]
+    if any(position < 0 for position in parallel_radar_positions):
+        errors.append("Radar section is missing the Phase 2 direct MRMS RALA placement contract.")
+    elif parallel_radar_positions != sorted(parallel_radar_positions):
+        errors.append("Direct MRMS RALA is not positioned immediately after the existing NEXRAD loop.")
+
     radar_labels = [
         "{id: 'mrms-qpe-24h'",
         "{id: 'mrms-flash-crest-24h'",
@@ -165,6 +182,63 @@ if antecedent_start >= 0 and rap_start > antecedent_start:
             "Antecedent Hydrologic Conditions layers are not in the "
             "required order."
         )
+
+# Confirm Phase 2 direct NOAA MRMS RALA, automatic freshness handling,
+# dynamic legend/time box, and the reusable selected-raster opacity control.
+required_mrms_rala_fragments = [
+    "MRMS RALA — Direct NOAA (Experimental)",
+    "static/mrms_rala/mrms_rala_conus_latest.png",
+    "static/mrms_rala/mrms_rala_metadata.json",
+    "static/mrms_rala/mrms_rala_manifest.json",
+    "mrms_rala_dashboard_v1",
+    "mrms_rala_dashboard_manifest_v1",
+    "MRMS_RALA_FRESHNESS_LIMIT_MINUTES = 20",
+    "MRMS_RALA_DEFAULT_OPACITY = 0.70",
+    "wpc-mrms-rala-opacity-v1",
+    "mrmsRalaOpacityTarget",
+    "refreshMRMSRALAFromManifest",
+    "applyMRMSRALAFreshnessState",
+    "buildMRMSRALALegendHTML",
+    "mrms-rala-time-box",
+    "visible_minimum_dbz) !== 5.0",
+    "display.resampling !== 'nearest-neighbor'",
+    "display.smoothing !== false",
+    "layer-opacity-label",
+]
+for fragment in required_mrms_rala_fragments:
+    if fragment not in app:
+        errors.append(f"Missing direct MRMS RALA integration fragment: {fragment}")
+
+required_mrms_rala_generator_fragments = [
+    'NCEP_DIR = "https://mrms.ncep.noaa.gov/2D/ReflectivityAtLowestAltitude/"',
+    'NODD_ROOT = "https://noaa-mrms-pds.s3.amazonaws.com"',
+    'NODD_PREFIX_ROOT = "CONUS/ReflectivityAtLowestAltitude_00.50"',
+    'MIN_VISIBLE_DBZ = 5.0',
+    'DEFAULT_FRESHNESS_MINUTES = 20.0',
+    'Resampling.nearest',
+    '"metadata_mode": "mrms_rala_dashboard_v1"',
+    '"metadata_mode": "mrms_rala_dashboard_manifest_v1"',
+    '"transactional_publish": True',
+]
+for fragment in required_mrms_rala_generator_fragments:
+    if fragment not in mrms_rala_generator:
+        errors.append(f"Missing MRMS RALA generator contract fragment: {fragment}")
+
+required_mrms_rala_workflow_fragments = [
+    "name: Update MRMS RALA Direct NOAA",
+    "actions/checkout@v5",
+    "actions/setup-python@v6",
+    "cron: '3,13,23,33,43,53 * * * *'",
+    '--source-mode "${SOURCE_MODE:-auto}"',
+    "--freshness-minutes 20",
+    "--output-width 6400",
+    'python tools/validate_mrms_rala.py "$MRMS_RALA_OUTPUT_DIR"',
+    "publish_dir='static/mrms_rala'",
+    'git pull --rebase origin "$BRANCH_NAME"',
+]
+for fragment in required_mrms_rala_workflow_fragments:
+    if fragment not in mrms_rala_workflow:
+        errors.append(f"Missing MRMS RALA production workflow fragment: {fragment}")
 
 # Confirm the rolling MRMS FLASH files, metadata, legends, and time boxes are
 # wired into the dashboard.
@@ -649,6 +723,10 @@ if "glm-v1" not in index and "glm-v2" not in index:
     errors.append(
         "Frontend cache-busting token for GOES GLM integration is missing."
     )
+if "mrms-rala-phase2-v1" not in index:
+    errors.append(
+        "Frontend cache-busting token for MRMS RALA Phase 2 integration is missing."
+    )
 
 if errors:
     print("Dashboard validation FAILED:")
@@ -658,7 +736,7 @@ if errors:
 
 print(
     "Dashboard validation passed: "
-    f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
+    f"{len(ids)} registered layers; menu order, direct MRMS RALA/opacity/freshness, MRMS FLASH order, "
     "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
