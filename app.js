@@ -448,7 +448,7 @@ const usgsImageryTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest
 // neighboring land and water are dark gray so bright operational data dominate.
 const WPC_DARK_COUNTRIES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson';
 const WPC_DARK_PLACES_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_populated_places_simple.geojson';
-const TIGER_CURRENT_WMS_URL = 'https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer';
+const TIGER_CURRENT_MAPSERVER_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer';
 const TIGER_TRANSPORTATION_TILES_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation/MapServer/tile/{z}/{y}/{x}';
 
 function isUSReferenceFeature(feature) {
@@ -475,6 +475,7 @@ const wpcDarkReferenceBase = L.layerGroup([wpcDarkCountryPolygons]);
 const wpcDarkCountryLabels = L.layerGroup();
 let wpcCountryLabelFeatures = [];
 const wpcMajorCitiesPlacesLayer = L.layerGroup();
+const wpcStateTerritoryNamesLayer = L.layerGroup();
 const wpcInternationalBoundariesLayer = L.geoJSON(null, {
     pane: 'mapReference',
     interactive: false,
@@ -486,36 +487,118 @@ const wpcInternationalBoundariesLayer = L.geoJSON(null, {
     }
 });
 
-const wpcStateTerritoryNamesLayer = L.tileLayer.wms(TIGER_CURRENT_WMS_URL, {
-    layers: '81',
-    format: 'image/png',
-    transparent: true,
-    version: '1.3.0',
-    pane: 'labels',
-    opacity: 0.92,
-    attribution: 'U.S. Census Bureau TIGERweb'
-});
+// TIGERweb's WMS endpoint proved unreliable in the live dashboard for the
+// state-label, county-boundary, and urban-area toggles. Use the same official
+// 2026 TIGERweb MapServer through its GeoJSON query API instead. These layers
+// are lazy-loaded only while visible and are spatially limited to the current
+// map view, so the controls remain responsive without downloading nationwide
+// high-detail geometry on startup.
+function censusQueryUrl(layerId, bounds, maxAllowableOffset, outFields = 'OBJECTID') {
+    const params = new URLSearchParams({
+        where: '1=1',
+        outFields,
+        returnGeometry: 'true',
+        outSR: '4326',
+        f: 'geojson'
+    });
+    if (bounds) {
+        params.set('geometry', `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`);
+        params.set('geometryType', 'esriGeometryEnvelope');
+        params.set('inSR', '4326');
+        params.set('spatialRel', 'esriSpatialRelIntersects');
+    }
+    if (Number.isFinite(maxAllowableOffset) && maxAllowableOffset > 0) {
+        params.set('maxAllowableOffset', String(maxAllowableOffset));
+        params.set('geometryPrecision', maxAllowableOffset >= 0.02 ? '3' : '5');
+    }
+    return `${TIGER_CURRENT_MAPSERVER_URL}/${layerId}/query?${params.toString()}`;
+}
 
-const wpcCountyBoundariesLayer = L.tileLayer.wms(TIGER_CURRENT_WMS_URL, {
-    layers: '82',
-    format: 'image/png',
-    transparent: true,
-    version: '1.3.0',
+function createCensusViewportGeoJSONLayer(layerId, options = {}) {
+    const target = L.geoJSON(null, {
+        pane: options.pane || 'mapReference',
+        interactive: false,
+        style: options.style
+    });
+    let controller = null;
+    let requestSerial = 0;
+    let refreshTimer = null;
+
+    const offsetForZoom = zoom => {
+        if (zoom <= 5) return 0.05;
+        if (zoom === 6) return 0.025;
+        if (zoom === 7) return 0.0125;
+        if (zoom === 8) return 0.006;
+        return 0.003;
+    };
+
+    const refresh = () => {
+        if (!map.hasLayer(target)) return;
+        const zoom = map.getZoom();
+        if (zoom < (options.minZoom ?? 0)) {
+            target.clearLayers();
+            return;
+        }
+        if (controller) controller.abort();
+        controller = new AbortController();
+        const serial = ++requestSerial;
+        const bounds = map.getBounds().pad(0.08);
+        const url = censusQueryUrl(layerId, bounds, offsetForZoom(zoom));
+        fetch(url, {signal: controller.signal})
+            .then(response => {
+                if (!response.ok) throw new Error(`TIGERweb layer ${layerId} HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                if (serial !== requestSerial || !map.hasLayer(target)) return;
+                target.clearLayers();
+                target.addData(data);
+            })
+            .catch(error => {
+                if (error?.name !== 'AbortError') {
+                    console.warn(`TIGERweb layer ${layerId} unavailable:`, error);
+                }
+            });
+    };
+
+    const queueRefresh = () => {
+        if (!map.hasLayer(target)) return;
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(refresh, 120);
+    };
+
+    target.on('add', queueRefresh);
+    target.on('remove', () => {
+        clearTimeout(refreshTimer);
+        if (controller) controller.abort();
+        controller = null;
+    });
+    map.on('moveend zoomend', queueRefresh);
+    target.refreshFromMap = refresh;
+    return target;
+}
+
+const wpcCountyBoundariesLayer = createCensusViewportGeoJSONLayer(82, {
     pane: 'mapReference',
-    opacity: 0.72,
     minZoom: 5,
-    attribution: 'U.S. Census Bureau TIGERweb'
+    style: {
+        color: 'rgba(190, 195, 200, 0.68)',
+        weight: 0.75,
+        opacity: 0.78,
+        fillOpacity: 0
+    }
 });
 
-const wpcUrbanAreasLayer = L.tileLayer.wms(TIGER_CURRENT_WMS_URL, {
-    layers: '88',
-    format: 'image/png',
-    transparent: true,
-    version: '1.3.0',
+const wpcUrbanAreasLayer = createCensusViewportGeoJSONLayer(88, {
     pane: 'mapReferenceBase',
-    opacity: 0.18,
     minZoom: 5,
-    attribution: 'U.S. Census Bureau TIGERweb'
+    style: {
+        color: 'rgba(115, 150, 175, 0.28)',
+        weight: 0.35,
+        opacity: 0.45,
+        fillColor: '#6c8ca4',
+        fillOpacity: 0.16
+    }
 });
 
 const wpcMajorRoadsLayer = L.tileLayer(TIGER_TRANSPORTATION_TILES_URL, {
@@ -552,6 +635,58 @@ function makeWPCReferenceLabel(text, options = {}) {
 }
 
 let wpcMajorPlaceFeatures = [];
+let wpcStateTerritoryFeatures = [];
+
+function refreshWPCStateTerritoryLabels() {
+    wpcStateTerritoryNamesLayer.clearLayers();
+    if (!map.hasLayer(wpcStateTerritoryNamesLayer) || !wpcStateTerritoryFeatures.length) return;
+    const zoom = map.getZoom();
+
+    wpcStateTerritoryFeatures.forEach(feature => {
+        const attributes = feature?.attributes || feature?.properties || {};
+        const latitude = Number(attributes.CENTLAT ?? attributes.centlat);
+        const longitude = Number(attributes.CENTLON ?? attributes.centlon);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+        const abbreviation = String(attributes.STUSAB ?? attributes.stusab ?? '').trim();
+        const fullName = String(attributes.BASENAME ?? attributes.basename ?? attributes.NAME ?? attributes.name ?? '').trim();
+        const label = zoom >= 7 ? (fullName || abbreviation) : (abbreviation || fullName);
+        if (!label) return;
+
+        L.marker([latitude, longitude], {
+            pane: 'labels',
+            interactive: false,
+            keyboard: false,
+            icon: makeWPCReferenceLabel(label, {
+                size: zoom >= 7 ? '11px' : '10px',
+                weight: '700',
+                color: '#eef1f4',
+                transform: zoom >= 7 ? 'none' : 'uppercase',
+                spacing: zoom >= 7 ? '0.01em' : '0.06em'
+            })
+        }).addTo(wpcStateTerritoryNamesLayer);
+    });
+}
+
+function loadWPCStateTerritoryLabels() {
+    const params = new URLSearchParams({
+        where: '1=1',
+        outFields: 'STUSAB,BASENAME,NAME,CENTLAT,CENTLON',
+        returnGeometry: 'false',
+        f: 'json'
+    });
+    fetch(`${TIGER_CURRENT_MAPSERVER_URL}/80/query?${params.toString()}`)
+        .then(response => {
+            if (!response.ok) throw new Error(`TIGERweb state labels HTTP ${response.status}`);
+            return response.json();
+        })
+        .then(data => {
+            wpcStateTerritoryFeatures = Array.isArray(data.features) ? data.features : [];
+            refreshWPCStateTerritoryLabels();
+        })
+        .catch(error => console.warn('WPC state/territory labels unavailable:', error));
+}
+
 
 function refreshWPCDarkCountryLabels() {
     wpcDarkCountryLabels.clearLayers();
@@ -654,9 +789,12 @@ fetch(WPC_DARK_PLACES_URL)
     })
     .catch(error => console.warn('WPC Dark Reference populated places unavailable:', error));
 
+loadWPCStateTerritoryLabels();
+
 map.on('zoomend', () => {
     refreshWPCDarkCountryLabels();
     refreshWPCMajorPlaceLabels();
+    refreshWPCStateTerritoryLabels();
 });
 
 // WPC Black Canvas — a true near-black background with no external tile
