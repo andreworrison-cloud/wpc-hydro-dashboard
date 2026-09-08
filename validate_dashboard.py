@@ -16,23 +16,19 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 
 errors = []
 
-# Historical validator count includes both dashboard overlay registry objects and basemap registry entries.
-# Basemap Expansion v1 adds 9 new basemap entries (4 -> 13), so the regex count moves 123 -> 132.
-EXPECTED_LAYER_COUNT = 132
-LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
+# HRRR diagnostics (2) + HRRR-TLE (18) yield 121 non-basemap registered dashboard layers.
+# Basemaps are validated separately so future basemap additions do not alter the data-layer contract.
+EXPECTED_DATA_LAYER_COUNT = 121
 EXPECTED_BASEMAP_IDS = [
     "esri-dark", "esri-light", "osm", "esri-street", "humanitarian-osm",
     "opentopo", "esri-topo", "usgs-topo", "usgs-shaded-relief",
     "esri-imagery", "usgs-imagery", "usgs-imagery-topo", "none",
 ]
-
-# Expanded basemap suite is deliberately separate from the registered data-layer count.
-for basemap_id in EXPECTED_BASEMAP_IDS:
-    if app.count(f"id: '{basemap_id}'") != 1:
-        errors.append(f"Expected exactly one basemap registry entry: {basemap_id}")
+LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 required_basemap_fragments = [
     "World_Light_Gray_Base",
+    "World_Light_Gray_Reference",
     "World_Street_Map",
     "tile.openstreetmap.fr/hot",
     "tile.opentopomap.org",
@@ -56,6 +52,7 @@ required_sections = [
     "Radar and Satellite Data (Real-Time)",
     "Antecedent Hydrologic Conditions",
     "RAP Mesoanalysis Data",
+    "HRRR Flash Flood Diagnostics - Experimental",
     "HRRR-TLE Flash Flood Guidance - Experimental",
     "CAM Nowcasts (+3h to +9h)",
     "CAM Nowcasts (+9h to +15h)",
@@ -102,6 +99,8 @@ required_labels = [
     "850mb Moisture Transport",
     "3-Hour 850mb Moisture Transport Change",
     "+3h Forecast:</b> 850mb Moisture Transport",
+    "Max FFG Exceedance Ratio — Next 12 Hours",
+    "FFG Exceedance Areal Coverage — Next 12 Hours",
     "FFG Exceedance Consensus",
     "Median Neighborhood-Max QPF / FFG Ratio",
     "1-h FFG Exceedance",
@@ -318,12 +317,16 @@ for fragment in required_lightningcast_workflow_fragments:
 
 # HRRR-TLE V3.3 dashboard integration contract.
 required_hrrr_tle_app_fragments = [
+    "HRRR Flash Flood Diagnostics - Experimental",
+    "HRRR_DIAGNOSTIC_LAYER_CONFIGS",
+    "hrrr-diagnostics-time-box",
+    "Max FFG Exceedance Ratio — Next 12 Hours",
+    "FFG Exceedance Areal Coverage — Next 12 Hours",
     "HRRR-TLE Flash Flood Guidance - Experimental",
     "HRRR_TLE_LAYER_CONFIGS",
     "static/hrrr_tle_manifest.json",
     "static/hrrr_tle_metadata.json",
     "hrrr-tle-time-box",
-    "'lightningcast-time-box',\n        'hrrr-tle-time-box',\n        'nwm-time-box'",
     "buildHRRRTLELegendHTML",
     "refreshHRRRTLEFromManifest",
     "hrrr_tle_dashboard_v3_3",
@@ -339,14 +342,56 @@ for fragment in required_hrrr_tle_app_fragments:
     if fragment not in app:
         errors.append(f"Missing HRRR-TLE dashboard integration fragment: {fragment}")
 
+# Verify the current legend-dock time-box order without depending on exact
+# whitespace from an older app.js revision.
+legend_dock_marker = "].forEach(id => createLegendDockTimeBox(timeStack, id));"
+legend_dock_end = app.find(legend_dock_marker)
+if legend_dock_end < 0:
+    errors.append("Missing legend-dock time-box creation block.")
+else:
+    legend_dock_start = app.rfind("[", 0, legend_dock_end)
+    legend_dock_block = (
+        app[legend_dock_start:legend_dock_end]
+        if legend_dock_start >= 0
+        else ""
+    )
+    required_hrrr_time_boxes = [
+        "'lightningcast-time-box'",
+        "'hrrr-diagnostics-time-box'",
+        "'hrrr-tle-time-box'",
+        "'nwm-time-box'",
+    ]
+    time_box_positions = [
+        legend_dock_block.find(marker)
+        for marker in required_hrrr_time_boxes
+    ]
+    if any(position < 0 for position in time_box_positions):
+        errors.append(
+            "Legend dock is missing a required LightningCast/HRRR/NWM time box."
+        )
+    elif time_box_positions != sorted(time_box_positions):
+        errors.append(
+            "Legend-dock time boxes are not ordered "
+            "LightningCast -> HRRR Diagnostics -> HRRR-TLE -> NWM."
+        )
+
 # Enforce exact section placement below RAP and above the first CAM Nowcast section.
 rap_start = app.find("title: 'RAP Mesoanalysis Data'")
+hrrr_diag_start = app.find("title: 'HRRR Flash Flood Diagnostics - Experimental'")
 hrrr_tle_start = app.find("title: 'HRRR-TLE Flash Flood Guidance - Experimental'")
 cam_start = app.find("title: 'CAM Nowcasts (+3h to +9h)'")
-if not (rap_start >= 0 and hrrr_tle_start > rap_start and cam_start > hrrr_tle_start):
-    errors.append("HRRR-TLE section is not directly ordered between RAP and CAM Nowcasts.")
+if not (
+    rap_start >= 0
+    and hrrr_diag_start > rap_start
+    and hrrr_tle_start > hrrr_diag_start
+    and cam_start > hrrr_tle_start
+):
+    errors.append(
+        "HRRR diagnostic/TLE sections are not ordered RAP -> HRRR Diagnostics -> HRRR-TLE -> CAM."
+    )
 
 hrrr_tle_ids = [
+    "hrrr-diag-max-ratio", "hrrr-diag-ffg-coverage",
     "hrrr-tle-ffg-consensus", "hrrr-tle-median-ratio",
     "hrrr-tle-ffg-1h", "hrrr-tle-ffg-3h", "hrrr-tle-ffg-6h",
     "hrrr-tle-qpf1h-1in", "hrrr-tle-qpf1h-2in", "hrrr-tle-qpf1h-3in",
@@ -360,6 +405,12 @@ for layer_id in hrrr_tle_ids:
         errors.append(f"Expected exactly one HRRR-TLE layer registry entry: {layer_id}")
 
 required_hrrr_tle_generator_fragments = [
+    "DASHBOARD_HRRR_DIAGNOSTIC_HOURS = 12",
+    "hrrr_latest_12h_max_ffg_ratio.png",
+    "hrrr_latest_12h_ffg_exceedance_coverage.png",
+    "latest_hrrr_diagnostic_cycle_utc",
+    "published_expected = list(LAYER_FILES.values())",
+    "forcing a rebuild of the synchronized package",
     "TLE_MEMBER_COUNT = 6",
     "TLE_COMMON_HOURS = 12",
     "MIN_TLE_MEMBERS = 6",
@@ -384,6 +435,7 @@ required_hrrr_tle_workflow_fragments = [
     "cron: '15 * * * *'",
     "python fetch_hrrr_tle.py --output-dir static",
     "static/hrrr_tle_*",
+    "static/hrrr_latest_12h_*",
 ]
 for fragment in required_hrrr_tle_workflow_fragments:
     if fragment not in hrrr_tle_workflow:
@@ -493,25 +545,42 @@ for forbidden in [
     if forbidden in app:
         errors.append(f"Production dashboard still exposes forbidden GLM debug control: {forbidden}")
 
-# Count both the existing dashboard registry objects, which use
+# Count both the normal dashboard registry objects, which use
 #   {id: '...', label: ...}
-# and the HRRR-TLE configuration objects, which use
-#   {id: '...', key: ..., ... label: ...}
-# The prior label-only regex incorrectly omitted all 18 HRRR-TLE layers.
-ids = re.findall(r"\{id: '([a-z0-9-]+)', (?:label:|key:)", app)
-duplicates = sorted({item for item in ids if ids.count(item) > 1})
+# and the HRRR diagnostics / HRRR-TLE configuration objects, which use
+#   {id: '...', key: ..., ... label: ...}.
+all_registry_ids = re.findall(r"\{id: '([a-z0-9-]+)', (?:label:|key:)", app)
+duplicates = sorted({item for item in all_registry_ids if all_registry_ids.count(item) > 1})
 if duplicates:
-    errors.append(f"Duplicate layer ids: {duplicates}")
+    errors.append(f"Duplicate registry ids: {duplicates}")
 
-if len(ids) != EXPECTED_LAYER_COUNT:
+basemap_ids = [item for item in all_registry_ids if item in EXPECTED_BASEMAP_IDS]
+data_layer_ids = [item for item in all_registry_ids if item not in EXPECTED_BASEMAP_IDS]
+
+for basemap_id in EXPECTED_BASEMAP_IDS:
+    if basemap_ids.count(basemap_id) != 1:
+        errors.append(
+            f"Expected exactly one basemap registry entry: {basemap_id}; "
+            f"found {basemap_ids.count(basemap_id)}."
+        )
+
+unknown_basemap_like_ids = [
+    item for item in all_registry_ids
+    if item.startswith(("esri-", "usgs-")) and item not in EXPECTED_BASEMAP_IDS
+]
+if unknown_basemap_like_ids:
+    errors.append(f"Unexpected basemap-style registry ids: {unknown_basemap_like_ids}")
+
+if len(data_layer_ids) != EXPECTED_DATA_LAYER_COUNT:
     errors.append(
-        f"Expected {EXPECTED_LAYER_COUNT} registered layers, found {len(ids)}."
+        f"Expected {EXPECTED_DATA_LAYER_COUNT} registered dashboard data layers, "
+        f"found {len(data_layer_ids)}."
     )
 
-if ids.count(LIGHTNINGCAST_LAYER_ID) != 1:
+if data_layer_ids.count(LIGHTNINGCAST_LAYER_ID) != 1:
     errors.append(
         f"Expected exactly one registered LightningCast layer id {LIGHTNINGCAST_LAYER_ID!r}, "
-        f"found {ids.count(LIGHTNINGCAST_LAYER_ID)}."
+        f"found {data_layer_ids.count(LIGHTNINGCAST_LAYER_ID)}."
     )
 
 if "const groupedOverlays" in app or "L.control.groupedLayers" in app:
@@ -556,7 +625,7 @@ if errors:
 
 print(
     "Dashboard validation passed: "
-    f"{len(ids)} registered layers; menu order, MRMS FLASH order, "
+    f"{len(data_layer_ids)} registered data layers + {len(basemap_ids)} basemaps; menu order, MRMS FLASH order, "
     "antecedent order, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, expanded basemap suite, and UFVS Geographic Domains utility preserved."
