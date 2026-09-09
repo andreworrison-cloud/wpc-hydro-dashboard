@@ -12,7 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1"
+from shapely.geometry import shape
+
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_1"
 
 
 def sha256_file(path: Path) -> str:
@@ -56,6 +58,7 @@ def validate_code(repo_root: Path, errors: list[str]) -> None:
         "WFIGS polygons represent mapped wildfire extent, not soil burn severity.",
         "active_fire_ids",
         "duplicate_identity_groups_removed",
+        "Validation is intentionally performed *after* coordinate rounding.",
     ]
     for fragment in required_fragments:
         if fragment not in text:
@@ -102,6 +105,15 @@ def validate_feature(feature: dict[str, Any], errors: list[str], context: str) -
     geom = feature.get("geometry") or {}
     if geom.get("type") not in {"Polygon", "MultiPolygon"}:
         errors.append(f"{context}: unexpected geometry type {geom.get('type')!r}")
+    else:
+        try:
+            display_geom = shape(geom)
+            if display_geom.is_empty:
+                errors.append(f"{context}: empty display geometry")
+            elif not display_geom.is_valid:
+                errors.append(f"{context}: invalid display geometry after serialization")
+        except Exception as exc:
+            errors.append(f"{context}: geometry parse failed: {exc}")
     props = feature.get("properties") or {}
     required_props = {
         "fire_id",
@@ -148,7 +160,7 @@ def validate_current(data_root: Path, errors: list[str]) -> None:
         errors.append("Current delivery contains duplicate fire_id values")
     if sorted(fire_ids) != sorted(manifest.get("active_fire_ids") or []):
         errors.append("Current active_fire_ids do not match GeoJSON")
-    for idx, feature in enumerate(features[:50]):
+    for idx, feature in enumerate(features):
         validate_feature(feature, errors, f"current feature {idx}")
 
 
@@ -173,7 +185,6 @@ def validate_ytd(data_root: Path, errors: list[str]) -> None:
     total_bytes = 0
     all_fire_ids: set[str] = set()
     duplicate_fire_ids = 0
-    sampled_features = 0
     for item in chunks:
         path = root / str(item.get("href", ""))
         if not path.exists():
@@ -195,9 +206,7 @@ def validate_ytd(data_root: Path, errors: list[str]) -> None:
                 duplicate_fire_ids += 1
             if fire_id:
                 all_fire_ids.add(fire_id)
-            if sampled_features < 100:
-                validate_feature(feature, errors, f"YTD {path.name} feature")
-                sampled_features += 1
+            validate_feature(feature, errors, f"YTD {path.name} feature")
 
     if duplicate_fire_ids:
         errors.append(f"YTD delivery contains {duplicate_fire_ids} duplicate fire_id values")
