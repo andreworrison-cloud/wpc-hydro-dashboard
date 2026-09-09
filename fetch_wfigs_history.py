@@ -32,11 +32,12 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any, Sequence
 
 import fetch_wfigs_operational as core
 
-PROCESSOR_VERSION = "wfigs_history_v1_1"
+PROCESSOR_VERSION = "wfigs_history_v1_2"
 HISTORY_LAYER_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
     "WFIGS_Interagency_Perimeters/FeatureServer/0"
@@ -53,9 +54,9 @@ def assert_core_compatibility() -> None:
     match = re.fullmatch(r"wfigs_phase2_operational_v(\d+)_(\d+)", version)
     if not match or tuple(map(int, match.groups())) < (1, 3):
         raise RuntimeError(
-            "fetch_wfigs_history.py requires the Phase-4.3 WFIGS operational geometry core "
-            "with overview support (wfigs_phase2_operational_v1_3+). Apply the CONUS "
-            f"archive-visibility patch first; found processor {version!r}."
+            "fetch_wfigs_history.py requires the Phase-5 WFIGS operational core "
+            "with seasonal-activity support (wfigs_phase2_operational_v1_4+). "
+            f"Found processor {version!r}."
         )
 
 
@@ -164,10 +165,13 @@ def year_delivery_complete(root: Path, manifest: dict[str, Any] | None) -> bool:
         return False
     chunks = manifest.get("chunks") or []
     overview = manifest.get("overview") or {}
-    if not chunks or not overview.get("href"):
+    seasonal = manifest.get("seasonal_activity") or {}
+    if not chunks or not overview.get("href") or not seasonal.get("href"):
         return False
     year_root = root / str(manifest.get("year"))
     if not (year_root / str(overview.get("href"))).exists():
+        return False
+    if not (year_root / str(seasonal.get("href"))).exists():
         return False
     return all((year_root / str(item.get("href", ""))).exists() for item in chunks)
 
@@ -253,6 +257,16 @@ def build_year(
             }
         )
 
+    seasonal_activity = core.build_conus_seasonal_activity(
+        canonical_records,
+        year,
+        source_edit_ms=source_edit_ms,
+        complete_through_date=None,
+        collection="historical-year-activity",
+    )
+    seasonal_activity_path = out_dir / "seasonal_activity.json"
+    core.write_json(seasonal_activity_path, seasonal_activity, compact=False)
+
     manifest = {
         "phase": "WFIGS-4",
         "processor_version": PROCESSOR_VERSION,
@@ -299,6 +313,15 @@ def build_year(
             "sha256": core.sha256_file(overview_path),
             "purpose": "Lightweight zoomed-out display only; full annual archive remains in viewport chunks.",
         },
+        "seasonal_activity": {
+            "href": "seasonal_activity.json",
+            "metric": "unique_wildfire_discoveries",
+            "domain": "CONUS",
+            "year": year,
+            "annual_count": seasonal_activity["complete_through_count"],
+            "bytes": seasonal_activity_path.stat().st_size,
+            "sha256": core.sha256_file(seasonal_activity_path),
+        },
         "chunk_count": len(chunk_manifest),
         "chunks": chunk_manifest,
         "total_chunk_bytes": int(sum(item["bytes"] for item in chunk_manifest)),
@@ -321,6 +344,7 @@ def manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "total_chunk_bytes": int(manifest.get("total_chunk_bytes") or 0),
         "overview_feature_count": int((manifest.get("overview") or {}).get("feature_count") or 0),
         "overview_bytes": int((manifest.get("overview") or {}).get("bytes") or 0),
+        "conus_discovery_count": int((manifest.get("seasonal_activity") or {}).get("annual_count") or 0),
         "generated_utc": manifest.get("generated_utc"),
         "source_year_signature": manifest.get("source_year_signature"),
     }
@@ -331,6 +355,119 @@ def load_existing_year_manifest(existing_root: Path, year: int) -> dict[str, Any
     if not manifest or manifest.get("collection") != "history-year" or int(manifest.get("year") or -1) != year:
         return None
     return manifest
+
+
+def load_year_activity(
+    output_history_root: Path,
+    existing_root: Path,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    year = int(manifest["year"])
+    href = str((manifest.get("seasonal_activity") or {}).get("href") or "seasonal_activity.json")
+    for root in (output_history_root, existing_root):
+        path = root / str(year) / href
+        if path.exists():
+            payload = core.load_json(path)
+            if payload:
+                return payload
+    raise RuntimeError(f"Missing seasonal activity file for historical year {year}")
+
+
+def cumulative(values: Sequence[int]) -> list[int]:
+    output: list[int] = []
+    total = 0
+    for value in values:
+        total += int(value)
+        output.append(total)
+    return output
+
+
+def write_history_seasonal_activity(
+    output_history_root: Path,
+    existing_root: Path,
+    years: Sequence[int],
+    year_manifests: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    by_year = {int(m["year"]): m for m in year_manifests}
+    activities = {year: load_year_activity(output_history_root, existing_root, by_year[year]) for year in years}
+    daily = {year: [int(v) for v in activities[year].get("daily_counts", [])] for year in years}
+    if any(len(values) not in {365, 366} for values in daily.values()):
+        raise RuntimeError("Historical seasonal-activity daily arrays must contain 365 or 366 days")
+
+    weekly_by_year = {year: core.weekly_activity_from_daily(daily[year]) for year in years}
+    max_periods = max(len(values) for values in weekly_by_year.values())
+    weekly_baseline: list[dict[str, Any]] = []
+    for period in range(1, max_periods + 1):
+        counts = []
+        cumulatives = []
+        starts = []
+        ends = []
+        for year in years:
+            rows = weekly_by_year[year]
+            if period <= len(rows):
+                row = rows[period - 1]
+                counts.append(int(row["count"]))
+                cumulatives.append(int(row["cumulative"]))
+                starts.append(int(row["start_day"]))
+                ends.append(int(row["end_day"]))
+            else:
+                # A non-leap year has no day 366. Treat the missing final day as
+                # zero additional activity while carrying its Dec-31 cumulative total.
+                counts.append(0)
+                cumulatives.append(int(sum(daily[year])))
+                starts.append(365)
+                ends.append(366)
+        weekly_baseline.append({
+            "period": period,
+            "start_day": min(starts),
+            "end_day": max(ends),
+            "min": min(counts),
+            "median": median(counts),
+            "max": max(counts),
+            "cumulative_min": min(cumulatives),
+            "cumulative_median": median(cumulatives),
+            "cumulative_max": max(cumulatives),
+        })
+
+    cumulative_by_year = {year: cumulative(daily[year]) for year in years}
+    max_days = max(len(values) for values in daily.values())
+    daily_cumulative_baseline: list[dict[str, Any]] = []
+    for day_index in range(1, max_days + 1):
+        values = []
+        for year in years:
+            series = cumulative_by_year[year]
+            values.append(series[day_index - 1] if day_index <= len(series) else series[-1])
+        daily_cumulative_baseline.append({
+            "day": day_index,
+            "min": min(values),
+            "median": median(values),
+            "max": max(values),
+        })
+
+    payload = {
+        "phase": "WFIGS-5",
+        "processor_version": core.SEASONAL_ACTIVITY_VERSION,
+        "collection": "historical-baseline",
+        "generated_utc": core.utc_now_iso(),
+        "metric": "unique_wildfire_discoveries",
+        "metric_definition": (
+            "Unique deduplicated WFIGS WF identities counted by attr_FireDiscoveryDateTime; "
+            "counts are independent of geometry validity and map display thresholds."
+        ),
+        "domain": "CONUS",
+        "domain_definition": "48 contiguous U.S. states plus District of Columbia by WFIGS attr_POOState",
+        "historical_years": list(years),
+        "week_definition": "Jan-1-anchored 7-day periods; period 53 contains the remaining one or two days",
+        "historical_year_totals": {str(year): int(sum(daily[year])) for year in years},
+        "weekly_baseline": weekly_baseline,
+        "daily_cumulative_baseline": daily_cumulative_baseline,
+        "science_note": (
+            "This is an incident-discovery activity metric, not acreage burned, burn severity, "
+            "or the number of polygons currently displayed on the map."
+        ),
+    }
+    core.write_json(output_history_root / "seasonal_activity.json", payload, compact=False)
+    return payload
 
 
 def write_history_index(
@@ -361,6 +498,11 @@ def write_history_index(
         "year_definition": "attr_FireDiscoveryDateTime calendar year in UTC",
         "query_policy": "fixed absolute TIMESTAMP ranges only; no CURRENT_TIMESTAMP or relative-date query",
         "years": entries,
+        "seasonal_activity": {
+            "href": "seasonal_activity.json",
+            "metric": "unique_wildfire_discoveries",
+            "domain": "CONUS",
+        },
         "science_note": "WFIGS polygons represent mapped wildfire extent, not soil burn severity.",
         "completeness_note": (
             "Rolling window is limited to modern WFIGS years. NIFC documents data before 2021 "
@@ -490,6 +632,15 @@ def main() -> int:
             f"({manifest['total_chunk_bytes']} bytes)"
         )
 
+    seasonal_baseline = write_history_seasonal_activity(
+        output_history_root, args.existing_root, years, year_manifests
+    )
+    print(
+        "Historical CONUS seasonal baseline: "
+        + ", ".join(
+            f"{year}={seasonal_baseline['historical_year_totals'][str(year)]}" for year in years
+        )
+    )
     index = write_history_index(output_history_root, years, year_manifests, source_edit_ms)
     existing_index = core.load_json(args.existing_root / "manifest.json")
     index_changed = existing_index is None or normalized_json_bytes(index) != normalized_json_bytes(existing_index)

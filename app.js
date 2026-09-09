@@ -2121,6 +2121,8 @@ const WFIGS_CURRENT_MANIFEST_URL = `${WFIGS_DATA_ROOT}/current/manifest.json`;
 const WFIGS_YTD_MANIFEST_URL = `${WFIGS_DATA_ROOT}/ytd/manifest.json`;
 const WFIGS_HISTORY_ROOT = `${WFIGS_DATA_ROOT}/history`;
 const WFIGS_HISTORY_INDEX_URL = `${WFIGS_HISTORY_ROOT}/manifest.json`;
+const WFIGS_YTD_ACTIVITY_URL = `${WFIGS_DATA_ROOT}/ytd/seasonal_activity.json`;
+const WFIGS_HISTORY_ACTIVITY_URL = `${WFIGS_HISTORY_ROOT}/seasonal_activity.json`;
 const WFIGS_CURRENT_MANIFEST_POLL_INTERVAL_MS = 2 * 60 * 1000;
 const WFIGS_YTD_MANIFEST_POLL_INTERVAL_MS = 15 * 60 * 1000;
 const WFIGS_HISTORY_MANIFEST_POLL_INTERVAL_MS = 60 * 60 * 1000;
@@ -2170,6 +2172,10 @@ let wfigsYTDOverviewGeoJSON = null;
 let wfigsYTDOverviewLayer = null;
 const wfigsHistoryChunkCache = new Map();
 const wfigsHistoryOverviewCache = new Map();
+let wfigsCurrentSeasonalActivity = null;
+let wfigsHistoricalSeasonalActivity = null;
+let wfigsSeasonalActivityLastError = '';
+let wfigsSeasonalActivityLoading = false;
 
 function ensureWFIGSDashboardStyles() {
     if (document.getElementById('wfigs-dashboard-styles')) return;
@@ -2228,6 +2234,82 @@ function ensureWFIGSDashboardStyles() {
         .wfigs-history-year-note {
             display: block; margin-top: 6px; color: rgba(235,242,249,0.68);
             font-size: 9px; line-height: 1.25;
+        }
+        .wfigs-seasonal-control {
+            margin: 0 10px 11px 35px; padding: 8px 9px 9px;
+            border: 1px solid rgba(86,196,255,0.34); border-radius: 5px;
+            background: rgba(10,34,48,0.42);
+        }
+        .wfigs-seasonal-control-title {
+            color: #8ddcff; font-size: 9.5px; font-weight: 700;
+            letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 6px;
+        }
+        .wfigs-seasonal-open-button {
+            width: 100%; padding: 7px 8px; border-radius: 4px; cursor: pointer;
+            border: 1px solid rgba(141,220,255,0.72); color: #f3fbff;
+            background: linear-gradient(180deg, rgba(28,99,132,0.94), rgba(15,66,91,0.94));
+            font-size: 10.5px; font-weight: 700; text-align: left;
+        }
+        .wfigs-seasonal-open-button:hover { filter: brightness(1.08); }
+        .wfigs-seasonal-control-note {
+            display: block; margin-top: 6px; color: rgba(235,242,249,0.68);
+            font-size: 9px; line-height: 1.25;
+        }
+        .wfigs-trend-panel {
+            position: fixed; right: 18px; top: 78px; z-index: 1450;
+            width: min(760px, calc(100vw - 36px)); max-height: calc(100vh - 100px);
+            overflow: auto; border: 1px solid rgba(106,205,255,0.48); border-radius: 8px;
+            background: rgba(8,15,22,0.97); color: #eef7fc;
+            box-shadow: 0 14px 38px rgba(0,0,0,0.48); font-family: Arial, sans-serif;
+        }
+        .wfigs-trend-panel[hidden] { display: none !important; }
+        .wfigs-trend-header {
+            position: sticky; top: 0; z-index: 2; display: flex; align-items: center;
+            justify-content: space-between; gap: 10px; padding: 11px 13px;
+            background: rgba(9,25,36,0.99); border-bottom: 1px solid rgba(106,205,255,0.25);
+        }
+        .wfigs-trend-header h2 { margin: 0; font-size: 15px; color: #f7fbff; }
+        .wfigs-trend-subtitle { margin-top: 2px; color: #9cc7da; font-size: 10px; }
+        .wfigs-trend-header-actions { display: flex; gap: 6px; }
+        .wfigs-trend-header-actions button {
+            border: 1px solid rgba(190,226,242,0.35); border-radius: 4px;
+            background: rgba(255,255,255,0.06); color: #eef7fc; cursor: pointer;
+            padding: 5px 8px; font-size: 11px;
+        }
+        .wfigs-trend-body { padding: 12px 13px 14px; }
+        .wfigs-trend-status {
+            margin-bottom: 9px; padding: 7px 9px; border-radius: 4px;
+            background: rgba(255,255,255,0.045); color: #bcd1dc; font-size: 10px; line-height: 1.35;
+        }
+        .wfigs-trend-kpis {
+            display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; margin-bottom: 10px;
+        }
+        .wfigs-trend-kpi {
+            padding: 8px 9px; border-radius: 5px; background: rgba(255,255,255,0.045);
+            border: 1px solid rgba(255,255,255,0.08); min-width: 0;
+        }
+        .wfigs-trend-kpi-label { color: #9db3bf; font-size: 9px; text-transform: uppercase; letter-spacing: .03em; }
+        .wfigs-trend-kpi-value { margin-top: 3px; font-size: 18px; font-weight: 700; color: #fff; }
+        .wfigs-trend-kpi-detail { margin-top: 2px; font-size: 9px; color: #9db3bf; }
+        .wfigs-trend-chart-card {
+            margin-top: 10px; padding: 9px 9px 7px; border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.09); background: rgba(255,255,255,0.025);
+        }
+        .wfigs-trend-chart-title { font-size: 12px; font-weight: 700; color: #fff; }
+        .wfigs-trend-chart-note { margin-top: 2px; font-size: 9.5px; color: #96aeba; }
+        .wfigs-trend-chart { position: relative; margin-top: 5px; }
+        .wfigs-trend-chart svg { width: 100%; height: auto; display: block; }
+        .wfigs-trend-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 5px; font-size: 9px; color: #b8cbd5; }
+        .wfigs-trend-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+        .wfigs-trend-swatch { width: 16px; height: 3px; border-radius: 2px; display: inline-block; }
+        .wfigs-trend-swatch.range { height: 8px; background: rgba(126,184,210,0.20); border: 1px solid rgba(126,184,210,0.42); }
+        .wfigs-trend-footnote {
+            margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);
+            color: #90a6b1; font-size: 9.5px; line-height: 1.4;
+        }
+        @media (max-width: 720px) {
+            .wfigs-trend-panel { right: 8px; top: 66px; width: calc(100vw - 16px); max-height: calc(100vh - 78px); }
+            .wfigs-trend-kpis { grid-template-columns: 1fr; }
         }
     `;
     document.head.appendChild(style);
@@ -2947,6 +3029,302 @@ function renderWFIGSHistoryYearControl(parent) {
     parent.append(wrapper);
     updateWFIGSHistoryYearToggles();
 }
+
+function renderWFIGSSeasonalTrendControl(parent) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'wfigs-seasonal-control';
+    wrapper.innerHTML = `
+        <div class="wfigs-seasonal-control-title">CONUS seasonal wildfire activity</div>
+        <button id="wfigs-open-seasonal-trends" class="wfigs-seasonal-open-button" type="button">
+            Open ${WFIGS_CURRENT_YEAR} vs rolling 5-year activity trends
+        </button>
+        <span class="wfigs-seasonal-control-note">Weekly new wildfire discoveries and cumulative YTD activity versus the rolling five-year median and range.</span>
+    `;
+    parent.append(wrapper);
+    wrapper.querySelector('#wfigs-open-seasonal-trends')?.addEventListener('click', openWFIGSSeasonalTrendPanel);
+}
+
+function ensureWFIGSSeasonalTrendPanel() {
+    let panel = document.getElementById('wfigs-seasonal-trend-panel');
+    if (panel) return panel;
+    panel = document.createElement('section');
+    panel.id = 'wfigs-seasonal-trend-panel';
+    panel.className = 'wfigs-trend-panel';
+    panel.hidden = true;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'false');
+    panel.setAttribute('aria-labelledby', 'wfigs-trend-panel-title');
+    panel.innerHTML = `
+        <div class="wfigs-trend-header">
+            <div>
+                <h2 id="wfigs-trend-panel-title">CONUS Seasonal Wildfire Activity</h2>
+                <div class="wfigs-trend-subtitle">WFIGS wildfire discoveries — current year versus rolling five-year history</div>
+            </div>
+            <div class="wfigs-trend-header-actions">
+                <button id="wfigs-trend-refresh" type="button" aria-label="Refresh wildfire trend data">Refresh</button>
+                <button id="wfigs-trend-close" type="button" aria-label="Close wildfire trend panel">Close</button>
+            </div>
+        </div>
+        <div id="wfigs-trend-body" class="wfigs-trend-body"></div>
+    `;
+    document.body.append(panel);
+    panel.querySelector('#wfigs-trend-close')?.addEventListener('click', () => { panel.hidden = true; });
+    panel.querySelector('#wfigs-trend-refresh')?.addEventListener('click', () => refreshWFIGSSeasonalActivity({force: true}));
+    return panel;
+}
+
+function validateWFIGSCurrentSeasonalActivity(payload) {
+    if (!payload || payload.phase !== 'WFIGS-5' || payload.collection !== 'current-year-activity') {
+        throw new Error('Invalid WFIGS current-year seasonal activity payload');
+    }
+    if (payload.domain !== 'CONUS' || Number(payload.year) !== WFIGS_CURRENT_YEAR) {
+        throw new Error('WFIGS current-year seasonal activity year/domain mismatch');
+    }
+    const daily = payload.daily_counts;
+    if (!Array.isArray(daily) || ![365, 366].includes(daily.length)) {
+        throw new Error('WFIGS current-year seasonal activity daily series is invalid');
+    }
+    return payload;
+}
+
+function validateWFIGSHistoricalSeasonalActivity(payload) {
+    if (!payload || payload.phase !== 'WFIGS-5' || payload.collection !== 'historical-baseline') {
+        throw new Error('Invalid WFIGS historical seasonal activity payload');
+    }
+    if (payload.domain !== 'CONUS' || !Array.isArray(payload.historical_years) || payload.historical_years.length !== 5) {
+        throw new Error('WFIGS historical seasonal activity year/domain mismatch');
+    }
+    if (!Array.isArray(payload.weekly_baseline) || payload.weekly_baseline.length < 52) {
+        throw new Error('WFIGS historical weekly baseline is incomplete');
+    }
+    if (!Array.isArray(payload.daily_cumulative_baseline) || payload.daily_cumulative_baseline.length < 365) {
+        throw new Error('WFIGS historical cumulative baseline is incomplete');
+    }
+    return payload;
+}
+
+function wfigsTrendFetchURL(url, version) {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(version || Date.now())}`;
+}
+
+async function refreshWFIGSSeasonalActivity({force = false} = {}) {
+    if (wfigsSeasonalActivityLoading) return;
+    const panel = ensureWFIGSSeasonalTrendPanel();
+    const body = panel.querySelector('#wfigs-trend-body');
+    if (!body) return;
+    if (!force && wfigsCurrentSeasonalActivity && wfigsHistoricalSeasonalActivity) {
+        renderWFIGSSeasonalTrendPanel();
+        return;
+    }
+    wfigsSeasonalActivityLoading = true;
+    wfigsSeasonalActivityLastError = '';
+    body.innerHTML = '<div class="wfigs-trend-status">Loading WFIGS seasonal activity data…</div>';
+    try {
+        const currentVersion = wfigsYTDManifest?.source_last_edit_epoch_ms || Date.now();
+        const historyVersion = wfigsHistoryIndex?.generated_utc || Date.now();
+        const [currentRaw, historyRaw] = await Promise.all([
+            fetchWFIGSJSON(wfigsTrendFetchURL(WFIGS_YTD_ACTIVITY_URL, currentVersion)),
+            fetchWFIGSJSON(wfigsTrendFetchURL(WFIGS_HISTORY_ACTIVITY_URL, historyVersion))
+        ]);
+        wfigsCurrentSeasonalActivity = validateWFIGSCurrentSeasonalActivity(currentRaw);
+        wfigsHistoricalSeasonalActivity = validateWFIGSHistoricalSeasonalActivity(historyRaw);
+    } catch (error) {
+        wfigsSeasonalActivityLastError = error?.message || String(error);
+        console.warn('WFIGS seasonal activity refresh failed:', error);
+    } finally {
+        wfigsSeasonalActivityLoading = false;
+        renderWFIGSSeasonalTrendPanel();
+    }
+}
+
+function openWFIGSSeasonalTrendPanel() {
+    const panel = ensureWFIGSSeasonalTrendPanel();
+    panel.hidden = false;
+    refreshWFIGSSeasonalActivity({force: false});
+}
+
+function wfigsTrendNiceMax(value) {
+    const raw = Math.max(1, Number(value) || 1);
+    const power = Math.pow(10, Math.floor(Math.log10(raw)));
+    const scaled = raw / power;
+    const nice = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
+    return nice * power;
+}
+
+function wfigsTrendMonthTicks(year) {
+    const jan1 = Date.UTC(year, 0, 1);
+    return Array.from({length: 12}, (_, month) => ({
+        day: Math.floor((Date.UTC(year, month, 1) - jan1) / 86400000) + 1,
+        label: new Date(Date.UTC(year, month, 1)).toLocaleDateString('en-US', {timeZone: 'UTC', month: 'short'})
+    }));
+}
+
+function wfigsTrendPolyline(points, xScale, yScale, key) {
+    return points
+        .filter(point => Number.isFinite(Number(point[key])))
+        .map(point => `${xScale(Number(point.x)).toFixed(2)},${yScale(Number(point[key])).toFixed(2)}`)
+        .join(' ');
+}
+
+function wfigsTrendEnvelopePath(points, xScale, yScale, minKey, maxKey) {
+    const valid = points.filter(point => Number.isFinite(Number(point[minKey])) && Number.isFinite(Number(point[maxKey])));
+    if (!valid.length) return '';
+    const upper = valid.map(point => `${xScale(Number(point.x)).toFixed(2)},${yScale(Number(point[maxKey])).toFixed(2)}`);
+    const lower = [...valid].reverse().map(point => `${xScale(Number(point.x)).toFixed(2)},${yScale(Number(point[minKey])).toFixed(2)}`);
+    return `M ${upper.join(' L ')} L ${lower.join(' L ')} Z`;
+}
+
+function renderWFIGSTrendSVG(container, points, {currentKey, medianKey, minKey, maxKey, yLabel, year}) {
+    const width = 720;
+    const height = 250;
+    const margin = {left: 52, right: 16, top: 14, bottom: 34};
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+    const xMax = Math.max(365, ...points.map(point => Number(point.x) || 0));
+    const values = [];
+    points.forEach(point => [currentKey, medianKey, minKey, maxKey].forEach(key => {
+        const value = Number(point[key]);
+        if (Number.isFinite(value)) values.push(value);
+    }));
+    const yMax = wfigsTrendNiceMax(Math.max(...values, 1) * 1.08);
+    const xScale = x => margin.left + ((x - 1) / Math.max(1, xMax - 1)) * innerW;
+    const yScale = y => margin.top + innerH - (Math.max(0, y) / yMax) * innerH;
+    const yTicks = Array.from({length: 5}, (_, i) => (yMax * i) / 4);
+    const monthTicks = wfigsTrendMonthTicks(year);
+    const envelope = wfigsTrendEnvelopePath(points, xScale, yScale, minKey, maxKey);
+    const medianLine = wfigsTrendPolyline(points, xScale, yScale, medianKey);
+    const currentLine = wfigsTrendPolyline(points, xScale, yScale, currentKey);
+
+    const grid = yTicks.map(value => `
+        <line x1="${margin.left}" y1="${yScale(value)}" x2="${width - margin.right}" y2="${yScale(value)}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+        <text x="${margin.left - 7}" y="${yScale(value) + 3}" text-anchor="end" fill="#91a8b4" font-size="9">${Math.round(value).toLocaleString('en-US')}</text>
+    `).join('');
+    const months = monthTicks.map(tick => `
+        <line x1="${xScale(tick.day)}" y1="${margin.top}" x2="${xScale(tick.day)}" y2="${margin.top + innerH}" stroke="rgba(255,255,255,0.045)" stroke-width="1"/>
+        <text x="${xScale(tick.day)}" y="${height - 10}" text-anchor="middle" fill="#91a8b4" font-size="9">${tick.label}</text>
+    `).join('');
+
+    container.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeWFIGSHTML(yLabel)} seasonal wildfire activity chart">
+            ${grid}${months}
+            <path d="${envelope}" fill="rgba(126,184,210,0.20)" stroke="rgba(126,184,210,0.34)" stroke-width="1"/>
+            <polyline points="${medianLine}" fill="none" stroke="#9bdcff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            <polyline points="${currentLine}" fill="none" stroke="#ff7a45" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>
+            <text transform="translate(12 ${margin.top + innerH / 2}) rotate(-90)" text-anchor="middle" fill="#a9bec8" font-size="9">${escapeWFIGSHTML(yLabel)}</text>
+        </svg>
+    `;
+}
+
+function renderWFIGSSeasonalTrendPanel() {
+    const panel = ensureWFIGSSeasonalTrendPanel();
+    const body = panel.querySelector('#wfigs-trend-body');
+    if (!body) return;
+    if (wfigsSeasonalActivityLastError) {
+        body.innerHTML = `<div class="wfigs-trend-status"><strong>Trend data unavailable.</strong><br>${escapeWFIGSHTML(wfigsSeasonalActivityLastError)}<br><br>Run the updated YTD and Rolling 5-Year History workflows once, then use Refresh.</div>`;
+        return;
+    }
+    const current = wfigsCurrentSeasonalActivity;
+    const history = wfigsHistoricalSeasonalActivity;
+    if (!current || !history) {
+        body.innerHTML = '<div class="wfigs-trend-status">Seasonal activity data have not loaded yet.</div>';
+        return;
+    }
+
+    const completeDay = Number(current.complete_through_day || 0);
+    const cumulativeBaseline = (history.daily_cumulative_baseline || []).find(row => Number(row.day) === completeDay) || null;
+    const currentTotal = Number(current.complete_through_count || 0);
+    const medianYTD = Number(cumulativeBaseline?.median);
+    const departure = Number.isFinite(medianYTD) ? currentTotal - medianYTD : null;
+    const pct = Number.isFinite(medianYTD) && medianYTD > 0 ? (departure / medianYTD) * 100 : null;
+    const historyYearValues = (history.historical_years || []).map(Number).filter(Number.isFinite);
+    const historyYears = historyYearValues.length
+        ? `${Math.min(...historyYearValues)}–${Math.max(...historyYearValues)}`
+        : 'rolling five-year';
+
+    const weeklyCurrent = new Map((current.weekly_completed || []).map(row => [Number(row.period), row]));
+    const weeklyPoints = (history.weekly_baseline || []).map(row => ({
+        x: Number(row.end_day),
+        current: weeklyCurrent.get(Number(row.period))?.count ?? null,
+        median: Number(row.median),
+        min: Number(row.min),
+        max: Number(row.max)
+    }));
+
+    let running = 0;
+    const currentDaily = (current.daily_counts || []).slice(0, completeDay).map((value, index) => {
+        running += Number(value) || 0;
+        return {day: index + 1, cumulative: running};
+    });
+    const currentDailyMap = new Map(currentDaily.map(row => [row.day, row.cumulative]));
+    const cumulativePoints = (history.daily_cumulative_baseline || []).map(row => ({
+        x: Number(row.day),
+        current: currentDailyMap.has(Number(row.day)) ? currentDailyMap.get(Number(row.day)) : null,
+        median: Number(row.median),
+        min: Number(row.min),
+        max: Number(row.max)
+    }));
+
+    const departureText = departure === null
+        ? 'Unavailable'
+        : `${departure >= 0 ? '+' : ''}${Math.round(departure).toLocaleString('en-US')}${Number.isFinite(pct) ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)` : ''}`;
+    const sourceTime = current.source_last_edit_utc ? formatWFIGSDateTime(current.source_last_edit_utc) : 'Unknown';
+    body.innerHTML = `
+        <div class="wfigs-trend-status">
+            Counts through the last complete UTC day: <strong>${escapeWFIGSHTML(current.complete_through_date || 'none yet')}</strong>. Latest YTD source edit: ${escapeWFIGSHTML(sourceTime)}.
+        </div>
+        <div class="wfigs-trend-kpis">
+            <div class="wfigs-trend-kpi">
+                <div class="wfigs-trend-kpi-label">${WFIGS_CURRENT_YEAR} CONUS discoveries</div>
+                <div class="wfigs-trend-kpi-value">${currentTotal.toLocaleString('en-US')}</div>
+                <div class="wfigs-trend-kpi-detail">Through ${escapeWFIGSHTML(current.complete_through_date || 'last complete UTC day')}</div>
+            </div>
+            <div class="wfigs-trend-kpi">
+                <div class="wfigs-trend-kpi-label">${escapeWFIGSHTML(historyYears)} median YTD</div>
+                <div class="wfigs-trend-kpi-value">${Number.isFinite(medianYTD) ? Math.round(medianYTD).toLocaleString('en-US') : '—'}</div>
+                <div class="wfigs-trend-kpi-detail">Matched season day</div>
+            </div>
+            <div class="wfigs-trend-kpi">
+                <div class="wfigs-trend-kpi-label">Departure from median</div>
+                <div class="wfigs-trend-kpi-value">${escapeWFIGSHTML(departureText)}</div>
+                <div class="wfigs-trend-kpi-detail">Positive = more discoveries than recent median</div>
+            </div>
+        </div>
+        <div class="wfigs-trend-chart-card">
+            <div class="wfigs-trend-chart-title">Weekly New Wildfire Discoveries</div>
+            <div class="wfigs-trend-chart-note">${WFIGS_CURRENT_YEAR} versus ${escapeWFIGSHTML(historyYears)} median and min–max range. The incomplete current 7-day period is intentionally excluded.</div>
+            <div id="wfigs-weekly-trend-chart" class="wfigs-trend-chart"></div>
+            <div class="wfigs-trend-legend">
+                <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch" style="background:#ff7a45"></span>${WFIGS_CURRENT_YEAR}</span>
+                <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch" style="background:#9bdcff"></span>${escapeWFIGSHTML(historyYears)} median</span>
+                <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch range"></span>Historical min–max</span>
+            </div>
+        </div>
+        <div class="wfigs-trend-chart-card">
+            <div class="wfigs-trend-chart-title">Cumulative YTD Wildfire Discoveries</div>
+            <div class="wfigs-trend-chart-note">Daily cumulative ${WFIGS_CURRENT_YEAR} activity through the last complete UTC day versus the recent historical envelope.</div>
+            <div id="wfigs-cumulative-trend-chart" class="wfigs-trend-chart"></div>
+            <div class="wfigs-trend-legend">
+                <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch" style="background:#ff7a45"></span>${WFIGS_CURRENT_YEAR}</span>
+                <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch" style="background:#9bdcff"></span>${escapeWFIGSHTML(historyYears)} median</span>
+                <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch range"></span>Historical min–max</span>
+            </div>
+        </div>
+        <div class="wfigs-trend-footnote">
+            <strong>Metric definition:</strong> unique deduplicated WFIGS wildfire (WF) identities by Fire Discovery Date and point-of-origin state for the 48 contiguous states plus D.C. Counts are independent of geometry validity, mapped acreage, burn severity, and the number of polygons currently visible on the map. Weekly periods are seven-day bins anchored on January 1 UTC.
+        </div>
+    `;
+
+    renderWFIGSTrendSVG(body.querySelector('#wfigs-weekly-trend-chart'), weeklyPoints, {
+        currentKey: 'current', medianKey: 'median', minKey: 'min', maxKey: 'max',
+        yLabel: 'New wildfire discoveries', year: WFIGS_CURRENT_YEAR
+    });
+    renderWFIGSTrendSVG(body.querySelector('#wfigs-cumulative-trend-chart'), cumulativePoints, {
+        currentKey: 'current', medianKey: 'median', minKey: 'min', maxKey: 'max',
+        yLabel: 'Cumulative discoveries', year: WFIGS_CURRENT_YEAR
+    });
+}
+
 
 function removeWFIGSHistoryYearLayers(year, {clearCache = false} = {}) {
     const numericYear = Number(year);
@@ -6601,7 +6979,7 @@ const dashboardSections = [
         layers: [
             {id: 'wfigs-current', label: WFIGS_CURRENT_LAYER_NAME, description: 'Current/maintained wildfire footprints; incidents can fall off as they close or become stale.', layer: wfigsCurrentLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS wildfire fire perimeter burn scar post-fire debris flow current active near-real-time maintained fall-off'},
             {id: 'wfigs-ytd', label: WFIGS_YTD_LAYER_NAME, description: `All mapped ${WFIGS_CURRENT_YEAR} wildfire footprints; no Current-service fall-off.`, layer: wfigsYTDLayerGroup, kind: 'vector', keywords: `NIFC WFIGS wildfire fire perimeter burn scar post-fire debris flow recent historical year to date YTD ${WFIGS_CURRENT_YEAR} no fall-off`},
-            {id: 'wfigs-history', label: WFIGS_HISTORY_LAYER_NAME, description: 'Toggle any combination of the rolling five completed calendar years for regional burn-scar analysis.', layer: wfigsHistoryLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS historical wildfire perimeter archive previous five years multiyear multi-year toggle buttons 2021 2022 2023 2024 2025'}
+            {id: 'wfigs-history', label: WFIGS_HISTORY_LAYER_NAME, description: 'Toggle any combination of the rolling five completed calendar years for regional burn-scar analysis.', layer: wfigsHistoryLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS historical wildfire perimeter archive previous five years multiyear multi-year toggle buttons seasonal activity trend trends weekly cumulative 2021 2022 2023 2024 2025'}
         ]
     },
     {
@@ -7189,6 +7567,7 @@ function renderDashboardSidebar() {
                     // of the rolling five completed fire years.
                     if (sectionConfig.id === 'wildfire-burn-scar' && entry.id === 'wfigs-history') {
                         renderWFIGSHistoryYearControl(body);
+                        renderWFIGSSeasonalTrendControl(body);
                     }
                 });
 

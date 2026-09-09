@@ -39,7 +39,7 @@ import shutil
 import sys
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
@@ -56,7 +56,7 @@ except Exception as exc:  # pragma: no cover - workflow dependency guard
         "Shapely is required. Install with: pip install 'shapely>=2.0,<3'"
     ) from exc
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1_3"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_4"
 CURRENT_LAYER_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
     "WFIGS_Interagency_Perimeters_Current/FeatureServer/0"
@@ -75,6 +75,13 @@ SOURCE_LABELS = {
 }
 WILDFIRE_WHERE = "attr_IncidentTypeCategory = 'WF'"
 ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES = 5000.0
+SEASONAL_ACTIVITY_VERSION = "wfigs_seasonal_activity_v1_0"
+CONUS_STATE_CODES = frozenset({
+    "AL", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "ID", "IL",
+    "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO",
+    "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR",
+    "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+})
 
 # Phase-1 confirmed these fields in both authoritative schemas.
 SOURCE_FIELDS = [
@@ -691,6 +698,146 @@ def normalize_state(value: Any) -> tuple[str | None, str | None]:
     return raw, raw
 
 
+def source_datetime_utc(value: Any) -> datetime | None:
+    """Parse an ArcGIS epoch-ms or ISO timestamp as UTC."""
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                return None
+            return datetime.fromtimestamp(numeric / 1000.0, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def year_day_count(year: int) -> int:
+    return (date(year + 1, 1, 1) - date(year, 1, 1)).days
+
+
+def weekly_activity_from_daily(daily_counts: Sequence[int], complete_through_day: int | None = None) -> list[dict[str, Any]]:
+    """Return completed Jan-1-anchored seven-day periods.
+
+    Period 1 is Jan 1-7 UTC. Period 53 contains the remaining one or two days.
+    ``complete_through_day`` is 1-based and prevents a partially completed current
+    period from being compared with full historical seven-day totals.
+    """
+    limit = len(daily_counts) if complete_through_day is None else max(0, min(int(complete_through_day), len(daily_counts)))
+    output: list[dict[str, Any]] = []
+    cumulative = 0
+    for start0 in range(0, len(daily_counts), 7):
+        end0 = min(start0 + 7, len(daily_counts))
+        if end0 > limit:
+            break
+        count = int(sum(int(v) for v in daily_counts[start0:end0]))
+        cumulative += count
+        output.append({
+            "period": len(output) + 1,
+            "start_day": start0 + 1,
+            "end_day": end0,
+            "count": count,
+            "cumulative": cumulative,
+        })
+    return output
+
+
+def build_conus_seasonal_activity(
+    canonical_records: Sequence[dict[str, Any]],
+    year: int,
+    *,
+    source_edit_ms: int | None = None,
+    complete_through_date: date | None = None,
+    collection: str,
+) -> dict[str, Any]:
+    """Count unique deduplicated WF discoveries for the contiguous U.S.
+
+    This metric deliberately uses canonical incident identities *before* geometry
+    filtering. It therefore measures wildfire discoveries, not the number of valid
+    polygons or the number of perimeters visible at a particular map zoom.
+    """
+    days = year_day_count(year)
+    daily = [0] * days
+    qa = {
+        "canonical_record_count": len(canonical_records),
+        "counted_conus_discoveries": 0,
+        "excluded_non_conus_state": 0,
+        "excluded_missing_state": 0,
+        "excluded_invalid_discovery_time": 0,
+        "excluded_discovery_outside_target_year": 0,
+    }
+    jan1 = date(year, 1, 1)
+    for record in canonical_records:
+        state, _ = normalize_state(record.get("attr_POOState"))
+        if not state:
+            qa["excluded_missing_state"] += 1
+            continue
+        if state not in CONUS_STATE_CODES:
+            qa["excluded_non_conus_state"] += 1
+            continue
+        discovered = source_datetime_utc(record.get("attr_FireDiscoveryDateTime"))
+        if discovered is None:
+            qa["excluded_invalid_discovery_time"] += 1
+            continue
+        if discovered.year != year:
+            qa["excluded_discovery_outside_target_year"] += 1
+            continue
+        day_index = (discovered.date() - jan1).days
+        if not (0 <= day_index < days):
+            qa["excluded_discovery_outside_target_year"] += 1
+            continue
+        daily[day_index] += 1
+        qa["counted_conus_discoveries"] += 1
+
+    if complete_through_date is None:
+        complete_day = days
+        complete_date = date(year, 12, 31)
+    else:
+        if complete_through_date < jan1:
+            complete_day = 0
+            complete_date = None
+        else:
+            capped = min(complete_through_date, date(year, 12, 31))
+            complete_day = (capped - jan1).days + 1
+            complete_date = capped
+
+    complete_count = int(sum(daily[:complete_day]))
+    return {
+        "phase": "WFIGS-5",
+        "processor_version": SEASONAL_ACTIVITY_VERSION,
+        "collection": collection,
+        "metric": "unique_wildfire_discoveries",
+        "metric_definition": (
+            "Unique deduplicated WFIGS WF identities counted by attr_FireDiscoveryDateTime; "
+            "counts are independent of geometry validity and map display thresholds."
+        ),
+        "domain": "CONUS",
+        "domain_definition": "48 contiguous U.S. states plus District of Columbia by WFIGS attr_POOState",
+        "year": int(year),
+        "time_basis": "UTC Fire Discovery Date",
+        "week_definition": "Jan-1-anchored 7-day periods; incomplete current period is excluded from weekly comparison",
+        "source_last_edit_epoch_ms": source_edit_ms,
+        "source_last_edit_utc": epoch_ms_to_iso(source_edit_ms),
+        "generated_utc": utc_now_iso(),
+        "daily_counts": daily,
+        "complete_through_date": complete_date.isoformat() if complete_date else None,
+        "complete_through_day": complete_day,
+        "complete_through_count": complete_count,
+        "weekly_completed": weekly_activity_from_daily(daily, complete_day),
+        "qa": qa,
+    }
+
+
 def normalize_properties(record: dict[str, Any], source_key: str) -> dict[str, Any]:
     gis = safe_float(record.get("poly_GISAcres"))
     auto = safe_float(record.get("poly_Acres_AutoCalc"))
@@ -757,9 +904,12 @@ def delivery_is_complete(mode: str, existing_root: Path, manifest: dict[str, Any
         return (existing_root / "current" / "perimeters.geojson").exists()
     chunks_meta = manifest.get("chunks") or []
     overview = manifest.get("overview") or {}
-    if not chunks_meta or not overview.get("href"):
+    seasonal = manifest.get("seasonal_activity") or {}
+    if not chunks_meta or not overview.get("href") or not seasonal.get("href"):
         return False
     if not (existing_root / "ytd" / str(overview.get("href"))).exists():
+        return False
+    if not (existing_root / "ytd" / str(seasonal.get("href"))).exists():
         return False
     return all((existing_root / "ytd" / str(item.get("href", ""))).exists() for item in chunks_meta)
 
@@ -989,6 +1139,19 @@ def build_ytd(
             }
         )
 
+    source_edit_dt = source_datetime_utc(source_edit_ms)
+    current_year = datetime.now(timezone.utc).year
+    last_complete_utc_date = (source_edit_dt.date() if source_edit_dt else datetime.now(timezone.utc).date()) - timedelta(days=1)
+    seasonal_activity = build_conus_seasonal_activity(
+        canonical_records,
+        current_year,
+        source_edit_ms=source_edit_ms,
+        complete_through_date=last_complete_utc_date,
+        collection="current-year-activity",
+    )
+    seasonal_activity_path = out_dir / "seasonal_activity.json"
+    write_json(seasonal_activity_path, seasonal_activity, compact=False)
+
     manifest = {
         "phase": "WFIGS-2",
         "processor_version": PROCESSOR_VERSION,
@@ -1025,6 +1188,16 @@ def build_ytd(
             "bytes": overview_path.stat().st_size,
             "sha256": sha256_file(overview_path),
             "purpose": "Lightweight zoomed-out display only; full archive remains in viewport chunks.",
+        },
+        "seasonal_activity": {
+            "href": "seasonal_activity.json",
+            "metric": "unique_wildfire_discoveries",
+            "domain": "CONUS",
+            "year": seasonal_activity["year"],
+            "complete_through_date": seasonal_activity["complete_through_date"],
+            "complete_through_count": seasonal_activity["complete_through_count"],
+            "bytes": seasonal_activity_path.stat().st_size,
+            "sha256": sha256_file(seasonal_activity_path),
         },
         "chunk_count": len(chunk_manifest),
         "chunks": chunk_manifest,
@@ -1073,7 +1246,7 @@ def validate_manifest_and_files(mode: str, root: Path, manifest: dict[str, Any])
                 errors.append("YTD overview checksum mismatch")
             overview_data = load_json(overview_path) or {}
             overview_features = overview_data.get("features") or []
-            if len(overview_features) != int(overview.get("feature_count") or -1):
+            if len(overview_features) != int(overview.get("feature_count") if overview.get("feature_count") is not None else -1):
                 errors.append("YTD overview feature count mismatch")
             min_acres = float(overview.get("minimum_mapped_acres") or ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES)
             for feature in overview_features:
@@ -1081,6 +1254,18 @@ def validate_manifest_and_files(mode: str, root: Path, manifest: dict[str, Any])
                 if acres is None or acres < min_acres:
                     errors.append("YTD overview contains a perimeter below its mapped-acre threshold")
                     break
+        seasonal = manifest.get("seasonal_activity") or {}
+        seasonal_path = root / "ytd" / str(seasonal.get("href") or "")
+        if seasonal.get("href") != "seasonal_activity.json" or not seasonal_path.exists():
+            errors.append("YTD seasonal activity JSON missing")
+        else:
+            if sha256_file(seasonal_path) != seasonal.get("sha256"):
+                errors.append("YTD seasonal activity checksum mismatch")
+            payload = load_json(seasonal_path) or {}
+            if payload.get("phase") != "WFIGS-5" or payload.get("collection") != "current-year-activity":
+                errors.append("YTD seasonal activity metadata mismatch")
+            if payload.get("domain") != "CONUS":
+                errors.append("YTD seasonal activity domain is not CONUS")
     if errors:
         raise RuntimeError("WFIGS Phase-2 build validation failed: " + "; ".join(errors[:20]))
 
@@ -1164,6 +1349,12 @@ def main() -> int:
     if mode == "ytd":
         print(f"YTD chunks: {manifest['chunk_count']}")
         print(f"YTD chunk bytes: {manifest['total_chunk_bytes']}")
+        activity_meta = manifest.get("seasonal_activity") or {}
+        print(
+            "CONUS seasonal activity: "
+            f"{activity_meta.get('complete_through_count', 0)} discoveries through "
+            f"{activity_meta.get('complete_through_date') or 'no complete UTC day yet'}"
+        )
     else:
         print(f"Current GeoJSON bytes: {manifest['bytes']}")
     print("WFIGS Phase-2 build validation: PASS")
