@@ -14,7 +14,7 @@ from typing import Any
 
 from shapely.geometry import shape
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1_1"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_2"
 
 
 def sha256_file(path: Path) -> str:
@@ -58,7 +58,12 @@ def validate_code(repo_root: Path, errors: list[str]) -> None:
         "WFIGS polygons represent mapped wildfire extent, not soil burn severity.",
         "active_fire_ids",
         "duplicate_identity_groups_removed",
-        "Validation is intentionally performed *after* coordinate rounding.",
+        "exception-safe polygon repair cascade",
+        "repair_polygonal_geometry",
+        "make_valid_structure",
+        "buffer0",
+        "componentwise",
+        "repair_method_counts",
     ]
     for fragment in required_fragments:
         if fragment not in text:
