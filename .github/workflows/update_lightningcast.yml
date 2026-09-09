@@ -164,7 +164,24 @@ jobs:
           fi
           scan='${{ steps.freshness.outputs.new_scan }}'
           git commit -m "Update LightningCast ${scan}"
-          git push
+
+          branch="${GITHUB_REF_NAME}"
+          for attempt in 1 2 3; do
+            echo "LightningCast sync/push attempt ${attempt}..."
+            if ! git pull --rebase origin "${branch}"; then
+              git rebase --abort || true
+              sleep $((attempt * 10))
+              continue
+            fi
+            if git push origin "HEAD:${branch}"; then
+              echo 'LightningCast products committed successfully.'
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+
+          echo 'Unable to push LightningCast products after three attempts.' >&2
+          exit 1
 
       - name: Upload LightningCast preview artifact
         if: ${{ github.event_name == 'workflow_dispatch' || failure() }}

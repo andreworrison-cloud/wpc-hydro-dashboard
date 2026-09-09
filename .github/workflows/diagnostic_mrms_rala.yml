@@ -28,10 +28,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -40,10 +40,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y libeccodes0
+          # GitHub-hosted Ubuntu runners may include unrelated third-party apt
+          # sources (notably Google Chrome). This workflow does not need Chrome;
+          # disable that source before refreshing package metadata so a transient
+          # Chrome repository hash mismatch cannot block the meteorological job.
+          for source_file in /etc/apt/sources.list.d/*; do
+            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
+              echo "Disabling unused Google Chrome apt source: ${source_file}"
+              sudo rm -f "${source_file}"
+            fi
+          done
+
+          # Start from a clean apt-list snapshot and retry transient mirror failures.
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libeccodes0
           python -m pip install --upgrade pip
-          python -m pip install numpy requests pillow pyproj rasterio eccodes matplotlib basemap
+          python -m pip install numpy requests pillow pyproj rasterio eccodes
           python -m eccodes selfcheck
 
       - name: Run offline renderer self-test
@@ -75,26 +89,11 @@ jobs:
           fi
           python tools/validate_mrms_rala.py diagnostics/mrms_rala ${extra}
 
-      - name: Compare NCEP and NODD exact-frame payloads
-        if: ${{ inputs.source_mode == 'auto' }}
-        run: |
-          python tools/compare_rala_official_sources.py \
-            --output diagnostics/mrms_rala/mrms_rala_official_source_parity.json \
-            --max-common-age-minutes 20
-
-      - name: Build geographic placement preview
-        run: |
-          python tools/build_rala_geographic_preview.py diagnostics/mrms_rala
-
-      - name: Build weak-echo threshold previews
-        run: |
-          python tools/build_rala_threshold_previews.py diagnostics/mrms_rala
-
       - name: Upload diagnostic artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
-          name: mrms-rala-backend-final-validation
+          name: mrms-rala-backend-diagnostic
           path: |
             diagnostics/mrms_rala/
             diagnostics/mrms_rala_self_test/

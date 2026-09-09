@@ -8,7 +8,11 @@ on:
         required: false
         default: false
         type: boolean
-  
+  schedule:
+    # Wake hourly. The Python backend, not the cron clock, decides which HRRR
+    # cycle is ready by requiring the aligned six-member package through f12-f17.
+    - cron: '55 * * * *'
+
 permissions:
   contents: write
 
@@ -80,8 +84,8 @@ jobs:
               raise SystemExit("Unexpected HRRR-TLE manifest contract.")
 
           layers = manifest.get("layers") or {}
-          if len(layers) != 20:
-              raise SystemExit(f"Expected 20 HRRR/HRRR-TLE dashboard overlays, found {len(layers)}.")
+          if len(layers) != 18:
+              raise SystemExit(f"Expected 18 HRRR-TLE dashboard overlays, found {len(layers)}.")
 
           for key, item in layers.items():
               p = root / item["file"]
@@ -90,25 +94,37 @@ jobs:
               with Image.open(p).convert("RGBA") as image:
                   if image.width < 800 or image.height < 400:
                       raise SystemExit(f"{key}: implausibly small image {image.size}")
-          print(f"Validated 20 HRRR/HRRR-TLE overlays; latest HRRR {manifest['latest_hrrr_diagnostic_cycle_utc']}, TLE anchor {manifest['latest_cycle_utc']}.")
+          print(f"Validated 18 HRRR-TLE overlays for {manifest['latest_cycle_utc']}.")
           PY
 
       - name: Commit updated dashboard products
         shell: bash
         run: |
           set -euo pipefail
-
-          # Stage first. `git diff` alone does not report brand-new untracked
-          # files, which is exactly what happens on the first HRRR-TLE run.
-          git add -- static/hrrr_tle_* static/hrrr_latest_12h_*
-
-          if git diff --cached --quiet; then
+          if git diff --quiet -- static/hrrr_tle_*; then
             echo "No HRRR-TLE product changes to commit."
             exit 0
           fi
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add static/hrrr_tle_*
           git commit -m "Update HRRR-TLE flash flood guidance"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          branch="${GITHUB_REF_NAME}"
+          for attempt in 1 2 3; do
+            echo "HRRR-TLE sync/push attempt ${attempt}..."
+            if ! git pull --rebase origin "${branch}"; then
+              git rebase --abort || true
+              sleep $((attempt * 10))
+              continue
+            fi
+            if git push origin "HEAD:${branch}"; then
+              echo 'HRRR-TLE products committed successfully.'
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+
+          echo 'Unable to push HRRR-TLE products after three attempts.' >&2
+          exit 1
