@@ -2191,13 +2191,13 @@ function ensureWFIGSDashboardStyles() {
             font-size: 9.5px; line-height: 1.2; font-weight: 400;
         }
         .wfigs-history-year-control {
-            margin: 2px 10px 9px 35px; padding: 7px 8px;
-            border: 1px solid rgba(255,255,255,0.10); border-radius: 5px;
-            background: rgba(0,0,0,0.12);
+            margin: -1px 10px 10px 35px; padding: 8px 9px 9px;
+            border: 1px solid rgba(255,190,105,0.34); border-radius: 5px;
+            background: rgba(37,28,18,0.36);
         }
         .wfigs-history-year-control label {
             display: block; margin-bottom: 4px; font-size: 9.5px;
-            color: rgba(235,242,249,0.72); text-transform: uppercase;
+            color: #ffd28a; text-transform: uppercase; font-weight: 700;
             letter-spacing: 0.03em;
         }
         .wfigs-history-year-control select {
@@ -2785,6 +2785,12 @@ function wfigsHistoryYearManifestURL(year) {
     return `${WFIGS_HISTORY_ROOT}/${href}`;
 }
 
+function updateWFIGSHistoryLayerDescription() {
+    const description = document.querySelector('.layer-row[data-layer-id="wfigs-history"] .layer-description');
+    if (!description) return;
+    description.textContent = `Selected year: ${wfigsHistorySelectedYear}. Choose one completed calendar year from the rolling five-year modern WFIGS archive.`;
+}
+
 function updateWFIGSHistoryYearSelector() {
     const select = document.getElementById('wfigs-history-year-select');
     if (!select) return;
@@ -2801,13 +2807,14 @@ function updateWFIGSHistoryYearSelector() {
         option.selected = year === selected;
         select.append(option);
     });
+    updateWFIGSHistoryLayerDescription();
 }
 
 function renderWFIGSHistoryYearControl(parent) {
     const wrapper = document.createElement('div');
     wrapper.className = 'wfigs-history-year-control';
     wrapper.innerHTML = `
-        <label for="wfigs-history-year-select">Historical fire year</label>
+        <label for="wfigs-history-year-select">Select historical fire year</label>
         <select id="wfigs-history-year-select" aria-label="Select historical WFIGS wildfire year"></select>
         <span class="wfigs-history-year-note">One completed calendar year at a time; rolling five-year operational window.</span>
     `;
@@ -2817,6 +2824,7 @@ function renderWFIGSHistoryYearControl(parent) {
         const year = Number(event.target.value);
         if (!Number.isInteger(year) || year === wfigsHistorySelectedYear) return;
         wfigsHistorySelectedYear = year;
+        updateWFIGSHistoryLayerDescription();
         wfigsHistoryManifest = null;
         wfigsHistoryManifestVersion = '';
         wfigsHistoryLayerGroup.clearLayers();
@@ -6881,7 +6889,16 @@ function renderDashboardSidebar() {
                 note.textContent = sectionConfig.emptyMessage || 'No layers registered.';
                 body.append(note);
             } else {
-                (sectionConfig.layers || []).forEach(entry => body.append(renderLayerRow(entry)));
+                (sectionConfig.layers || []).forEach(entry => {
+                    body.append(renderLayerRow(entry));
+                    // Keep the historical-year selector visually attached to the
+                    // historical layer row. In Phase 4.0 it was appended at the
+                    // bottom of the wildfire section, which made the control easy
+                    // to miss in a long/scrolling sidebar.
+                    if (sectionConfig.id === 'wildfire-burn-scar' && entry.id === 'wfigs-history') {
+                        renderWFIGSHistoryYearControl(body);
+                    }
+                });
 
                 (sectionConfig.groups || []).forEach(groupConfig => {
                     const group = document.createElement('details');
@@ -6902,7 +6919,6 @@ function renderDashboardSidebar() {
                     group.append(groupSummary, groupBody);
                     body.append(group);
                 });
-                if (sectionConfig.id === 'wildfire-burn-scar') renderWFIGSHistoryYearControl(body);
             }
 
             section.append(summary, body);
