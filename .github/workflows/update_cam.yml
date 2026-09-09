@@ -27,9 +27,28 @@ jobs:
           python-version: '3.10'
 
       - name: Install System Dependencies
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libeccodes0
+          set -euo pipefail
+
+          # GitHub-hosted Ubuntu runners currently include the Google Chrome
+          # apt repository. The CAM workflow does not use Chrome, so disable
+          # that unrelated repository before apt metadata refreshes. This
+          # prevents a transient Chrome Packages/Release hash mismatch from
+          # blocking the meteorological workflow.
+          for source_file in /etc/apt/sources.list.d/*; do
+            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
+              echo "Disabling unused Google Chrome apt source: ${source_file}"
+              sudo rm -f "${source_file}"
+            fi
+          done
+
+          # Drop cached package-list metadata so the remaining repositories
+          # are refreshed as one internally consistent snapshot.
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libeccodes0
 
       - name: Install Python Packages
         run: |
