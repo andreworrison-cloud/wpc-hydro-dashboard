@@ -56,7 +56,7 @@ except Exception as exc:  # pragma: no cover - workflow dependency guard
         "Shapely is required. Install with: pip install 'shapely>=2.0,<3'"
     ) from exc
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1_2"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_3"
 CURRENT_LAYER_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
     "WFIGS_Interagency_Perimeters_Current/FeatureServer/0"
@@ -74,6 +74,7 @@ SOURCE_LABELS = {
     "ytd": "WFIGS Wildland Fire Perimeters Year To Date",
 }
 WILDFIRE_WHERE = "attr_IncidentTypeCategory = 'WF'"
+ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES = 5000.0
 
 # Phase-1 confirmed these fields in both authoritative schemas.
 SOURCE_FIELDS = [
@@ -755,7 +756,10 @@ def delivery_is_complete(mode: str, existing_root: Path, manifest: dict[str, Any
     if mode == "current":
         return (existing_root / "current" / "perimeters.geojson").exists()
     chunks_meta = manifest.get("chunks") or []
-    if not chunks_meta:
+    overview = manifest.get("overview") or {}
+    if not chunks_meta or not overview.get("href"):
+        return False
+    if not (existing_root / "ytd" / str(overview.get("href"))).exists():
         return False
     return all((existing_root / "ytd" / str(item.get("href", ""))).exists() for item in chunks_meta)
 
@@ -951,6 +955,20 @@ def build_ytd(
     for feature in features:
         chunked[chunk_id_for_feature(feature)].append(feature)
 
+    # Lightweight national overview used only at zoomed-out CONUS scales.
+    # This avoids downloading the full chunk archive merely to prove that
+    # mapped wildfire footprints exist. No source features are discarded.
+    overview_features = [
+        f for f in features
+        if (safe_float((f.get("properties") or {}).get("mapped_acres")) or -1.0) >= ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES
+    ]
+    overview_path = out_dir / "overview.geojson"
+    write_json(
+        overview_path,
+        {"type": "FeatureCollection", "features": [clean_feature_for_write(f) for f in overview_features]},
+        compact=True,
+    )
+
     chunk_manifest: list[dict[str, Any]] = []
     for chunk_id in sorted(chunked):
         chunk_features = chunked[chunk_id]
@@ -999,6 +1017,15 @@ def build_ytd(
             "chunk_bbox": "actual union bounds of all full display geometries in the chunk",
             "future_loading": "Phase WFIGS-3 should load only chunks whose bbox intersects the map viewport.",
         },
+        "overview": {
+            "href": "overview.geojson",
+            "minimum_mapped_acres": ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES,
+            "feature_count": len(overview_features),
+            "bbox": union_bbox(f["_bbox"] for f in overview_features),
+            "bytes": overview_path.stat().st_size,
+            "sha256": sha256_file(overview_path),
+            "purpose": "Lightweight zoomed-out display only; full archive remains in viewport chunks.",
+        },
         "chunk_count": len(chunk_manifest),
         "chunks": chunk_manifest,
         "total_chunk_bytes": int(sum(item["bytes"] for item in chunk_manifest)),
@@ -1037,6 +1064,23 @@ def validate_manifest_and_files(mode: str, root: Path, manifest: dict[str, Any])
                 errors.append(f"checksum mismatch: {path.name}")
         if published != int(manifest.get("published_fire_count") or -1):
             errors.append("YTD published feature total does not match chunk sum")
+        overview = manifest.get("overview") or {}
+        overview_path = root / "ytd" / str(overview.get("href") or "")
+        if not overview.get("href") or not overview_path.exists() or overview_path.stat().st_size <= 0:
+            errors.append("YTD overview GeoJSON missing/empty")
+        else:
+            if sha256_file(overview_path) != overview.get("sha256"):
+                errors.append("YTD overview checksum mismatch")
+            overview_data = load_json(overview_path) or {}
+            overview_features = overview_data.get("features") or []
+            if len(overview_features) != int(overview.get("feature_count") or -1):
+                errors.append("YTD overview feature count mismatch")
+            min_acres = float(overview.get("minimum_mapped_acres") or ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES)
+            for feature in overview_features:
+                acres = safe_float((feature.get("properties") or {}).get("mapped_acres"))
+                if acres is None or acres < min_acres:
+                    errors.append("YTD overview contains a perimeter below its mapped-acre threshold")
+                    break
     if errors:
         raise RuntimeError("WFIGS Phase-2 build validation failed: " + "; ".join(errors[:20]))
 

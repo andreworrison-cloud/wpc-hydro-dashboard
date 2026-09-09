@@ -36,7 +36,7 @@ from typing import Any, Sequence
 
 import fetch_wfigs_operational as core
 
-PROCESSOR_VERSION = "wfigs_history_v1_0"
+PROCESSOR_VERSION = "wfigs_history_v1_1"
 HISTORY_LAYER_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
     "WFIGS_Interagency_Perimeters/FeatureServer/0"
@@ -51,11 +51,11 @@ EARLIEST_MODERN_WFIGS_YEAR = 2021
 def assert_core_compatibility() -> None:
     version = str(getattr(core, "PROCESSOR_VERSION", ""))
     match = re.fullmatch(r"wfigs_phase2_operational_v(\d+)_(\d+)", version)
-    if not match or tuple(map(int, match.groups())) < (1, 2):
+    if not match or tuple(map(int, match.groups())) < (1, 3):
         raise RuntimeError(
-            "fetch_wfigs_history.py requires the Phase-2.2 or newer WFIGS operational "
-            "geometry core (wfigs_phase2_operational_v1_2+). Apply the mixed-dimension "
-            f"repair patch first; found processor {version!r}."
+            "fetch_wfigs_history.py requires the Phase-4.3 WFIGS operational geometry core "
+            "with overview support (wfigs_phase2_operational_v1_3+). Apply the CONUS "
+            f"archive-visibility patch first; found processor {version!r}."
         )
 
 
@@ -163,9 +163,13 @@ def year_delivery_complete(root: Path, manifest: dict[str, Any] | None) -> bool:
     if not manifest:
         return False
     chunks = manifest.get("chunks") or []
-    if not chunks:
+    overview = manifest.get("overview") or {}
+    if not chunks or not overview.get("href"):
         return False
-    return all((root / str(manifest.get("year")) / str(item.get("href", ""))).exists() for item in chunks)
+    year_root = root / str(manifest.get("year"))
+    if not (year_root / str(overview.get("href"))).exists():
+        return False
+    return all((year_root / str(item.get("href", ""))).exists() for item in chunks)
 
 
 def should_skip_year(
@@ -210,6 +214,21 @@ def build_year(
     for feature in features:
         chunk_id = core.chunk_id_for_feature(feature)
         chunked.setdefault(chunk_id, []).append(feature)
+
+    # Compact national overview for zoomed-out CONUS display. The complete
+    # annual archive remains in the normal viewport chunks; this file carries
+    # only larger mapped perimeters so the dashboard can show meaningful fire
+    # context without downloading an entire year at national scale.
+    overview_features = [
+        f for f in features
+        if (core.safe_float((f.get("properties") or {}).get("mapped_acres")) or -1.0) >= core.ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES
+    ]
+    overview_path = out_dir / "overview.geojson"
+    core.write_json(
+        overview_path,
+        {"type": "FeatureCollection", "features": [core.clean_feature_for_write(f) for f in overview_features]},
+        compact=True,
+    )
 
     chunk_manifest: list[dict[str, Any]] = []
     for chunk_id in sorted(chunked):
@@ -271,6 +290,15 @@ def build_year(
             "chunk_bbox": "actual union bounds of all full display geometries in the chunk",
             "future_loading": "Dashboard loads only chunks whose bbox intersects the map viewport.",
         },
+        "overview": {
+            "href": "overview.geojson",
+            "minimum_mapped_acres": core.ARCHIVE_OVERVIEW_MIN_MAPPED_ACRES,
+            "feature_count": len(overview_features),
+            "bbox": core.union_bbox(f["_bbox"] for f in overview_features),
+            "bytes": overview_path.stat().st_size,
+            "sha256": core.sha256_file(overview_path),
+            "purpose": "Lightweight zoomed-out display only; full annual archive remains in viewport chunks.",
+        },
         "chunk_count": len(chunk_manifest),
         "chunks": chunk_manifest,
         "total_chunk_bytes": int(sum(item["bytes"] for item in chunk_manifest)),
@@ -291,6 +319,8 @@ def manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "published_fire_count": int(manifest.get("published_fire_count") or 0),
         "chunk_count": int(manifest.get("chunk_count") or 0),
         "total_chunk_bytes": int(manifest.get("total_chunk_bytes") or 0),
+        "overview_feature_count": int((manifest.get("overview") or {}).get("feature_count") or 0),
+        "overview_bytes": int((manifest.get("overview") or {}).get("bytes") or 0),
         "generated_utc": manifest.get("generated_utc"),
         "source_year_signature": manifest.get("source_year_signature"),
     }

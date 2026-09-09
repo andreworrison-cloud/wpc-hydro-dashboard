@@ -2111,7 +2111,7 @@ const nldasRsm0100Layer = L.imageOverlay(
 // represent soil-burn severity; BAER/MTBS remain separate future context.
 // The browser consumes only our validated wfigs-data branch, never the live
 // ArcGIS service directly. Current is a compact national snapshot; the much
-// larger YTD archive is lazy-loaded by viewport and cartographic zoom.
+// larger YTD/history archives use lightweight national overviews at CONUS scale and viewport chunks when zoomed in.
 const WFIGS_CURRENT_YEAR = new Date().getUTCFullYear();
 const WFIGS_CURRENT_LAYER_NAME = 'NIFC/WFIGS Current Wildfire Perimeters';
 const WFIGS_YTD_LAYER_NAME = `NIFC/WFIGS ${WFIGS_CURRENT_YEAR} YTD Wildfire Perimeters`;
@@ -2125,7 +2125,8 @@ const WFIGS_CURRENT_MANIFEST_POLL_INTERVAL_MS = 2 * 60 * 1000;
 const WFIGS_YTD_MANIFEST_POLL_INTERVAL_MS = 15 * 60 * 1000;
 const WFIGS_HISTORY_MANIFEST_POLL_INTERVAL_MS = 60 * 60 * 1000;
 const WFIGS_CURRENT_SOURCE_EDIT_CAUTION_MINUTES = 45;
-const WFIGS_YTD_MIN_ZOOM = 6;
+const WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM = 4;
+const WFIGS_ARCHIVE_CHUNK_MIN_ZOOM = 6;
 const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;
 const WFIGS_HISTORY_CHUNK_CACHE_LIMIT_PER_YEAR = 36;
 const WFIGS_HISTORY_ROLLING_YEARS = 5;
@@ -2165,7 +2166,10 @@ let wfigsCurrentActiveFireIds = new Set();
 // any combination of the rolling five-year archive on at the same time.
 let wfigsHistorySelectedYears = new Set([WFIGS_CURRENT_YEAR - 1]);
 const wfigsYTDChunkCache = new Map();
+let wfigsYTDOverviewGeoJSON = null;
+let wfigsYTDOverviewLayer = null;
 const wfigsHistoryChunkCache = new Map();
+const wfigsHistoryOverviewCache = new Map();
 
 function ensureWFIGSDashboardStyles() {
     if (document.getElementById('wfigs-dashboard-styles')) return;
@@ -2407,6 +2411,9 @@ function validateWFIGSManifest(manifest, collection) {
                 throw new Error('WFIGS YTD manifest contains an invalid chunk');
             }
         });
+        if (!manifest.overview?.href || !Number.isFinite(Number(manifest.overview.feature_count))) {
+            throw new Error('WFIGS YTD manifest is missing the zoomed-out overview product');
+        }
     }
     return manifest;
 }
@@ -2497,7 +2504,9 @@ async function refreshWFIGSCurrent({forceManifest = false} = {}) {
 }
 
 function wfigsYTDMinimumMappedAcresForZoom(zoom = map.getZoom()) {
-    if (zoom < WFIGS_YTD_MIN_ZOOM) return Number.POSITIVE_INFINITY;
+    if (zoom < WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM) return Number.POSITIVE_INFINITY;
+    if (zoom === 4) return 10000;
+    if (zoom === 5) return 5000;
     if (zoom === 6) return 500;
     if (zoom === 7) return 100;
     if (zoom === 8) return 20;
@@ -2506,9 +2515,10 @@ function wfigsYTDMinimumMappedAcresForZoom(zoom = map.getZoom()) {
 
 function wfigsYTDThresholdText(zoom = map.getZoom()) {
     const threshold = wfigsYTDMinimumMappedAcresForZoom(zoom);
-    if (!Number.isFinite(threshold)) return `Zoom to ${WFIGS_YTD_MIN_ZOOM}+ to load the archive`;
+    if (!Number.isFinite(threshold)) return `Zoom to ${WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM}+ to load the archive`;
     if (threshold <= 0) return 'All available perimeter sizes shown';
-    return `Cartographic display: ≥${threshold.toLocaleString('en-US')} acres at this zoom`;
+    const mode = zoom < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM ? 'National overview' : 'Cartographic display';
+    return `${mode}: ≥${threshold.toLocaleString('en-US')} acres at this zoom`;
 }
 
 function wfigsBBoxesIntersect(a, b) {
@@ -2538,6 +2548,27 @@ function buildWFIGSYTDChunkLayer(geojson) {
     });
 }
 
+async function loadWFIGSYTDOverview() {
+    if (!wfigsYTDManifest?.overview?.href) throw new Error('WFIGS YTD overview metadata unavailable');
+    if (wfigsYTDOverviewGeoJSON) return wfigsYTDOverviewGeoJSON;
+    const meta = wfigsYTDManifest.overview;
+    const url = `${WFIGS_DATA_ROOT}/ytd/${meta.href}?v=${encodeURIComponent(wfigsYTDManifest?.source_last_edit_epoch_ms || '')}`;
+    wfigsYTDOverviewGeoJSON = validateWFIGSFeatureCollection(
+        await fetchWFIGSJSON(url), meta.feature_count, 'WFIGS YTD national overview'
+    );
+    return wfigsYTDOverviewGeoJSON;
+}
+
+function rebuildWFIGSYTDOverviewLayer() {
+    if (wfigsYTDOverviewLayer && wfigsYTDLayerGroup.hasLayer(wfigsYTDOverviewLayer)) {
+        wfigsYTDLayerGroup.removeLayer(wfigsYTDOverviewLayer);
+    }
+    wfigsYTDOverviewLayer = wfigsYTDOverviewGeoJSON ? buildWFIGSYTDChunkLayer(wfigsYTDOverviewGeoJSON) : null;
+    if (wfigsYTDOverviewLayer && map.hasLayer(wfigsYTDLayerGroup) && map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+        wfigsYTDLayerGroup.addLayer(wfigsYTDOverviewLayer);
+    }
+}
+
 async function loadWFIGSYTDChunk(chunkMeta) {
     const key = chunkMeta.href;
     const cached = wfigsYTDChunkCache.get(key);
@@ -2561,6 +2592,12 @@ async function loadWFIGSYTDChunk(chunkMeta) {
 
 function rebuildVisibleWFIGSYTDChunkLayers() {
     if (!map.hasLayer(wfigsYTDLayerGroup)) return;
+    if (map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+        rebuildWFIGSYTDOverviewLayer();
+        wfigsYTDLastDisplayThreshold = wfigsYTDMinimumMappedAcresForZoom();
+        updateWFIGSYTDTimeBox();
+        return;
+    }
     const visible = [...wfigsYTDVisibleHrefs];
     visible.forEach(href => {
         const cached = wfigsYTDChunkCache.get(href);
@@ -2592,7 +2629,7 @@ async function updateWFIGSYTDViewport() {
     const zoom = map.getZoom();
     const threshold = wfigsYTDMinimumMappedAcresForZoom(zoom);
 
-    if (zoom < WFIGS_YTD_MIN_ZOOM) {
+    if (zoom < WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM) {
         wfigsYTDLayerGroup.clearLayers();
         wfigsYTDVisibleHrefs.clear();
         wfigsYTDLastDisplayThreshold = threshold;
@@ -2600,6 +2637,28 @@ async function updateWFIGSYTDViewport() {
         return;
     }
 
+    if (zoom < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+        [...wfigsYTDVisibleHrefs].forEach(href => {
+            const cached = wfigsYTDChunkCache.get(href);
+            if (cached && wfigsYTDLayerGroup.hasLayer(cached.layer)) wfigsYTDLayerGroup.removeLayer(cached.layer);
+        });
+        wfigsYTDVisibleHrefs.clear();
+        try {
+            await loadWFIGSYTDOverview();
+            if (serial !== wfigsYTDViewportSerial || !map.hasLayer(wfigsYTDLayerGroup)) return;
+            rebuildWFIGSYTDOverviewLayer();
+            wfigsYTDLastError = '';
+        } catch (error) {
+            wfigsYTDLastError = `National overview failed to load: ${error?.message || String(error)}`;
+        }
+        wfigsYTDLastDisplayThreshold = threshold;
+        updateWFIGSYTDTimeBox();
+        return;
+    }
+
+    if (wfigsYTDOverviewLayer && wfigsYTDLayerGroup.hasLayer(wfigsYTDOverviewLayer)) {
+        wfigsYTDLayerGroup.removeLayer(wfigsYTDOverviewLayer);
+    }
     const viewport = wfigsMapBBox();
     const desiredChunks = wfigsYTDManifest.chunks.filter(chunk => wfigsBBoxesIntersect(chunk.bbox, viewport));
     const desiredHrefs = new Set(desiredChunks.map(chunk => chunk.href));
@@ -2674,6 +2733,8 @@ async function refreshWFIGSYTDManifest({forceManifest = false} = {}) {
             wfigsYTDLayerGroup.clearLayers();
             wfigsYTDChunkCache.clear();
             wfigsYTDVisibleHrefs.clear();
+            wfigsYTDOverviewGeoJSON = null;
+            wfigsYTDOverviewLayer = null;
             wfigsYTDLastDisplayThreshold = null;
         }
         wfigsYTDManifest = manifest;
@@ -2732,10 +2793,14 @@ function formatWFIGSYTDTimeBox() {
         `;
     }
     let displayedFeatures = 0;
-    wfigsYTDVisibleHrefs.forEach(href => {
-        const cached = wfigsYTDChunkCache.get(href);
-        if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
-    });
+    if (map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM && wfigsYTDOverviewLayer?.getLayers) {
+        displayedFeatures = wfigsYTDOverviewLayer.getLayers().length;
+    } else {
+        wfigsYTDVisibleHrefs.forEach(href => {
+            const cached = wfigsYTDChunkCache.get(href);
+            if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
+        });
+    }
     const warning = wfigsYTDLastError
         ? `<br><span style="color:#ffb74d;">${escapeWFIGSHTML(wfigsYTDLastError)}; loaded data retained.</span>`
         : '';
@@ -2744,7 +2809,7 @@ function formatWFIGSYTDTimeBox() {
         <span style="color:#ffeb3b;">Snapshot: ${escapeWFIGSHTML(formatWFIGSDateTime(wfigsYTDManifest.source_last_edit_utc))}</span><br>
         <span style="font-size:0.82em;color:#d0d0d0;">${Number(wfigsYTDManifest.published_fire_count).toLocaleString('en-US')} mapped fires in ${Number(wfigsYTDManifest.chunk_count).toLocaleString('en-US')} regional chunks</span><br>
         <span style="font-size:0.82em;color:#80cbc4;">${escapeWFIGSHTML(wfigsYTDThresholdText())}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">Viewport: ${wfigsYTDVisibleHrefs.size} chunks &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span>${warning}
+        <span style="font-size:0.82em;color:#d0d0d0;">${map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM ? 'National overview' : `Viewport: ${wfigsYTDVisibleHrefs.size} chunks`} &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span>${warning}
     `;
 }
 
@@ -2795,6 +2860,9 @@ function validateWFIGSHistoryYearManifest(manifest, year) {
     if (Number(manifest.year) !== Number(year)) throw new Error(`WFIGS historical manifest year mismatch: ${year}`);
     if (!Array.isArray(manifest.chunks) || manifest.chunks.length !== Number(manifest.chunk_count)) {
         throw new Error(`WFIGS ${year} historical manifest has an invalid chunk inventory`);
+    }
+    if (!manifest.overview?.href || !Number.isFinite(Number(manifest.overview.feature_count))) {
+        throw new Error(`WFIGS ${year} historical manifest is missing the zoomed-out overview product`);
     }
     if (Number(manifest.published_fire_count) <= 0) throw new Error(`WFIGS ${year} historical manifest has no mapped fires`);
     return manifest;
@@ -2891,7 +2959,14 @@ function removeWFIGSHistoryYearLayers(year, {clearCache = false} = {}) {
         if (clearCache) wfigsHistoryChunkCache.delete(key);
     }
     wfigsHistoryVisibleSet(numericYear).clear();
-    if (clearCache) wfigsHistoryVisibleHrefsByYear.delete(numericYear);
+    const overview = wfigsHistoryOverviewCache.get(numericYear);
+    if (overview?.layer && wfigsHistoryLayerGroup.hasLayer(overview.layer)) {
+        wfigsHistoryLayerGroup.removeLayer(overview.layer);
+    }
+    if (clearCache) {
+        wfigsHistoryVisibleHrefsByYear.delete(numericYear);
+        wfigsHistoryOverviewCache.delete(numericYear);
+    }
 }
 
 function toggleWFIGSHistoryYear(year) {
@@ -2930,6 +3005,34 @@ function buildWFIGSHistoryChunkLayer(geojson, year) {
     });
 }
 
+async function loadWFIGSHistoryOverview(year) {
+    const numericYear = Number(year);
+    const cached = wfigsHistoryOverviewCache.get(numericYear);
+    if (cached?.geojson) return cached;
+    const manifest = wfigsHistoryManifests.get(numericYear);
+    const meta = manifest?.overview;
+    if (!meta?.href) throw new Error(`WFIGS ${numericYear} historical overview metadata unavailable`);
+    const url = `${WFIGS_HISTORY_ROOT}/${numericYear}/${meta.href}?v=${encodeURIComponent(manifest.source_year_signature || manifest.generated_utc || '')}`;
+    const geojson = validateWFIGSFeatureCollection(
+        await fetchWFIGSJSON(url), meta.feature_count, `WFIGS history ${numericYear} national overview`
+    );
+    const entry = {year: numericYear, geojson, layer: buildWFIGSHistoryChunkLayer(geojson, numericYear), lastUsed: Date.now()};
+    wfigsHistoryOverviewCache.set(numericYear, entry);
+    return entry;
+}
+
+function rebuildWFIGSHistoryOverviewLayers() {
+    wfigsHistorySortedSelectedYears().forEach(year => {
+        const cached = wfigsHistoryOverviewCache.get(year);
+        if (!cached?.geojson) return;
+        if (cached.layer && wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
+        cached.layer = buildWFIGSHistoryChunkLayer(cached.geojson, year);
+        if (map.hasLayer(wfigsHistoryLayerGroup) && map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+            wfigsHistoryLayerGroup.addLayer(cached.layer);
+        }
+    });
+}
+
 async function loadWFIGSHistoryChunk(year, chunkMeta) {
     const numericYear = Number(year);
     const key = `${numericYear}/${chunkMeta.href}`;
@@ -2951,6 +3054,12 @@ async function loadWFIGSHistoryChunk(year, chunkMeta) {
 
 function rebuildVisibleWFIGSHistoryChunkLayers() {
     if (!map.hasLayer(wfigsHistoryLayerGroup)) return;
+    if (map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+        rebuildWFIGSHistoryOverviewLayers();
+        wfigsHistoryLastDisplayThreshold = wfigsYTDMinimumMappedAcresForZoom();
+        updateWFIGSHistoryTimeBox();
+        return;
+    }
     wfigsHistorySortedSelectedYears().forEach(year => {
         const visible = wfigsHistoryVisibleSet(year);
         [...visible].forEach(href => {
@@ -2998,13 +3107,42 @@ async function updateWFIGSHistoryViewport() {
         return;
     }
 
-    if (zoom < WFIGS_YTD_MIN_ZOOM) {
+    if (zoom < WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM) {
         selectedYears.forEach(year => removeWFIGSHistoryYearLayers(year));
         wfigsHistoryLastDisplayThreshold = threshold;
         updateWFIGSHistoryTimeBox();
         return;
     }
 
+    if (zoom < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+        selectedYears.forEach(year => {
+            const visible = wfigsHistoryVisibleSet(year);
+            [...visible].forEach(href => {
+                const cached = wfigsHistoryChunkCache.get(`${year}/${href}`);
+                if (cached?.layer && wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
+            });
+            visible.clear();
+        });
+        const results = await Promise.allSettled(selectedYears.map(loadWFIGSHistoryOverview));
+        if (serial !== wfigsHistoryViewportSerial || !map.hasLayer(wfigsHistoryLayerGroup)) return;
+        let failures = 0;
+        results.forEach(result => {
+            if (result.status !== 'fulfilled') {
+                failures += 1;
+                console.warn('WFIGS historical national overview load failed:', result.reason);
+            }
+        });
+        rebuildWFIGSHistoryOverviewLayers();
+        wfigsHistoryLastError = failures ? `${failures} historical overview${failures === 1 ? '' : 's'} failed to load` : '';
+        wfigsHistoryLastDisplayThreshold = threshold;
+        updateWFIGSHistoryTimeBox();
+        return;
+    }
+
+    selectedYears.forEach(year => {
+        const overview = wfigsHistoryOverviewCache.get(year);
+        if (overview?.layer && wfigsHistoryLayerGroup.hasLayer(overview.layer)) wfigsHistoryLayerGroup.removeLayer(overview.layer);
+    });
     const viewport = wfigsMapBBox();
     const thresholdChanged = threshold !== wfigsHistoryLastDisplayThreshold;
     if (thresholdChanged) rebuildVisibleWFIGSHistoryChunkLayers();
@@ -3140,10 +3278,15 @@ function formatWFIGSHistoryTimeBox() {
         archiveChunks += Number(manifest?.chunk_count || 0);
         const visible = wfigsHistoryVisibleSet(year);
         visibleChunks += visible.size;
-        visible.forEach(href => {
-            const cached = wfigsHistoryChunkCache.get(`${year}/${href}`);
-            if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
-        });
+        if (map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM) {
+            const overview = wfigsHistoryOverviewCache.get(year);
+            if (overview?.layer?.getLayers) displayedFeatures += overview.layer.getLayers().length;
+        } else {
+            visible.forEach(href => {
+                const cached = wfigsHistoryChunkCache.get(`${year}/${href}`);
+                if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
+            });
+        }
     });
     const yearBadges = selectedYears.map(year => {
         const color = wfigsHistoryColorForYear(year);
@@ -3157,7 +3300,7 @@ function formatWFIGSHistoryTimeBox() {
         <span style="font-size:0.84em;">${yearBadges}</span><br>
         <span style="font-size:0.82em;color:#d0d0d0;">Loaded archive: ${publishedFires.toLocaleString('en-US')} mapped fires in ${archiveChunks.toLocaleString('en-US')} regional chunks</span><br>
         <span style="font-size:0.82em;color:#80cbc4;">${escapeWFIGSHTML(wfigsYTDThresholdText())}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">Viewport: ${visibleChunks.toLocaleString('en-US')} year-chunks &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">${map.getZoom() < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM ? 'National overview' : `Viewport: ${visibleChunks.toLocaleString('en-US')} year-chunks`} &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span><br>
         <span style="font-size:0.78em;color:#aaa;">Year = Fire Discovery Date (UTC) &bull; modern WFIGS archive &bull; multiple years can be overlaid</span>${warning}
     `;
 }
@@ -3196,7 +3339,7 @@ function buildWFIGSLegendHTML() {
                 <span>${WFIGS_CURRENT_YEAR} YTD: all mapped current-year footprints</span>
                 ${historicalLegend}
             </div>
-            <span style="display:block;margin-top:7px;font-size:9px;line-height:1.25;text-align:center;color:#555;">Mapped fire extent only — not soil-burn severity. Archive acreage thresholds are cartographic only; smaller burns appear as you zoom in.</span>
+            <span style="display:block;margin-top:7px;font-size:9px;line-height:1.25;text-align:center;color:#555;">Mapped fire extent only — not soil-burn severity. At CONUS scale, larger archive perimeters are shown from a lightweight overview; progressively smaller burns appear as you zoom in.</span>
         </div>
     `;
 }
