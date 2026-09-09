@@ -69,15 +69,38 @@ def validate_code(repo_root: Path, errors: list[str]) -> None:
         if fragment not in text:
             errors.append(f"Missing operational script contract: {fragment}")
 
-    # Scientific guardrail: do not introduce acreage-based record deletion.
+    # Scientific guardrail: the authoritative WF source query must not be acreage-filtered.
+    # Phase 4.3 intentionally creates a *secondary cartographic overview subset* for
+    # national-scale display, so generic names such as ``min_acres`` are no longer
+    # evidence of source-record deletion. The complete Current/YTD deliveries remain
+    # unfiltered by acreage and are validated separately below.
+    where_match = re.search(
+        r'^\s*WILDFIRE_WHERE\s*=\s*"([^"]+)"',
+        text,
+        flags=re.MULTILINE,
+    )
+    if not where_match:
+        errors.append("Could not verify the authoritative WILDFIRE_WHERE source query")
+    else:
+        wildfire_where = where_match.group(1).strip()
+        if wildfire_where != "attr_IncidentTypeCategory = 'WF'":
+            errors.append(
+                "WILDFIRE_WHERE must select all WF incidents without acreage filtering; "
+                f"found: {wildfire_where!r}"
+            )
+        if re.search(r"acres?|poly_GISAcres|poly_Acres_AutoCalc", wildfire_where, flags=re.IGNORECASE):
+            errors.append("Authoritative WILDFIRE_WHERE source query contains an acreage condition")
+
+    # Also guard against obvious per-feature acreage skips in the full-delivery path.
+    # The Phase-4.3 overview list-comprehension is intentionally excluded: it writes
+    # only overview.geojson and does not alter the complete YTD chunk archive.
     forbidden_patterns = [
-        r"MIN(?:IMUM)?_ACRES",
         r"if\s+.*mapped_acres\s*[<>]=?\s*\d+.*continue",
         r"if\s+.*gis_acres\s*[<>]=?\s*\d+.*continue",
     ]
     for pattern in forbidden_patterns:
         if re.search(pattern, text, flags=re.IGNORECASE):
-            errors.append(f"Potential acreage-based fire filtering found: {pattern}")
+            errors.append(f"Potential acreage-based full-delivery filtering found: {pattern}")
 
     for path, expected_name, expected_timeout in (
         (current_wf, "Update WFIGS Current Wildfire Perimeters", "timeout-minutes: 30"),
