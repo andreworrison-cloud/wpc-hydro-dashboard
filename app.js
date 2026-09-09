@@ -3160,10 +3160,27 @@ function wfigsTrendMonthTicks(year) {
     }));
 }
 
+function wfigsTrendDayLabel(year, day) {
+    const numericDay = wfigsTrendNumericValue(day);
+    if (numericDay === null || numericDay < 1) return '';
+    const dateValue = new Date(Date.UTC(year, 0, 1) + (numericDay - 1) * 86400000);
+    return dateValue.toLocaleDateString('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric'});
+}
+
+function wfigsTrendNumericValue(value) {
+    // Missing current-year dates must stay missing. Number(null) === 0 in
+    // JavaScript, which previously caused the live curve to plunge to zero
+    // and continue across the unobserved remainder of the calendar year.
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
 function wfigsTrendPolyline(points, xScale, yScale, key) {
     return points
-        .filter(point => Number.isFinite(Number(point[key])))
-        .map(point => `${xScale(Number(point.x)).toFixed(2)},${yScale(Number(point[key])).toFixed(2)}`)
+        .map(point => ({x: wfigsTrendNumericValue(point.x), y: wfigsTrendNumericValue(point[key])}))
+        .filter(point => point.x !== null && point.y !== null)
+        .map(point => `${xScale(point.x).toFixed(2)},${yScale(point.y).toFixed(2)}`)
         .join(' ');
 }
 
@@ -3175,17 +3192,18 @@ function wfigsTrendEnvelopePath(points, xScale, yScale, minKey, maxKey) {
     return `M ${upper.join(' L ')} L ${lower.join(' L ')} Z`;
 }
 
-function renderWFIGSTrendSVG(container, points, {currentKey, medianKey, minKey, maxKey, yLabel, year}) {
+function renderWFIGSTrendSVG(container, points, {currentKey, medianKey, minKey, maxKey, yLabel, year, currentEndpointLabel = ''}) {
     const width = 720;
     const height = 250;
     const margin = {left: 52, right: 16, top: 14, bottom: 34};
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
-    const xMax = Math.max(365, ...points.map(point => Number(point.x) || 0));
+    const daysInYear = Math.floor((Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)) / 86400000);
+    const xMax = Math.max(daysInYear, ...points.map(point => wfigsTrendNumericValue(point.x) ?? 0));
     const values = [];
     points.forEach(point => [currentKey, medianKey, minKey, maxKey].forEach(key => {
-        const value = Number(point[key]);
-        if (Number.isFinite(value)) values.push(value);
+        const value = wfigsTrendNumericValue(point[key]);
+        if (value !== null) values.push(value);
     }));
     const yMax = wfigsTrendNiceMax(Math.max(...values, 1) * 1.08);
     const xScale = x => margin.left + ((x - 1) / Math.max(1, xMax - 1)) * innerW;
@@ -3195,6 +3213,15 @@ function renderWFIGSTrendSVG(container, points, {currentKey, medianKey, minKey, 
     const envelope = wfigsTrendEnvelopePath(points, xScale, yScale, minKey, maxKey);
     const medianLine = wfigsTrendPolyline(points, xScale, yScale, medianKey);
     const currentLine = wfigsTrendPolyline(points, xScale, yScale, currentKey);
+    const currentValid = points
+        .map(point => ({x: wfigsTrendNumericValue(point.x), y: wfigsTrendNumericValue(point[currentKey])}))
+        .filter(point => point.x !== null && point.y !== null);
+    const currentLast = currentValid.length ? currentValid[currentValid.length - 1] : null;
+    const endpointGuide = currentLast ? `
+        <line x1="${xScale(currentLast.x)}" y1="${margin.top}" x2="${xScale(currentLast.x)}" y2="${margin.top + innerH}" stroke="rgba(255,122,69,0.34)" stroke-width="1" stroke-dasharray="4 4"/>
+        <circle cx="${xScale(currentLast.x)}" cy="${yScale(currentLast.y)}" r="4" fill="#ff7a45" stroke="#111820" stroke-width="1.4"/>
+        ${currentEndpointLabel ? `<text x="${Math.min(width - margin.right - 3, xScale(currentLast.x) + 6)}" y="${margin.top + 10}" text-anchor="${xScale(currentLast.x) > width - 150 ? 'end' : 'start'}" fill="#ffad87" font-size="9" font-weight="700">${escapeWFIGSHTML(currentEndpointLabel)}</text>` : ''}
+    ` : '';
 
     const grid = yTicks.map(value => `
         <line x1="${margin.left}" y1="${yScale(value)}" x2="${width - margin.right}" y2="${yScale(value)}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
@@ -3210,6 +3237,7 @@ function renderWFIGSTrendSVG(container, points, {currentKey, medianKey, minKey, 
             ${grid}${months}
             <path d="${envelope}" fill="rgba(126,184,210,0.20)" stroke="rgba(126,184,210,0.34)" stroke-width="1"/>
             <polyline points="${medianLine}" fill="none" stroke="#9bdcff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            ${endpointGuide}
             <polyline points="${currentLine}" fill="none" stroke="#ff7a45" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>
             <text transform="translate(12 ${margin.top + innerH / 2}) rotate(-90)" text-anchor="middle" fill="#a9bec8" font-size="9">${escapeWFIGSHTML(yLabel)}</text>
         </svg>
@@ -3292,7 +3320,7 @@ function renderWFIGSSeasonalTrendPanel() {
         </div>
         <div class="wfigs-trend-chart-card">
             <div class="wfigs-trend-chart-title">Weekly New Wildfire Discoveries</div>
-            <div class="wfigs-trend-chart-note">${WFIGS_CURRENT_YEAR} versus ${escapeWFIGSHTML(historyYears)} median and min–max range. The incomplete current 7-day period is intentionally excluded.</div>
+            <div class="wfigs-trend-chart-note">${WFIGS_CURRENT_YEAR} versus ${escapeWFIGSHTML(historyYears)} median and min–max range. The orange line ends at the last completed 7-day period; the incomplete current period and future dates are intentionally unplotted.</div>
             <div id="wfigs-weekly-trend-chart" class="wfigs-trend-chart"></div>
             <div class="wfigs-trend-legend">
                 <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch" style="background:#ff7a45"></span>${WFIGS_CURRENT_YEAR}</span>
@@ -3302,7 +3330,7 @@ function renderWFIGSSeasonalTrendPanel() {
         </div>
         <div class="wfigs-trend-chart-card">
             <div class="wfigs-trend-chart-title">Cumulative YTD Wildfire Discoveries</div>
-            <div class="wfigs-trend-chart-note">Daily cumulative ${WFIGS_CURRENT_YEAR} activity through the last complete UTC day versus the recent historical envelope.</div>
+            <div class="wfigs-trend-chart-note">Daily cumulative ${WFIGS_CURRENT_YEAR} activity through the last complete UTC day versus the recent historical envelope. The orange line ends at the latest observation; future dates are intentionally unplotted.</div>
             <div id="wfigs-cumulative-trend-chart" class="wfigs-trend-chart"></div>
             <div class="wfigs-trend-legend">
                 <span class="wfigs-trend-legend-item"><span class="wfigs-trend-swatch" style="background:#ff7a45"></span>${WFIGS_CURRENT_YEAR}</span>
@@ -3315,13 +3343,19 @@ function renderWFIGSSeasonalTrendPanel() {
         </div>
     `;
 
+    const lastWeeklyPeriod = [...weeklyCurrent.values()].sort((a, b) => Number(a.end_day) - Number(b.end_day)).at(-1) || null;
+    const weeklyEndpointLabel = lastWeeklyPeriod ? `Last complete period: ${wfigsTrendDayLabel(WFIGS_CURRENT_YEAR, lastWeeklyPeriod.end_day)}` : '';
+    const cumulativeEndpointLabel = current.complete_through_date
+        ? `Through ${new Date(`${current.complete_through_date}T00:00:00Z`).toLocaleDateString('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric'})}`
+        : '';
+
     renderWFIGSTrendSVG(body.querySelector('#wfigs-weekly-trend-chart'), weeklyPoints, {
         currentKey: 'current', medianKey: 'median', minKey: 'min', maxKey: 'max',
-        yLabel: 'New wildfire discoveries', year: WFIGS_CURRENT_YEAR
+        yLabel: 'New wildfire discoveries', year: WFIGS_CURRENT_YEAR, currentEndpointLabel: weeklyEndpointLabel
     });
     renderWFIGSTrendSVG(body.querySelector('#wfigs-cumulative-trend-chart'), cumulativePoints, {
         currentKey: 'current', medianKey: 'median', minKey: 'min', maxKey: 'max',
-        yLabel: 'Cumulative discoveries', year: WFIGS_CURRENT_YEAR
+        yLabel: 'Cumulative discoveries', year: WFIGS_CURRENT_YEAR, currentEndpointLabel: cumulativeEndpointLabel
     });
 }
 
