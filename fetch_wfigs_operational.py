@@ -56,7 +56,7 @@ except Exception as exc:  # pragma: no cover - workflow dependency guard
         "Shapely is required. Install with: pip install 'shapely>=2.0,<3'"
     ) from exc
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_1"
 CURRENT_LAYER_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
     "WFIGS_Interagency_Perimeters_Current/FeatureServer/0"
@@ -414,6 +414,13 @@ def polygonal_only(geom: Any) -> Polygon | MultiPolygon | None:
 
 
 def clean_display_geometry(geometry: dict[str, Any] | None) -> tuple[dict[str, Any] | None, tuple[float, float, float, float] | None, tuple[float, float] | None]:
+    """Return a valid, compact polygon geometry for browser display.
+
+    Validation is intentionally performed *after* coordinate rounding. Phase-2
+    Current verification showed that rounding can collapse a tiny ring to fewer
+    than three unique vertices even when the pre-rounding Shapely geometry is
+    valid. The post-round repair prevents invalid GeoJSON from reaching Leaflet.
+    """
     if not geometry:
         return None, None, None
     geom = shape(geometry)
@@ -424,15 +431,29 @@ def clean_display_geometry(geometry: dict[str, Any] | None) -> tuple[dict[str, A
     geom = polygonal_only(geom)
     if geom is None:
         return None, None, None
+
     geom = geom.simplify(DISPLAY_GENERALIZATION_DEG, preserve_topology=True)
     geom = polygonal_only(geom)
     if geom is None or geom.is_empty:
         return None, None, None
-    bounds = tuple(float(v) for v in geom.bounds)
-    pt = geom.representative_point()
-    geo = mapping(geom)
-    geo["coordinates"] = round_coordinates(geo.get("coordinates"))
-    return geo, bounds, (float(pt.x), float(pt.y))
+
+    # Round for payload size, then reconstruct and validate the exact geometry
+    # that will be written to GeoJSON. Do not round a second time after repair,
+    # because doing so could recreate the same degenerate-ring condition.
+    rounded_geo = mapping(geom)
+    rounded_geo["coordinates"] = round_coordinates(rounded_geo.get("coordinates"))
+    display_geom = shape(rounded_geo)
+    if display_geom.is_empty:
+        return None, None, None
+    if not display_geom.is_valid:
+        display_geom = make_valid(display_geom)
+    display_geom = polygonal_only(display_geom)
+    if display_geom is None or display_geom.is_empty or not display_geom.is_valid:
+        return None, None, None
+
+    bounds = tuple(float(v) for v in display_geom.bounds)
+    pt = display_geom.representative_point()
+    return mapping(display_geom), bounds, (float(pt.x), float(pt.y))
 
 
 def choose_incident_name(record: dict[str, Any]) -> str | None:
