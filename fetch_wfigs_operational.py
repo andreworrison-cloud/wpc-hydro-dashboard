@@ -56,7 +56,7 @@ except Exception as exc:  # pragma: no cover - workflow dependency guard
         "Shapely is required. Install with: pip install 'shapely>=2.0,<3'"
     ) from exc
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1_1"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_2"
 CURRENT_LAYER_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
     "WFIGS_Interagency_Perimeters_Current/FeatureServer/0"
@@ -399,62 +399,277 @@ def round_coordinates(node: Any) -> Any:
     return [round_coordinates(child) for child in node]
 
 
+def iter_polygon_parts(geom: Any) -> Iterator[Polygon]:
+    """Yield polygon members recursively without invoking overlay operations."""
+    if geom is None:
+        return
+    try:
+        if geom.is_empty:
+            return
+    except Exception:
+        return
+    if isinstance(geom, Polygon):
+        yield geom
+        return
+    if isinstance(geom, MultiPolygon):
+        for part in geom.geoms:
+            if not part.is_empty:
+                yield part
+        return
+    if hasattr(geom, "geoms"):
+        for child in geom.geoms:
+            yield from iter_polygon_parts(child)
+
+
 def polygonal_only(geom: Any) -> Polygon | MultiPolygon | None:
-    if geom is None or geom.is_empty:
+    """Strip non-polygonal members without allowing GEOS overlay errors to abort a build."""
+    if geom is None:
+        return None
+    try:
+        if geom.is_empty:
+            return None
+    except Exception:
         return None
     if isinstance(geom, (Polygon, MultiPolygon)):
         return geom
-    if isinstance(geom, GeometryCollection):
-        parts = [g for g in geom.geoms if isinstance(g, (Polygon, MultiPolygon)) and not g.is_empty]
-        if not parts:
-            return None
+
+    parts = [part for part in iter_polygon_parts(geom) if not part.is_empty]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+
+    # A GeometryCollection returned by a repair routine can contain polygons and
+    # collapsed line/point remnants. Prefer a union of the polygonal members, but
+    # never let an overlay failure (including GEOS mixed-dimension exceptions)
+    # abort the WFIGS operational build.
+    try:
         merged = unary_union(parts)
-        return merged if isinstance(merged, (Polygon, MultiPolygon)) else None
+        if isinstance(merged, (Polygon, MultiPolygon)) and not merged.is_empty:
+            return merged
+    except Exception:
+        pass
+    try:
+        return MultiPolygon(parts)
+    except Exception:
+        return None
+
+
+def _candidate_polygonal(geom: Any) -> Polygon | MultiPolygon | None:
+    """Normalize one repair candidate to polygonal geometry, swallowing GEOS failures."""
+    try:
+        candidate = polygonal_only(geom)
+    except Exception:
+        return None
+    if candidate is None:
+        return None
+    try:
+        if candidate.is_empty:
+            return None
+    except Exception:
+        return None
+    return candidate
+
+
+def _componentwise_polygon_repair(geom: Any) -> Polygon | MultiPolygon | None:
+    """Repair Polygon/MultiPolygon members separately as a last-resort source cleanup.
+
+    WFIGS YTD occasionally contains legacy perimeter topology that causes GEOS
+    ``make_valid`` to raise ``Overlay input is mixed-dimension`` when the full
+    MultiPolygon is processed at once. Repairing individual polygon members keeps
+    valid areal pieces while discarding only collapsed non-areal remnants.
+    """
+    repaired_parts: list[Polygon] = []
+    for part in iter_polygon_parts(geom):
+        candidate: Any = part
+        try:
+            valid = bool(candidate.is_valid)
+        except Exception:
+            valid = False
+
+        if not valid:
+            # buffer(0) uses a different GEOS path than make_valid and is often
+            # the most robust repair for legacy self-touching polygon rings.
+            try:
+                buffered = candidate.buffer(0)
+            except Exception:
+                buffered = None
+            poly = _candidate_polygonal(buffered)
+            if poly is None or not poly.is_valid:
+                try:
+                    fixed = make_valid(candidate)
+                except Exception:
+                    fixed = None
+                poly = _candidate_polygonal(fixed)
+            candidate = poly
+
+        candidate = _candidate_polygonal(candidate)
+        if candidate is None:
+            continue
+        for polygon in iter_polygon_parts(candidate):
+            try:
+                if not polygon.is_empty and polygon.is_valid and polygon.area > 0:
+                    repaired_parts.append(polygon)
+            except Exception:
+                continue
+
+    if not repaired_parts:
+        return None
+    if len(repaired_parts) == 1:
+        return repaired_parts[0]
+
+    # Merge overlapping/touching pieces if GEOS permits. If the union itself is
+    # the operation that fails, keep the separate polygon members and let the
+    # final validity check decide whether the MultiPolygon is acceptable.
+    try:
+        merged = unary_union(repaired_parts)
+        merged = _candidate_polygonal(merged)
+        if merged is not None and merged.is_valid:
+            return merged
+    except Exception:
+        pass
+    try:
+        multi = MultiPolygon(repaired_parts)
+        if multi.is_valid:
+            return multi
+    except Exception:
+        pass
     return None
 
 
-def clean_display_geometry(geometry: dict[str, Any] | None) -> tuple[dict[str, Any] | None, tuple[float, float, float, float] | None, tuple[float, float] | None]:
-    """Return a valid, compact polygon geometry for browser display.
+def repair_polygonal_geometry(geom: Any) -> tuple[Polygon | MultiPolygon | None, str]:
+    """Return valid polygonal geometry using an exception-safe repair cascade.
 
-    Validation is intentionally performed *after* coordinate rounding. Phase-2
-    Current verification showed that rounding can collapse a tiny ring to fewer
-    than three unique vertices even when the pre-rounding Shapely geometry is
-    valid. The post-round repair prevents invalid GeoJSON from reaching Leaflet.
+    The source service is authoritative, but legacy YTD polygons can contain
+    topological pathologies that trigger GEOS errors inside ``make_valid``. No
+    single repair algorithm is trusted. We try multiple independent paths and
+    never allow one GEOS exception to terminate the full national build.
+    """
+    candidate = _candidate_polygonal(geom)
+    if candidate is None:
+        return None, "unusable"
+    try:
+        if candidate.is_valid:
+            return candidate, "none"
+    except Exception:
+        pass
+
+    # Shapely >=2.1 exposes the structure algorithm, which avoids some linework
+    # overlay failures. Older 2.x versions raise TypeError for these keywords;
+    # that is intentionally caught and followed by other repair paths.
+    try:
+        fixed = make_valid(candidate, method="structure", keep_collapsed=False)
+    except Exception:
+        fixed = None
+    fixed = _candidate_polygonal(fixed)
+    if fixed is not None:
+        try:
+            if fixed.is_valid:
+                return fixed, "make_valid_structure"
+        except Exception:
+            pass
+
+    # Classic polygon buffer repair is deliberately attempted before the default
+    # linework make_valid path because the latter is exactly where WFIGS YTD
+    # produced the GEOS mixed-dimension exception on 2026-09-09.
+    try:
+        fixed = candidate.buffer(0)
+    except Exception:
+        fixed = None
+    fixed = _candidate_polygonal(fixed)
+    if fixed is not None:
+        try:
+            if fixed.is_valid:
+                return fixed, "buffer0"
+        except Exception:
+            pass
+
+    try:
+        fixed = make_valid(candidate)
+    except Exception:
+        fixed = None
+    fixed = _candidate_polygonal(fixed)
+    if fixed is not None:
+        try:
+            if fixed.is_valid:
+                return fixed, "make_valid_linework"
+        except Exception:
+            pass
+
+    fixed = _componentwise_polygon_repair(candidate)
+    if fixed is not None:
+        try:
+            if fixed.is_valid:
+                return fixed, "componentwise"
+        except Exception:
+            pass
+    return None, "unrepairable"
+
+
+def clean_display_geometry(geometry: dict[str, Any] | None) -> tuple[
+    dict[str, Any] | None,
+    tuple[float, float, float, float] | None,
+    tuple[float, float] | None,
+    str,
+]:
+    """Return valid compact polygon geometry plus the repair path used.
+
+    Validation is performed both before simplification and *after* coordinate
+    rounding. Phase-2 Current verification showed that rounding can collapse a
+    tiny ring, while the first national YTD run exposed a separate legacy-source
+    topology that made GEOS ``make_valid`` raise a mixed-dimension exception.
+    Both failure modes are now isolated to the affected feature and handled by
+    the exception-safe polygon repair cascade.
     """
     if not geometry:
-        return None, None, None
-    geom = shape(geometry)
-    if geom.is_empty:
-        return None, None, None
-    if not geom.is_valid:
-        geom = make_valid(geom)
-    geom = polygonal_only(geom)
-    if geom is None:
-        return None, None, None
+        return None, None, None, "missing"
+    try:
+        geom = shape(geometry)
+    except Exception:
+        return None, None, None, "shape_parse_failed"
 
-    geom = geom.simplify(DISPLAY_GENERALIZATION_DEG, preserve_topology=True)
-    geom = polygonal_only(geom)
-    if geom is None or geom.is_empty:
-        return None, None, None
+    geom, source_repair = repair_polygonal_geometry(geom)
+    if geom is None:
+        return None, None, None, f"source:{source_repair}"
+
+    try:
+        geom = geom.simplify(DISPLAY_GENERALIZATION_DEG, preserve_topology=True)
+    except Exception:
+        return None, None, None, "simplify_failed"
+    geom, simplify_repair = repair_polygonal_geometry(geom)
+    if geom is None:
+        return None, None, None, f"simplified:{simplify_repair}"
 
     # Round for payload size, then reconstruct and validate the exact geometry
     # that will be written to GeoJSON. Do not round a second time after repair,
-    # because doing so could recreate the same degenerate-ring condition.
-    rounded_geo = mapping(geom)
-    rounded_geo["coordinates"] = round_coordinates(rounded_geo.get("coordinates"))
-    display_geom = shape(rounded_geo)
-    if display_geom.is_empty:
-        return None, None, None
-    if not display_geom.is_valid:
-        display_geom = make_valid(display_geom)
-    display_geom = polygonal_only(display_geom)
-    if display_geom is None or display_geom.is_empty or not display_geom.is_valid:
-        return None, None, None
+    # because doing so could recreate a degenerate-ring condition.
+    try:
+        rounded_geo = mapping(geom)
+        rounded_geo["coordinates"] = round_coordinates(rounded_geo.get("coordinates"))
+        display_geom = shape(rounded_geo)
+    except Exception:
+        return None, None, None, "post_round_parse_failed"
 
-    bounds = tuple(float(v) for v in display_geom.bounds)
-    pt = display_geom.representative_point()
-    return mapping(display_geom), bounds, (float(pt.x), float(pt.y))
+    display_geom, round_repair = repair_polygonal_geometry(display_geom)
+    if display_geom is None:
+        return None, None, None, f"post_round:{round_repair}"
 
+    try:
+        if display_geom.is_empty or not display_geom.is_valid:
+            return None, None, None, "post_round_invalid"
+        bounds = tuple(float(v) for v in display_geom.bounds)
+        pt = display_geom.representative_point()
+    except Exception:
+        return None, None, None, "final_geometry_failed"
+
+    methods = []
+    if source_repair != "none":
+        methods.append(f"source:{source_repair}")
+    if simplify_repair != "none":
+        methods.append(f"simplified:{simplify_repair}")
+    if round_repair != "none":
+        methods.append(f"post_round:{round_repair}")
+    return mapping(display_geom), bounds, (float(pt.x), float(pt.y)), "+".join(methods) or "none"
 
 def choose_incident_name(record: dict[str, Any]) -> str | None:
     for key in ("poly_IncidentName", "attr_IncidentName"):
@@ -599,6 +814,7 @@ def fetch_normalized_features(
     output: list[dict[str, Any]] = []
     invalid_or_empty = 0
     missing_geometry = 0
+    repair_counts: Counter[str] = Counter()
     batches = list(chunks(ids, GEOMETRY_BATCH_SIZE))
     for i, batch in enumerate(batches, start=1):
         features = fetch_geojson_batch(session, layer_url, batch)
@@ -613,7 +829,8 @@ def fetch_normalized_features(
             record = by_oid.get(oid)
             if record is None:
                 continue
-            geometry, bounds, rep = clean_display_geometry(feature.get("geometry"))
+            geometry, bounds, rep, repair_method = clean_display_geometry(feature.get("geometry"))
+            repair_counts[repair_method] += 1
             if geometry is None or bounds is None or rep is None:
                 invalid_or_empty += 1
                 continue
@@ -635,6 +852,7 @@ def fetch_normalized_features(
         "delivered_geometry_count": len(output),
         "invalid_or_empty_geometry_count": invalid_or_empty,
         "missing_geometry_response_count": missing_geometry,
+        "repair_method_counts": dict(sorted(repair_counts.items())),
     }
 
 
