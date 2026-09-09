@@ -19,7 +19,7 @@ mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").r
 
 errors = []
 
-# Current registry total: 124 dashboard data/config entries + 15 basemap entries.
+# Current registry total: 125 dashboard data/config entries + 15 basemap entries.
 # WPC Dark Reference is additive and becomes the operational default; Black Canvas
 # and every previously registered layer/basemap remain present.
 EXPECTED_LAYER_COUNT = 140
@@ -719,7 +719,7 @@ for forbidden in [
     if forbidden in app:
         errors.append(f"Legacy broken TIGERweb WMS reference path is still present: {forbidden}")
 
-# Phase WFIGS-4.3 dashboard integration. The browser consumes only validated
+# Phase WFIGS-5 dashboard integration (retaining Phase-4.3 perimeter behavior). The browser consumes only validated
 # wfigs-data products. Current and current-year YTD remain separate opt-in layers;
 # the historical archive supports simultaneous toggling of any combination of the
 # previous five completed calendar years. YTD/history remain lazy-loaded by viewport
@@ -734,6 +734,8 @@ required_wfigs_fragments = [
     "const WFIGS_YTD_MANIFEST_URL = `${WFIGS_DATA_ROOT}/ytd/manifest.json`;",
     "const WFIGS_HISTORY_ROOT = `${WFIGS_DATA_ROOT}/history`;",
     "const WFIGS_HISTORY_INDEX_URL = `${WFIGS_HISTORY_ROOT}/manifest.json`;",
+    "const WFIGS_YTD_ACTIVITY_URL = `${WFIGS_DATA_ROOT}/ytd/seasonal_activity.json`;",
+    "const WFIGS_HISTORY_ACTIVITY_URL = `${WFIGS_HISTORY_ROOT}/seasonal_activity.json`;",
     "const WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM = 4;",
     "const WFIGS_ARCHIVE_CHUNK_MIN_ZOOM = 6;",
     "const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;",
@@ -752,10 +754,19 @@ required_wfigs_fragments = [
     "function renderWFIGSHistoryYearControl",
     "wfigs-history-year-buttons",
     "function toggleWFIGSHistoryYear",
+    "function renderWFIGSSeasonalTrendControl",
+    "function openWFIGSSeasonalTrendPanel",
+    "function refreshWFIGSSeasonalActivity",
+    "function renderWFIGSSeasonalTrendPanel",
+    "function renderWFIGSTrendSVG",
+    "Weekly New Wildfire Discoveries",
+    "Cumulative YTD Wildfire Discoveries",
+    "unique deduplicated WFIGS wildfire (WF) identities",
     "let wfigsHistorySelectedYears = new Set",
     "Multiple years may be displayed together",
     "aria-pressed",
     "if (sectionConfig.id === 'wildfire-burn-scar' && entry.id === 'wfigs-history')",
+    "renderWFIGSSeasonalTrendControl(body);",
     "updateWFIGSHistoryLayerDescription",
     "Selected years: ${selected.join(', ')}",
     "Toggle any combination of the rolling five completed calendar years",
@@ -895,6 +906,8 @@ if "glm-v1" not in index and "glm-v2" not in index:
 
 if "wfigs-dashboard-v2-history-v1-3-conus-overview" not in index:
     errors.append("WFIGS Phase 4.3 CONUS-overview cache-busting token is missing from index.html.")
+if "wfigs-seasonal-trends-v1" not in index:
+    errors.append("WFIGS Phase 5 seasonal-trends cache-busting token is missing from index.html.")
 
 if "mrms-rala-loop-v2" not in index:
     errors.append(

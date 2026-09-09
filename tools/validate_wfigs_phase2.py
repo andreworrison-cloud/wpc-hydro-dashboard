@@ -14,7 +14,7 @@ from typing import Any
 
 from shapely.geometry import shape
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1_3"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_4"
 
 
 def sha256_file(path: Path) -> str:
@@ -64,6 +64,10 @@ def validate_code(repo_root: Path, errors: list[str]) -> None:
         "buffer0",
         "componentwise",
         "repair_method_counts",
+        "SEASONAL_ACTIVITY_VERSION = \"wfigs_seasonal_activity_v1_0\"",
+        "CONUS_STATE_CODES",
+        "build_conus_seasonal_activity",
+        "seasonal_activity.json",
     ]
     for fragment in required_fragments:
         if fragment not in text:
@@ -254,7 +258,7 @@ def validate_ytd(data_root: Path, errors: list[str]) -> None:
             errors.append("YTD overview byte-count mismatch")
         payload = load_json(overview_path)
         features = payload.get("features") or []
-        if len(features) != int(overview.get("feature_count") or -1):
+        if len(features) != int(overview.get("feature_count") if overview.get("feature_count") is not None else -1):
             errors.append("YTD overview feature-count mismatch")
         min_acres = float(overview.get("minimum_mapped_acres") or 5000.0)
         for feature in features:
@@ -267,6 +271,28 @@ def validate_ytd(data_root: Path, errors: list[str]) -> None:
             if acres is None or acres < min_acres:
                 errors.append("YTD overview contains a perimeter below its mapped-acre threshold")
                 break
+
+    seasonal = manifest.get("seasonal_activity") or {}
+    seasonal_path = root / str(seasonal.get("href") or "")
+    if seasonal.get("href") != "seasonal_activity.json" or not seasonal_path.exists():
+        errors.append("YTD seasonal_activity.json is missing")
+    else:
+        if sha256_file(seasonal_path) != seasonal.get("sha256"):
+            errors.append("YTD seasonal activity checksum mismatch")
+        payload = load_json(seasonal_path)
+        if payload.get("phase") != "WFIGS-5" or payload.get("collection") != "current-year-activity":
+            errors.append("YTD seasonal activity metadata mismatch")
+        if payload.get("domain") != "CONUS":
+            errors.append("YTD seasonal activity domain mismatch")
+        year = int(payload.get("year") or 0)
+        daily = payload.get("daily_counts") or []
+        if len(daily) not in {365, 366}:
+            errors.append("YTD seasonal activity daily series length is invalid")
+        complete_day = int(payload.get("complete_through_day") or 0)
+        if not (0 <= complete_day <= len(daily)):
+            errors.append("YTD seasonal activity complete_through_day is invalid")
+        if int(payload.get("complete_through_count") or 0) != sum(int(v) for v in daily[:complete_day]):
+            errors.append("YTD seasonal activity complete_through_count is inconsistent")
 
 
 def main() -> int:

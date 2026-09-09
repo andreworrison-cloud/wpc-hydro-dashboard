@@ -17,7 +17,7 @@ try:
 except Exception as exc:  # pragma: no cover
     raise RuntimeError("Shapely is required for historical geometry validation") from exc
 
-PROCESSOR_VERSION = "wfigs_history_v1_1"
+PROCESSOR_VERSION = "wfigs_history_v1_2"
 HISTORY_ITEM_ID = "5e72b1699bf74eefb3f3aff6f4ba5511"
 EARLIEST_MODERN_WFIGS_YEAR = 2021
 
@@ -194,7 +194,7 @@ def validate_year(root: Path, year: int, errors: list[str]) -> tuple[int, int]:
         try:
             payload = read_json(overview_path)
             features = payload.get("features") or []
-            if len(features) != int(overview.get("feature_count") or -1):
+            if len(features) != int(overview.get("feature_count") if overview.get("feature_count") is not None else -1):
                 errors.append(f"{year}: historical overview feature-count mismatch")
             min_acres = float(overview.get("minimum_mapped_acres") or 5000.0)
             for feature in features:
@@ -216,6 +216,30 @@ def validate_year(root: Path, year: int, errors: list[str]) -> tuple[int, int]:
                     break
         except Exception as exc:
             errors.append(f"{year}: invalid overview JSON: {exc}")
+
+    seasonal = manifest.get("seasonal_activity") or {}
+    seasonal_href = str(seasonal.get("href") or "")
+    seasonal_path = root / seasonal_href
+    if seasonal_href != "seasonal_activity.json" or not seasonal_path.exists():
+        errors.append(f"{year}: seasonal_activity.json missing")
+    else:
+        if sha256_file(seasonal_path) != seasonal.get("sha256"):
+            errors.append(f"{year}: seasonal activity checksum mismatch")
+        try:
+            activity = read_json(seasonal_path)
+            if activity.get("phase") != "WFIGS-5" or activity.get("collection") != "historical-year-activity":
+                errors.append(f"{year}: seasonal activity metadata mismatch")
+            if int(activity.get("year") or -1) != year or activity.get("domain") != "CONUS":
+                errors.append(f"{year}: seasonal activity year/domain mismatch")
+            daily = activity.get("daily_counts") or []
+            if len(daily) not in {365, 366}:
+                errors.append(f"{year}: seasonal activity daily series length invalid")
+            if int(activity.get("complete_through_count") or -1) != sum(int(v) for v in daily):
+                errors.append(f"{year}: seasonal activity annual total inconsistent")
+            if int(seasonal.get("annual_count") or -1) != int(activity.get("complete_through_count") or -2):
+                errors.append(f"{year}: seasonal activity manifest annual_count mismatch")
+        except Exception as exc:
+            errors.append(f"{year}: invalid seasonal activity JSON: {exc}")
 
     return manifest_published, len(chunks)
 
@@ -265,6 +289,11 @@ def main() -> int:
         # The policy is expected to state that CURRENT_TIMESTAMP is forbidden.
         if "NO CURRENT_TIMESTAMP" not in str(index.get("query_policy") or "").upper():
             errors.append("history query policy ambiguously permits relative CURRENT_TIMESTAMP queries")
+
+    root_seasonal = index.get("seasonal_activity") or {}
+    root_seasonal_path = data_history / str(root_seasonal.get("href") or "")
+    if root_seasonal.get("href") != "seasonal_activity.json" or not root_seasonal_path.exists():
+        errors.append("history root seasonal_activity.json missing")
 
     entries = index.get("years") or []
     entry_years = [int(entry.get("year") or -1) for entry in entries]
