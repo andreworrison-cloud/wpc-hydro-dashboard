@@ -37,6 +37,7 @@ import scipy.ndimage as ndimage
 import xarray as xr
 
 from matplotlib.colors import BoundaryNorm, ListedColormap
+from PIL import Image
 from requests.adapters import HTTPAdapter
 from scipy.ndimage import convolve, maximum_filter
 from scipy.spatial import cKDTree
@@ -67,6 +68,14 @@ RUN_CHANGE_MIN_GROUP_MEMBERS = 2
 # geographic bounds gives Leaflet an EPSG:3857-compatible ImageOverlay.
 MAP_EXTENT = (-125.0, -66.5, 23.0, 50.5)  # west, east, south, north
 LEAFLET_BOUNDS = [[MAP_EXTENT[2], MAP_EXTENT[0]], [MAP_EXTENT[3], MAP_EXTENT[1]]]
+
+# --------------------------- display quality ---------------------------
+# Phase 1 HRRR / HRRR-TLE Display Clarity Upgrade.  This raises only the
+# PNG raster density.  The HRRR grid, TLE member-frequency categories,
+# neighborhood calculations, thresholds, and all other science remain native.
+RENDER_WIDTH_PX = 6000
+RENDER_DPI = 600
+DISPLAY_RENDER_VERSION = "clarity_v1"
 
 CACHE_ROOT = Path(os.environ.get("HRRR_TLE_CACHE", ".cache/hrrr_tle"))
 HRRR_CACHE = CACHE_ROOT / "hrrr"
@@ -718,15 +727,21 @@ def max_rolling_qpf_event(qpf_stack, hours, threshold_in):
 # RENDERING
 # ====================================================================
 
-def _mercator_figsize():
+def _mercator_render_geometry():
+    """Return (width_px, height_px, figsize_inches) for exact Web-Mercator aspect."""
     west, east, south, north = MAP_EXTENT
+
     def my(lat):
         lat = np.deg2rad(lat)
         return np.log(np.tan(np.pi / 4.0 + lat / 2.0))
+
     width = np.deg2rad(east - west)
     height = my(north) - my(south)
     ratio = width / height
-    return (16.0, 16.0 / ratio)
+    width_px = int(RENDER_WIDTH_PX)
+    height_px = int(round(width_px / ratio))
+    figsize = (width_px / RENDER_DPI, height_px / RENDER_DPI)
+    return width_px, height_px, figsize
 
 
 def render_overlay(data, out_path: Path, levels, colors, mask_below=None):
@@ -740,13 +755,19 @@ def render_overlay(data, out_path: Path, levels, colors, mask_below=None):
     cmap.set_under((0, 0, 0, 0))
     norm = BoundaryNorm(levels, cmap.N, clip=False)
 
-    fig = plt.figure(figsize=_mercator_figsize(), dpi=100)
+    width_px, height_px, figsize = _mercator_render_geometry()
+    fig = plt.figure(figsize=figsize, dpi=RENDER_DPI)
     fig.patch.set_alpha(0.0)
     ax = fig.add_axes([0, 0, 1, 1], projection=ccrs.Mercator())
     ax.set_extent(MAP_EXTENT, crs=ccrs.PlateCarree())
     ax.set_axis_off()
     ax.patch.set_alpha(0.0)
 
+    # Keep native pcolormesh/category geometry.  Do not interpolate or smooth
+    # the meteorological field.  At the higher raster density each HRRR cell
+    # is represented with substantially more display pixels, while disabled
+    # cell-edge antialiasing avoids false blended seams between discrete
+    # member-frequency / categorical bins.
     ax.pcolormesh(
         normalize_lons_for_plot(lons),
         lats,
@@ -756,10 +777,28 @@ def render_overlay(data, out_path: Path, levels, colors, mask_below=None):
         transform=ccrs.PlateCarree(),
         shading="auto",
         rasterized=True,
+        antialiased=False,
+        linewidth=0.0,
+        edgecolors="none",
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, transparent=True, facecolor="none", edgecolor="none", pad_inches=0)
+    fig.savefig(
+        out_path,
+        dpi=RENDER_DPI,
+        transparent=True,
+        facecolor="none",
+        edgecolor="none",
+        pad_inches=0,
+    )
     plt.close(fig)
+
+    # Catch any unexpected Matplotlib/Cartopy geometry regression immediately.
+    with Image.open(out_path) as image:
+        if image.size != (width_px, height_px):
+            raise RuntimeError(
+                f"Rendered image has unexpected dimensions {image.size}; "
+                f"expected {(width_px, height_px)}"
+            )
 
 
 def frequency_levels(member_count: int, minimum_count: int = 1):
@@ -795,6 +834,13 @@ def build(output_dir: Path, force: bool = False) -> int:
             old = json.loads(manifest_path.read_text(encoding="utf-8"))
             same_tle = old.get("latest_cycle_utc") == latest_dt.strftime("%Y-%m-%dT%H:00:00Z")
             same_hrrr = old.get("latest_hrrr_diagnostic_cycle_utc") == latest_hrrr_dt.strftime("%Y-%m-%dT%H:00:00Z")
+            expected_width_px, expected_height_px, _ = _mercator_render_geometry()
+            same_render_contract = (
+                old.get("display_render_version") == DISPLAY_RENDER_VERSION
+                and int(old.get("render_width_px", -1)) == expected_width_px
+                and int(old.get("render_height_px", -1)) == expected_height_px
+                and int(old.get("render_dpi", -1)) == RENDER_DPI
+            )
 
             published_expected = list(LAYER_FILES.values()) + [
                 "hrrr_tle_metadata.json",
@@ -807,9 +853,18 @@ def build(output_dir: Path, force: bool = False) -> int:
                 if not p.exists() or p.stat().st_size < minimum_size:
                     missing_or_empty.append(name)
 
-            if same_tle and same_hrrr and not missing_or_empty:
-                print("ℹ️ Newest HRRR diagnostics and HRRR-TLE package are already published; exiting without churn.")
+            if same_tle and same_hrrr and same_render_contract and not missing_or_empty:
+                print(
+                    "ℹ️ Newest HRRR diagnostics and HRRR-TLE package are already "
+                    "published with the current display-render contract; exiting without churn."
+                )
                 return 0
+
+            if same_tle and same_hrrr and not same_render_contract:
+                print(
+                    "ℹ️ Forecast cycles are current, but the published display-render "
+                    "contract is stale; forcing a synchronized clarity rebuild."
+                )
 
             if same_tle and same_hrrr and missing_or_empty:
                 print(
@@ -1081,6 +1136,11 @@ def build(output_dir: Path, force: bool = False) -> int:
             "neighborhood_km": NEIGHBORHOOD_KM,
             "image_crs": "EPSG:3857",
             "bounds": LEAFLET_BOUNDS,
+            "display_render_version": DISPLAY_RENDER_VERSION,
+            "render_width_px": _mercator_render_geometry()[0],
+            "render_height_px": _mercator_render_geometry()[1],
+            "render_dpi": RENDER_DPI,
+            "display_field_smoothing": False,
             "generated_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "latest_three_cycles": latest_cycles,
             "prior_three_cycles": prior_cycles,
@@ -1102,16 +1162,28 @@ def build(output_dir: Path, force: bool = False) -> int:
             "common_valid_start_utc": metadata["common_valid_start_utc"],
             "common_valid_end_utc": metadata["common_valid_end_utc"],
             "generated_utc": metadata["generated_utc"],
+            "display_render_version": metadata["display_render_version"],
+            "render_width_px": metadata["render_width_px"],
+            "render_height_px": metadata["render_height_px"],
+            "render_dpi": metadata["render_dpi"],
             "metadata_file": "hrrr_tle_metadata.json",
             "layers": metadata["layers"],
         })
 
         # Sanity-check all expected files before publication.
         expected = list(LAYER_FILES.values()) + ["hrrr_tle_metadata.json", "hrrr_tle_manifest.json"]
+        expected_png_size = _mercator_render_geometry()[:2]
         for name in expected:
             p = staging / name
             if not p.exists() or p.stat().st_size < (200 if p.suffix == ".png" else 50):
                 raise RuntimeError(f"Staging validation failed for {name}")
+            if p.suffix == ".png":
+                with Image.open(p) as image:
+                    if image.size != expected_png_size:
+                        raise RuntimeError(
+                            f"Staging validation failed for {name}: "
+                            f"image size {image.size}, expected {expected_png_size}"
+                        )
 
         for name in expected:
             shutil.copy2(staging / name, output_dir / name)
