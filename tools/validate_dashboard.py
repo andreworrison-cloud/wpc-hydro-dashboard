@@ -758,7 +758,10 @@ required_wfigs_fragments = [
     "function openWFIGSSeasonalTrendPanel",
     "function refreshWFIGSSeasonalActivity",
     "function renderWFIGSSeasonalTrendPanel",
+    "function wfigsTrendNumericValue",
+    "function wfigsTrendDayLabel",
     "function renderWFIGSTrendSVG",
+    "future dates are intentionally unplotted",
     "Weekly New Wildfire Discoveries",
     "Cumulative YTD Wildfire Discoveries",
     "unique deduplicated WFIGS wildfire (WF) identities",
@@ -906,8 +909,10 @@ if "glm-v1" not in index and "glm-v2" not in index:
 
 if "wfigs-dashboard-v2-history-v1-3-conus-overview" not in index:
     errors.append("WFIGS Phase 4.3 CONUS-overview cache-busting token is missing from index.html.")
-if "wfigs-seasonal-trends-v1" not in index:
-    errors.append("WFIGS Phase 5 seasonal-trends cache-busting token is missing from index.html.")
+if "wfigs-seasonal-trends-v1-1" not in index:
+    errors.append("WFIGS Phase 5.1 seasonal-trends endpoint-fix cache-busting token is missing from index.html.")
+if ".filter(point => Number.isFinite(Number(point[key])))" in app:
+    errors.append("WFIGS trend polyline still coerces missing/null current-year values to zero.")
 
 if "mrms-rala-loop-v2" not in index:
     errors.append(
