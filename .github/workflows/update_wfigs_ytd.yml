@@ -89,6 +89,13 @@ jobs:
             --mode ytd \
             --data-root _wfigs_build
 
+      - name: Validate CONUS seasonal wildfire activity
+        if: steps.build.outputs.changed == 'true'
+        working-directory: repo
+        run: |
+          python tools/validate_wfigs_trends.py \
+            --current _wfigs_build/ytd/seasonal_activity.json
+
       - name: Publish YTD chunks to wfigs-data
         if: steps.build.outputs.changed == 'true'
         shell: bash
@@ -112,6 +119,8 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: wfigs-ytd-manifest
-          path: repo/_wfigs_build/ytd/manifest.json
+          path: |
+            repo/_wfigs_build/ytd/manifest.json
+            repo/_wfigs_build/ytd/seasonal_activity.json
           if-no-files-found: error
           retention-days: 14

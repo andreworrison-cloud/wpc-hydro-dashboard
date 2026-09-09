@@ -46,7 +46,8 @@ jobs:
           python -m py_compile \
             fetch_wfigs_operational.py \
             fetch_wfigs_history.py \
-            tools/validate_wfigs_history.py
+            tools/validate_wfigs_history.py \
+            tools/validate_wfigs_trends.py
 
       - name: Prepare rolling wfigs-data worktree
         shell: bash
@@ -85,6 +86,13 @@ jobs:
             --data-root _wfigs_history_build \
             --existing-root ../wfigs-data/static/wfigs/history
 
+      - name: Validate historical CONUS seasonal wildfire baseline
+        if: steps.build.outputs.changed == 'true'
+        working-directory: repo
+        run: |
+          python tools/validate_wfigs_trends.py \
+            --history _wfigs_history_build/history/seasonal_activity.json
+
       - name: Publish rolling history to wfigs-data
         if: steps.build.outputs.changed == 'true'
         shell: bash
@@ -107,6 +115,7 @@ jobs:
           fi
 
           cp "$HISTORY_BUILD/manifest.json" "$HISTORY_DEST/manifest.json"
+          cp "$HISTORY_BUILD/seasonal_activity.json" "$HISTORY_DEST/seasonal_activity.json"
 
           # Enforce the rolling window: remove year directories no longer listed
           # in the validated history index. This normally matters only after Jan 1.
@@ -142,5 +151,7 @@ jobs:
           path: |
             repo/_wfigs_history_build/history/manifest.json
             repo/_wfigs_history_build/history/*/manifest.json
+            repo/_wfigs_history_build/history/seasonal_activity.json
+            repo/_wfigs_history_build/history/*/seasonal_activity.json
           if-no-files-found: error
           retention-days: 14
