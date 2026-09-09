@@ -745,6 +745,9 @@ required_wfigs_fragments = [
     "function updateWFIGSHistoryViewport",
     "function renderWFIGSHistoryYearControl",
     "wfigs-history-year-select",
+    "if (sectionConfig.id === 'wildfire-burn-scar' && entry.id === 'wfigs-history')",
+    "updateWFIGSHistoryLayerDescription",
+    "Selected year: ${wfigsHistorySelectedYear}",
     "rolling five-year operational window",
     "Current/maintained wildfire footprints; incidents can fall off as they close or become stale.",
     "All mapped ${WFIGS_CURRENT_YEAR} wildfire footprints; no Current-service fall-off.",
@@ -858,6 +861,10 @@ if "glm-v1" not in index and "glm-v2" not in index:
     errors.append(
         "Frontend cache-busting token for GOES GLM integration is missing."
     )
+
+if "wfigs-dashboard-v2-history-v1-1-year-selector" not in index:
+    errors.append("WFIGS Phase 4.1 historical-year-selector cache-busting token is missing from index.html.")
+
 if "mrms-rala-loop-v2" not in index:
     errors.append(
         "Frontend cache-busting token for MRMS RALA Phase 2 integration is missing."
