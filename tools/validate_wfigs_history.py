@@ -17,7 +17,7 @@ try:
 except Exception as exc:  # pragma: no cover
     raise RuntimeError("Shapely is required for historical geometry validation") from exc
 
-PROCESSOR_VERSION = "wfigs_history_v1_0"
+PROCESSOR_VERSION = "wfigs_history_v1_1"
 HISTORY_ITEM_ID = "5e72b1699bf74eefb3f3aff6f4ba5511"
 EARLIEST_MODERN_WFIGS_YEAR = 2021
 
@@ -180,6 +180,42 @@ def validate_year(root: Path, year: int, errors: list[str]) -> tuple[int, int]:
         errors.append(f"{year}: total chunk bytes mismatch")
     if invalid_geometries:
         errors.append(f"{year}: {invalid_geometries} serialized geometries are invalid/empty/non-polygonal")
+
+    overview = manifest.get("overview") or {}
+    overview_href = str(overview.get("href") or "")
+    overview_path = root / overview_href
+    if overview_href != "overview.geojson" or not overview_path.exists() or overview_path.stat().st_size <= 0:
+        errors.append(f"{year}: historical overview GeoJSON missing/empty")
+    else:
+        if sha256_file(overview_path) != overview.get("sha256"):
+            errors.append(f"{year}: historical overview checksum mismatch")
+        if overview_path.stat().st_size != int(overview.get("bytes") or -1):
+            errors.append(f"{year}: historical overview byte-count mismatch")
+        try:
+            payload = read_json(overview_path)
+            features = payload.get("features") or []
+            if len(features) != int(overview.get("feature_count") or -1):
+                errors.append(f"{year}: historical overview feature-count mismatch")
+            min_acres = float(overview.get("minimum_mapped_acres") or 5000.0)
+            for feature in features:
+                props = feature.get("properties") or {}
+                try:
+                    acres = float(props.get("mapped_acres"))
+                except (TypeError, ValueError):
+                    acres = None
+                if acres is None or acres < min_acres:
+                    errors.append(f"{year}: overview contains perimeter below mapped-acre threshold")
+                    break
+                try:
+                    geom = shape(feature.get("geometry"))
+                    if geom.is_empty or geom.geom_type not in {"Polygon", "MultiPolygon"} or not geom.is_valid:
+                        errors.append(f"{year}: overview contains invalid/empty/non-polygon geometry")
+                        break
+                except Exception:
+                    errors.append(f"{year}: overview contains unreadable geometry")
+                    break
+        except Exception as exc:
+            errors.append(f"{year}: invalid overview JSON: {exc}")
 
     return manifest_published, len(chunks)
 

@@ -14,7 +14,7 @@ from typing import Any
 
 from shapely.geometry import shape
 
-PROCESSOR_VERSION = "wfigs_phase2_operational_v1_2"
+PROCESSOR_VERSION = "wfigs_phase2_operational_v1_3"
 
 
 def sha256_file(path: Path) -> str:
@@ -219,6 +219,31 @@ def validate_ytd(data_root: Path, errors: list[str]) -> None:
         errors.append("YTD feature total does not match manifest")
     if total_bytes != int(manifest.get("total_chunk_bytes") or -1):
         errors.append("YTD byte total does not match manifest")
+
+    overview = manifest.get("overview") or {}
+    overview_path = root / str(overview.get("href") or "")
+    if not overview.get("href") or not overview_path.exists():
+        errors.append("YTD overview GeoJSON is missing")
+    else:
+        if sha256_file(overview_path) != overview.get("sha256"):
+            errors.append("YTD overview checksum mismatch")
+        if overview_path.stat().st_size != int(overview.get("bytes") or -1):
+            errors.append("YTD overview byte-count mismatch")
+        payload = load_json(overview_path)
+        features = payload.get("features") or []
+        if len(features) != int(overview.get("feature_count") or -1):
+            errors.append("YTD overview feature-count mismatch")
+        min_acres = float(overview.get("minimum_mapped_acres") or 5000.0)
+        for feature in features:
+            validate_feature(feature, errors, "YTD overview feature")
+            acres = (feature.get("properties") or {}).get("mapped_acres")
+            try:
+                acres = float(acres)
+            except (TypeError, ValueError):
+                acres = None
+            if acres is None or acres < min_acres:
+                errors.append("YTD overview contains a perimeter below its mapped-acre threshold")
+                break
 
 
 def main() -> int:

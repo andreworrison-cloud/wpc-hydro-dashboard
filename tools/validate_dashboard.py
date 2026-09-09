@@ -719,7 +719,7 @@ for forbidden in [
     if forbidden in app:
         errors.append(f"Legacy broken TIGERweb WMS reference path is still present: {forbidden}")
 
-# Phase WFIGS-4.2 dashboard integration. The browser consumes only validated
+# Phase WFIGS-4.3 dashboard integration. The browser consumes only validated
 # wfigs-data products. Current and current-year YTD remain separate opt-in layers;
 # the historical archive supports simultaneous toggling of any combination of the
 # previous five completed calendar years. YTD/history remain lazy-loaded by viewport
@@ -734,7 +734,8 @@ required_wfigs_fragments = [
     "const WFIGS_YTD_MANIFEST_URL = `${WFIGS_DATA_ROOT}/ytd/manifest.json`;",
     "const WFIGS_HISTORY_ROOT = `${WFIGS_DATA_ROOT}/history`;",
     "const WFIGS_HISTORY_INDEX_URL = `${WFIGS_HISTORY_ROOT}/manifest.json`;",
-    "const WFIGS_YTD_MIN_ZOOM = 6;",
+    "const WFIGS_ARCHIVE_OVERVIEW_MIN_ZOOM = 4;",
+    "const WFIGS_ARCHIVE_CHUNK_MIN_ZOOM = 6;",
     "const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;",
     "const WFIGS_HISTORY_CHUNK_CACHE_LIMIT_PER_YEAR = 36;",
     "const WFIGS_HISTORY_YEAR_COLORS =",
@@ -742,8 +743,12 @@ required_wfigs_fragments = [
     "function refreshWFIGSCurrent",
     "function refreshWFIGSYTDManifest",
     "function updateWFIGSYTDViewport",
+    "function loadWFIGSYTDOverview",
+    "function rebuildWFIGSYTDOverviewLayer",
     "function refreshWFIGSHistory",
     "function updateWFIGSHistoryViewport",
+    "function loadWFIGSHistoryOverview",
+    "function rebuildWFIGSHistoryOverviewLayers",
     "function renderWFIGSHistoryYearControl",
     "wfigs-history-year-buttons",
     "function toggleWFIGSHistoryYear",
@@ -771,6 +776,10 @@ required_wfigs_fragments = [
     "wfigs-history-time-box",
     "Year = Fire Discovery Date (UTC)",
     "buildWFIGSLegendHTML",
+    "manifest.overview?.href",
+    "WFIGS YTD national overview",
+    "historical manifest is missing the zoomed-out overview product",
+    "const mode = zoom < WFIGS_ARCHIVE_CHUNK_MIN_ZOOM ? 'National overview' : 'Cartographic display';",
 ]
 for fragment in required_wfigs_fragments:
     if fragment not in app:
@@ -794,6 +803,8 @@ else:
 # Archive acreage thresholds are cartographic only: the underlying data remain
 # complete and progressively expose smaller burns as the forecaster zooms in.
 for threshold_fragment in [
+    "if (zoom === 4) return 10000;",
+    "if (zoom === 5) return 5000;",
     "if (zoom === 6) return 500;",
     "if (zoom === 7) return 100;",
     "if (zoom === 8) return 20;",
@@ -882,8 +893,8 @@ if "glm-v1" not in index and "glm-v2" not in index:
         "Frontend cache-busting token for GOES GLM integration is missing."
     )
 
-if "wfigs-dashboard-v2-history-v1-2-multiyear-toggles" not in index:
-    errors.append("WFIGS Phase 4.2 multi-year historical-toggle cache-busting token is missing from index.html.")
+if "wfigs-dashboard-v2-history-v1-3-conus-overview" not in index:
+    errors.append("WFIGS Phase 4.3 CONUS-overview cache-busting token is missing from index.html.")
 
 if "mrms-rala-loop-v2" not in index:
     errors.append(
