@@ -29,8 +29,16 @@ jobs:
 
       - name: Install System Dependencies (ecCodes)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libeccodes0
+          # Google Chrome is preconfigured on GitHub-hosted runners but is not
+          # required by this RAP workflow. Disable its apt source so transient
+          # Chrome repository metadata-sync errors cannot block RAP updates.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+
+          # Clear runner package-list state, retry transient mirror failures,
+          # and install only the ecCodes system library we actually need.
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libeccodes0
 
       - name: Install Python dependencies
         run: |
