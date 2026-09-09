@@ -10,6 +10,12 @@ from matplotlib import ticker
 
 warnings.filterwarnings('ignore')
 
+# Dashboard rendering profile. This increases PNG pixel density only; the HREF,
+# REFS, probability thresholds, existing REFS-to-HREF interpolation, and
+# super-ensemble calculations are intentionally unchanged.
+MAP_RENDER_DPI = 450       # 10 x 6 inches -> 4500 x 2700 px
+RENDER_REVISION = "ero-cam-display-density-v1"
+
 class EROCamEngine:
     def __init__(self, output_dir="grib_cache_ero"):
         self.grib_dir = Path(output_dir)
@@ -874,7 +880,7 @@ class EROCamEngine:
         if "error" in payload:
             raise RuntimeError(payload["error"])
 
-        print("Exporting Geo-Registered PNGs and Metadata...")
+        print(f"Exporting Geo-Registered PNGs at 4500x2700 px (DPI={MAP_RENDER_DPI}) and Metadata...")
         os.makedirs("static", exist_ok=True)
         
         lats = payload["metadata"]["lats"]
@@ -894,14 +900,14 @@ class EROCamEngine:
                     print(f"Removed stale unavailable layer: {stale}")
                 return
             data = np.where(data < levels[0], np.nan, data)
-            fig = plt.figure(figsize=(10, 6), dpi=300, frameon=False)
+            fig = plt.figure(figsize=(10, 6), dpi=MAP_RENDER_DPI, frameon=False)
             ax = plt.Axes(fig, [0., 0., 1., 1.])
             ax.set_axis_off()
             fig.add_axes(ax)
             ax.contourf(x_wm, y_wm, data, levels=levels, cmap=cmap, extend='max', alpha=0.65)
             ax.set_xlim(min_x, max_x)
             ax.set_ylim(min_y, max_y)
-            plt.savefig(f'static/{filename}', format='png', transparent=True)
+            plt.savefig(f'static/{filename}', format='png', transparent=True, dpi=MAP_RENDER_DPI)
             plt.close()
 
         prob_levels = [10, 30, 50, 70, 90, 100]
@@ -925,7 +931,14 @@ class EROCamEngine:
             json.dump({
                 "valid_time": valid_time_str,
                 "ero_window_str": payload['metadata']['ero_valid_str'],
-                "bounds": bounds
+                "bounds": bounds,
+                "rendering": {
+                    "revision": RENDER_REVISION,
+                    "map_pixel_dimensions": [4500, 2700],
+                    "map_dpi": MAP_RENDER_DPI,
+                    "probability_thresholds_unchanged": True,
+                    "refs_to_href_interpolation_unchanged": True
+                }
             }, f)
         
         print("PNG mapping complete!")

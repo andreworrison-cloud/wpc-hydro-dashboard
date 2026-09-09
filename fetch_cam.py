@@ -10,6 +10,12 @@ from matplotlib import ticker
 
 warnings.filterwarnings('ignore')
 
+# Dashboard rendering profile. This increases PNG pixel density only; the HREF,
+# REFS, probability thresholds, existing REFS-to-HREF interpolation, and
+# super-ensemble calculations are intentionally unchanged.
+MAP_RENDER_DPI = 450       # 10 x 6 inches -> 4500 x 2700 px
+RENDER_REVISION = "cam-display-density-v1"
+
 class EnsembleNowcastEngine:
     def __init__(self, output_dir="grib_cache"):
         self.grib_dir = Path(output_dir)
@@ -875,7 +881,7 @@ class EnsembleNowcastEngine:
         if "error" in payload:
             raise RuntimeError(payload["error"])
 
-        print("Exporting Geo-Registered PNGs and Metadata...")
+        print(f"Exporting Geo-Registered PNGs at 4500x2700 px (DPI={MAP_RENDER_DPI}) and Metadata...")
         os.makedirs("static", exist_ok=True)
         
         lats = payload["metadata"]["lats"]
@@ -899,7 +905,7 @@ class EnsembleNowcastEngine:
             # Mask out probabilities less than 10% for a clean transparent background
             data = np.where(data < levels[0], np.nan, data)
             
-            fig = plt.figure(figsize=(10, 6), dpi=300, frameon=False)
+            fig = plt.figure(figsize=(10, 6), dpi=MAP_RENDER_DPI, frameon=False)
             ax = plt.Axes(fig, [0., 0., 1., 1.])
             ax.set_axis_off()
             fig.add_axes(ax)
@@ -908,7 +914,7 @@ class EnsembleNowcastEngine:
             
             ax.set_xlim(min_x, max_x)
             ax.set_ylim(min_y, max_y)
-            plt.savefig(f'static/{filename}', format='png', transparent=True)
+            plt.savefig(f'static/{filename}', format='png', transparent=True, dpi=MAP_RENDER_DPI)
             plt.close()
 
         # NWS Probability Contour Thresholds (10%, 30%, 50%, 70%, 90%)
@@ -934,7 +940,14 @@ class EnsembleNowcastEngine:
         with open("static/cam_metadata.json", "w") as f:
             json.dump({
                 "valid_time": valid_time_str,
-                "bounds": bounds
+                "bounds": bounds,
+                "rendering": {
+                    "revision": RENDER_REVISION,
+                    "map_pixel_dimensions": [4500, 2700],
+                    "map_dpi": MAP_RENDER_DPI,
+                    "probability_thresholds_unchanged": True,
+                    "refs_to_href_interpolation_unchanged": True
+                }
             }, f)
         
         print("PNG mapping complete!")

@@ -14,6 +14,14 @@ import scipy.ndimage as ndimage
 
 warnings.filterwarnings('ignore') 
 
+# Dashboard rendering profile. This increases raster pixel density only; it does
+# not increase RAP meteorological resolution or change the existing field
+# calculations/smoothing. Keeping the physical figure size fixed while raising
+# DPI preserves the relative size of contours, labels, and wind barbs.
+MAP_RENDER_DPI = 450       # 10 x 6 inches -> 4500 x 2700 px
+LEGEND_RENDER_DPI = 200    # 5 x 1.2 inches -> 1000 x 240 px
+RENDER_REVISION = "rap-display-density-v1"
+
 # Ensure the static directory exists for GitHub Pages
 os.makedirs("static", exist_ok=True)
 
@@ -470,7 +478,7 @@ diff_adv_smooth = process_field(diff_adv, 2.0)
 # --- SAVING IMAGES DIRECTLY TO DISK ---
 def save_map_png(data, cmap, vmin, vmax, filename):
     if data is None: return
-    fig = plt.figure(figsize=(10, 6), dpi=300, frameon=False)
+    fig = plt.figure(figsize=(10, 6), dpi=MAP_RENDER_DPI, frameon=False)
     ax = plt.Axes(fig, [0., 0., 1., 1.])
     ax.set_axis_off()
     fig.add_axes(ax)
@@ -487,12 +495,12 @@ def save_map_png(data, cmap, vmin, vmax, filename):
     
     ax.set_xlim(min_x, max_x)
     ax.set_ylim(min_y, max_y)
-    plt.savefig(f'static/{filename}', format='png', transparent=True)
+    plt.savefig(f'static/{filename}', format='png', transparent=True, dpi=MAP_RENDER_DPI)
     plt.close()
 
 def save_barb_map_png(data, u, v, cmap, vmin, vmax, filename, line_color='white', contour_levels=None):
     if data is None or u is None or v is None: return
-    fig = plt.figure(figsize=(10, 6), dpi=300, frameon=False)
+    fig = plt.figure(figsize=(10, 6), dpi=MAP_RENDER_DPI, frameon=False)
     ax = plt.Axes(fig, [0., 0., 1., 1.])
     ax.set_axis_off()
     fig.add_axes(ax)
@@ -519,12 +527,12 @@ def save_barb_map_png(data, u, v, cmap, vmin, vmax, filename, line_color='white'
     
     ax.set_xlim(min_x, max_x)
     ax.set_ylim(min_y, max_y)
-    plt.savefig(f'static/{filename}', format='png', transparent=True)
+    plt.savefig(f'static/{filename}', format='png', transparent=True, dpi=MAP_RENDER_DPI)
     plt.close()
 
 def save_diff_adv_map_png(vort_data, diff_adv_data, u, v, filename):
     if vort_data is None or diff_adv_data is None: return
-    fig = plt.figure(figsize=(10, 6), dpi=300, frameon=False)
+    fig = plt.figure(figsize=(10, 6), dpi=MAP_RENDER_DPI, frameon=False)
     ax = plt.Axes(fig, [0., 0., 1., 1.])
     ax.set_axis_off()
     fig.add_axes(ax)
@@ -545,11 +553,11 @@ def save_diff_adv_map_png(vort_data, diff_adv_data, u, v, filename):
     
     ax.set_xlim(min_x, max_x)
     ax.set_ylim(min_y, max_y)
-    plt.savefig(f'static/{filename}', format='png', transparent=True)
+    plt.savefig(f'static/{filename}', format='png', transparent=True, dpi=MAP_RENDER_DPI)
     plt.close()
 
 def save_legend_png(cmap, vmin, vmax, title, filename, contour_levels=None):
-    fig, ax = plt.subplots(figsize=(5, 1.2), dpi=100)
+    fig, ax = plt.subplots(figsize=(5, 1.2), dpi=LEGEND_RENDER_DPI)
     fig.patch.set_alpha(0.0) 
     norm = plt.Normalize(vmin=vmin, vmax=vmax)
     
@@ -565,10 +573,10 @@ def save_legend_png(cmap, vmin, vmax, title, filename, contour_levels=None):
     cb.ax.tick_params(colors='white', labelsize=8)
     cb.outline.set_edgecolor('white')
     
-    plt.savefig(f'static/{filename}', format='png', transparent=True, bbox_inches='tight', pad_inches=0.15)
+    plt.savefig(f'static/{filename}', format='png', transparent=True, dpi=LEGEND_RENDER_DPI, bbox_inches='tight', pad_inches=0.15)
     plt.close()
 
-print("Saving maps directly to static/ folder...")
+print(f"Saving maps directly to static/ folder at 4500x2700 px (DPI={MAP_RENDER_DPI}); legends at DPI={LEGEND_RENDER_DPI}...")
 
 # Calculate the unified CAPE maximum across both current and F03 fields
 max_cape = 5000
@@ -647,7 +655,15 @@ with open("static/rap_metadata.json", "w") as f:
     json.dump({
         "valid_time": valid_time_str,
         "valid_time_f03": valid_time_f03_str,
-        "bounds": bounds
+        "bounds": bounds,
+        "rendering": {
+            "revision": RENDER_REVISION,
+            "map_pixel_dimensions": [4500, 2700],
+            "map_dpi": MAP_RENDER_DPI,
+            "legend_dpi": LEGEND_RENDER_DPI,
+            "meteorological_grid_unchanged": True,
+            "existing_field_smoothing_unchanged": True
+        }
     }, f)
 
 print("Process Complete!")
