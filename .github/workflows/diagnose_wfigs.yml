@@ -1,0 +1,43 @@
+name: Diagnose NIFC WFIGS Perimeter Feeds
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-wfigs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install diagnostic dependency
+        run: python -m pip install --upgrade requests
+
+      - name: Validate WFIGS Phase-1 package
+        run: python tools/validate_wfigs_phase1.py
+
+      - name: Run WFIGS source-discovery diagnostic
+        run: python diagnose_wfigs.py --output-dir wfigs_phase1_output
+
+      - name: Upload WFIGS Phase-1 diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: wfigs-phase1-diagnostic
+          path: wfigs_phase1_output/
+          if-no-files-found: warn
+          retention-days: 14
