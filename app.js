@@ -2106,6 +2106,616 @@ const nldasRsm0100Layer = L.imageOverlay(
     {zIndex: 10, opacity: 0, interactive: false}
 );
 
+// --- NIFC/WFIGS WILDFIRE / BURN-SCAR CONTEXT ---
+// WFIGS supplies mapped wildfire perimeter extent. These polygons do NOT
+// represent soil-burn severity; BAER/MTBS remain separate future context.
+// The browser consumes only our validated wfigs-data branch, never the live
+// ArcGIS service directly. Current is a compact national snapshot; the much
+// larger YTD archive is lazy-loaded by viewport and cartographic zoom.
+const WFIGS_CURRENT_LAYER_NAME = 'NIFC/WFIGS Current Wildfire Perimeters';
+const WFIGS_YTD_LAYER_NAME = 'NIFC/WFIGS 2026 Wildfire Perimeters';
+const WFIGS_DATA_ROOT = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/wfigs-data/static/wfigs';
+const WFIGS_CURRENT_MANIFEST_URL = `${WFIGS_DATA_ROOT}/current/manifest.json`;
+const WFIGS_YTD_MANIFEST_URL = `${WFIGS_DATA_ROOT}/ytd/manifest.json`;
+const WFIGS_CURRENT_MANIFEST_POLL_INTERVAL_MS = 2 * 60 * 1000;
+const WFIGS_YTD_MANIFEST_POLL_INTERVAL_MS = 15 * 60 * 1000;
+const WFIGS_CURRENT_SOURCE_EDIT_CAUTION_MINUTES = 45;
+const WFIGS_YTD_MIN_ZOOM = 6;
+const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;
+
+const wfigsCurrentLayerGroup = L.layerGroup();
+const wfigsYTDLayerGroup = L.layerGroup();
+let wfigsCurrentManifest = null;
+let wfigsYTDManifest = null;
+let wfigsCurrentDataLayer = null;
+let wfigsCurrentManifestVersion = '';
+let wfigsYTDManifestVersion = '';
+let wfigsCurrentRefreshInFlight = false;
+let wfigsYTDManifestRefreshInFlight = false;
+let wfigsCurrentLastError = '';
+let wfigsYTDLastError = '';
+let wfigsYTDViewportTimer = null;
+let wfigsYTDViewportSerial = 0;
+let wfigsYTDLastDisplayThreshold = null;
+let wfigsYTDVisibleHrefs = new Set();
+let wfigsCurrentActiveFireIds = new Set();
+const wfigsYTDChunkCache = new Map();
+
+function ensureWFIGSDashboardStyles() {
+    if (document.getElementById('wfigs-dashboard-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'wfigs-dashboard-styles';
+    style.textContent = `
+        .leaflet-tooltip.wfigs-tooltip {
+            background: rgba(22, 24, 27, 0.96);
+            border: 1px solid rgba(255, 190, 105, 0.78);
+            color: #f5f5f5;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.36);
+            font: 12px/1.35 sans-serif;
+            padding: 7px 9px;
+        }
+        .leaflet-tooltip-top.wfigs-tooltip::before {
+            border-top-color: rgba(255, 190, 105, 0.78);
+        }
+        .wfigs-tooltip strong { color: #ffd28a; font-size: 12.5px; }
+        .wfigs-tooltip .wfigs-muted { color: #c9c9c9; font-size: 10.5px; }
+        .wfigs-popup { font: 12px/1.4 sans-serif; min-width: 235px; color: #222; }
+        .wfigs-popup h3 { margin: 0 0 7px; font-size: 15px; color: #9a3c24; }
+        .wfigs-popup .wfigs-row { margin: 3px 0; }
+        .wfigs-popup .wfigs-science-note {
+            margin-top: 8px; padding-top: 7px; border-top: 1px solid #ddd;
+            color: #555; font-size: 10.5px;
+        }
+    `;
+    document.head.appendChild(style);
+}
+ensureWFIGSDashboardStyles();
+
+function escapeWFIGSHTML(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function formatWFIGSAcres(value) {
+    const acres = Number(value);
+    if (!Number.isFinite(acres)) return 'Unknown';
+    if (acres < 1) return `${acres.toFixed(2)} acres`;
+    if (acres < 100) return `${acres.toFixed(1)} acres`;
+    return `${Math.round(acres).toLocaleString('en-US')} acres`;
+}
+
+function formatWFIGSDate(value) {
+    if (!value) return 'Unknown';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Unknown';
+    return parsed.toLocaleDateString('en-US', {
+        timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric'
+    });
+}
+
+function formatWFIGSDateTime(value) {
+    if (!value) return 'Unknown';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? 'Unknown' : formatUTC(parsed);
+}
+
+function wfigsLocationText(properties = {}) {
+    const parts = [properties.county, properties.state].filter(Boolean);
+    return parts.length ? parts.join(', ') : 'Location unavailable';
+}
+
+function wfigsBaseStyle(collection) {
+    if (collection === 'current') {
+        return {
+            color: '#ff6b45', weight: 2.0, opacity: 0.95,
+            fillColor: '#e34a33', fillOpacity: 0.12
+        };
+    }
+    return {
+        color: '#e0a24a', weight: 1.35, opacity: 0.88,
+        fillColor: '#c98a3b', fillOpacity: 0.055, dashArray: '5 3'
+    };
+}
+
+function wfigsHighlightStyle(collection) {
+    if (collection === 'current') {
+        return {
+            color: '#fff0b8', weight: 3.1, opacity: 1,
+            fillColor: '#ff7043', fillOpacity: 0.20
+        };
+    }
+    return {
+        color: '#ffe2a8', weight: 2.7, opacity: 1,
+        fillColor: '#d89a48', fillOpacity: 0.13, dashArray: null
+    };
+}
+
+function buildWFIGSTooltipHTML(properties = {}) {
+    const containment = Number(properties.percent_contained);
+    const containmentLine = Number.isFinite(containment)
+        ? `<br><span>Containment: ${Math.round(containment)}%</span>`
+        : '';
+    const discovery = properties.discovery_time_utc
+        ? `<br><span class="wfigs-muted">Discovered: ${escapeWFIGSHTML(formatWFIGSDate(properties.discovery_time_utc))}</span>`
+        : '';
+    return `
+        <strong>${escapeWFIGSHTML(properties.incident_name || 'Unnamed wildfire')}</strong><br>
+        <span>Mapped perimeter: ${escapeWFIGSHTML(formatWFIGSAcres(properties.mapped_acres))}</span><br>
+        <span>${escapeWFIGSHTML(wfigsLocationText(properties))}</span>${containmentLine}${discovery}
+    `;
+}
+
+function buildWFIGSPopupHTML(properties = {}) {
+    const collectionLabel = properties.source_collection === 'current'
+        ? 'Current WFIGS perimeter'
+        : '2026 WFIGS perimeter archive';
+    const rows = [];
+    const addRow = (label, value) => {
+        if (value === null || value === undefined || value === '' || value === 'Unknown') return;
+        rows.push(`<div class="wfigs-row"><strong>${escapeWFIGSHTML(label)}:</strong> ${escapeWFIGSHTML(value)}</div>`);
+    };
+
+    addRow('Mapped perimeter', formatWFIGSAcres(properties.mapped_acres));
+    if (Number.isFinite(Number(properties.reported_acres))) {
+        addRow('Reported incident size', formatWFIGSAcres(properties.reported_acres));
+    }
+    if (Number.isFinite(Number(properties.percent_contained))) {
+        addRow('Containment', `${Math.round(Number(properties.percent_contained))}%`);
+    }
+    addRow('Location', wfigsLocationText(properties));
+    addRow('Discovered', formatWFIGSDateTime(properties.discovery_time_utc));
+    addRow('Perimeter observed', formatWFIGSDateTime(properties.perimeter_time_utc));
+    addRow('Fire cause', properties.fire_cause);
+    addRow('Cause detail', properties.fire_cause_general);
+    addRow('Mapping method', properties.map_method);
+    addRow('Source dataset', properties.source_dataset);
+
+    return `
+        <div class="wfigs-popup">
+            <h3>${escapeWFIGSHTML(properties.incident_name || 'Unnamed wildfire')}</h3>
+            <div style="color:#666;font-size:10.5px;margin-bottom:6px;">${escapeWFIGSHTML(collectionLabel)}</div>
+            ${rows.join('')}
+            <div class="wfigs-science-note">
+                WFIGS depicts mapped wildfire extent. It does not indicate soil-burn severity or hydrologic response severity.
+            </div>
+        </div>
+    `;
+}
+
+function bindWFIGSFeatureInteraction(feature, layer, collection) {
+    const properties = feature?.properties || {};
+    layer.bindTooltip(buildWFIGSTooltipHTML(properties), {
+        sticky: true, direction: 'top', opacity: 0.97, className: 'wfigs-tooltip'
+    });
+    layer.bindPopup(buildWFIGSPopupHTML(properties), {maxWidth: 360});
+    layer.on('mouseover', () => {
+        if (typeof layer.setStyle === 'function') layer.setStyle(wfigsHighlightStyle(collection));
+        if (typeof layer.bringToFront === 'function') layer.bringToFront();
+    });
+    layer.on('mouseout', () => {
+        if (typeof layer.setStyle === 'function') layer.setStyle(wfigsBaseStyle(collection));
+    });
+}
+
+function validateWFIGSManifest(manifest, collection) {
+    if (!manifest || manifest.phase !== 'WFIGS-2' || manifest.collection !== collection) {
+        throw new Error(`Invalid WFIGS ${collection} manifest`);
+    }
+    if (!String(manifest.processor_version || '').startsWith('wfigs_phase2_operational_v1_')) {
+        throw new Error(`Unexpected WFIGS ${collection} processor version`);
+    }
+    if (!Number.isFinite(Number(manifest.published_fire_count)) || Number(manifest.published_fire_count) <= 0) {
+        throw new Error(`WFIGS ${collection} manifest has no published wildfire perimeters`);
+    }
+    if (collection === 'current') {
+        if (!manifest.href || !Array.isArray(manifest.active_fire_ids)) {
+            throw new Error('WFIGS Current manifest is missing href or active_fire_ids');
+        }
+    } else {
+        if (!Array.isArray(manifest.chunks) || Number(manifest.chunk_count) !== manifest.chunks.length) {
+            throw new Error('WFIGS YTD manifest has an invalid chunk inventory');
+        }
+        manifest.chunks.forEach(chunk => {
+            if (!chunk?.href || !Array.isArray(chunk.bbox) || chunk.bbox.length !== 4) {
+                throw new Error('WFIGS YTD manifest contains an invalid chunk');
+            }
+        });
+    }
+    return manifest;
+}
+
+async function fetchWFIGSJSON(url) {
+    const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+}
+
+function validateWFIGSFeatureCollection(geojson, expectedCount, label) {
+    if (!geojson || geojson.type !== 'FeatureCollection' || !Array.isArray(geojson.features)) {
+        throw new Error(`${label} is not a GeoJSON FeatureCollection`);
+    }
+    if (Number.isFinite(Number(expectedCount)) && geojson.features.length !== Number(expectedCount)) {
+        throw new Error(`${label} feature count mismatch: ${geojson.features.length} vs ${expectedCount}`);
+    }
+    for (const feature of geojson.features) {
+        const geometryType = feature?.geometry?.type;
+        if (!['Polygon', 'MultiPolygon'].includes(geometryType)) {
+            throw new Error(`${label} contains non-polygon geometry`);
+        }
+        if (!feature?.properties?.fire_id) {
+            throw new Error(`${label} contains a feature without fire_id`);
+        }
+    }
+    return geojson;
+}
+
+function wfigsManifestVersion(manifest) {
+    return [
+        manifest?.processor_version || '',
+        manifest?.source_last_edit_epoch_ms || '',
+        manifest?.generated_utc || '',
+        manifest?.published_fire_count || '',
+        manifest?.sha256 || '',
+        manifest?.total_chunk_bytes || ''
+    ].join('|');
+}
+
+function wfigsSourceEditAgeMinutes(manifest) {
+    const parsed = new Date(manifest?.source_last_edit_utc || '');
+    if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
+    return Math.max(0, (Date.now() - parsed.getTime()) / 60000);
+}
+
+function buildWFIGSCurrentGeoJSONLayer(geojson) {
+    return L.geoJSON(geojson, {
+        style: () => wfigsBaseStyle('current'),
+        onEachFeature: (feature, layer) => bindWFIGSFeatureInteraction(feature, layer, 'current')
+    });
+}
+
+async function refreshWFIGSCurrent({forceManifest = false} = {}) {
+    if (wfigsCurrentRefreshInFlight) return;
+    if (!map.hasLayer(wfigsCurrentLayerGroup) && !forceManifest) return;
+    wfigsCurrentRefreshInFlight = true;
+    try {
+        const manifest = validateWFIGSManifest(
+            await fetchWFIGSJSON(WFIGS_CURRENT_MANIFEST_URL), 'current'
+        );
+        const version = wfigsManifestVersion(manifest);
+        const changed = forceManifest || !wfigsCurrentDataLayer || version !== wfigsCurrentManifestVersion;
+        wfigsCurrentManifest = manifest;
+        wfigsCurrentActiveFireIds = new Set(manifest.active_fire_ids || []);
+
+        if (changed) {
+            const dataUrl = `${WFIGS_DATA_ROOT}/current/${manifest.href}?v=${encodeURIComponent(manifest.source_last_edit_epoch_ms || manifest.generated_utc || '')}`;
+            const geojson = validateWFIGSFeatureCollection(
+                await fetchWFIGSJSON(dataUrl), manifest.published_fire_count, 'WFIGS Current perimeters'
+            );
+            const replacement = buildWFIGSCurrentGeoJSONLayer(geojson);
+            wfigsCurrentLayerGroup.addLayer(replacement);
+            if (wfigsCurrentDataLayer) wfigsCurrentLayerGroup.removeLayer(wfigsCurrentDataLayer);
+            wfigsCurrentDataLayer = replacement;
+            wfigsCurrentManifestVersion = version;
+            if (map.hasLayer(wfigsYTDLayerGroup)) rebuildVisibleWFIGSYTDChunkLayers();
+        }
+        wfigsCurrentLastError = '';
+    } catch (error) {
+        wfigsCurrentLastError = error?.message || String(error);
+        console.warn('WFIGS Current refresh failed; retaining last successful snapshot:', error);
+    } finally {
+        wfigsCurrentRefreshInFlight = false;
+        updateWFIGSCurrentTimeBox();
+        updateLegends();
+    }
+}
+
+function wfigsYTDMinimumMappedAcresForZoom(zoom = map.getZoom()) {
+    if (zoom < WFIGS_YTD_MIN_ZOOM) return Number.POSITIVE_INFINITY;
+    if (zoom === 6) return 500;
+    if (zoom === 7) return 100;
+    if (zoom === 8) return 20;
+    return 0;
+}
+
+function wfigsYTDThresholdText(zoom = map.getZoom()) {
+    const threshold = wfigsYTDMinimumMappedAcresForZoom(zoom);
+    if (!Number.isFinite(threshold)) return `Zoom to ${WFIGS_YTD_MIN_ZOOM}+ to load the archive`;
+    if (threshold <= 0) return 'All available perimeter sizes shown';
+    return `Cartographic display: ≥${threshold.toLocaleString('en-US')} acres at this zoom`;
+}
+
+function wfigsBBoxesIntersect(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 4 || b.length !== 4) return false;
+    return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
+}
+
+function wfigsMapBBox() {
+    const bounds = map.getBounds();
+    return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+}
+
+function buildWFIGSYTDChunkLayer(geojson) {
+    const threshold = wfigsYTDMinimumMappedAcresForZoom();
+    const suppressCurrentDuplicates = map.hasLayer(wfigsCurrentLayerGroup);
+    return L.geoJSON(geojson, {
+        filter: feature => {
+            const properties = feature?.properties || {};
+            if (suppressCurrentDuplicates && wfigsCurrentActiveFireIds.has(properties.fire_id)) return false;
+            if (!Number.isFinite(threshold) || threshold === Number.POSITIVE_INFINITY) return false;
+            if (threshold <= 0) return true;
+            const acres = Number(properties.mapped_acres);
+            return Number.isFinite(acres) && acres >= threshold;
+        },
+        style: () => wfigsBaseStyle('ytd'),
+        onEachFeature: (feature, layer) => bindWFIGSFeatureInteraction(feature, layer, 'ytd')
+    });
+}
+
+async function loadWFIGSYTDChunk(chunkMeta) {
+    const key = chunkMeta.href;
+    const cached = wfigsYTDChunkCache.get(key);
+    if (cached) {
+        cached.lastUsed = Date.now();
+        return cached;
+    }
+
+    const url = `${WFIGS_DATA_ROOT}/ytd/${chunkMeta.href}?v=${encodeURIComponent(wfigsYTDManifest?.source_last_edit_epoch_ms || '')}`;
+    const geojson = validateWFIGSFeatureCollection(
+        await fetchWFIGSJSON(url), chunkMeta.feature_count, `WFIGS YTD ${chunkMeta.id}`
+    );
+    const entry = {
+        geojson,
+        layer: buildWFIGSYTDChunkLayer(geojson),
+        lastUsed: Date.now()
+    };
+    wfigsYTDChunkCache.set(key, entry);
+    return entry;
+}
+
+function rebuildVisibleWFIGSYTDChunkLayers() {
+    if (!map.hasLayer(wfigsYTDLayerGroup)) return;
+    const visible = [...wfigsYTDVisibleHrefs];
+    visible.forEach(href => {
+        const cached = wfigsYTDChunkCache.get(href);
+        if (!cached) return;
+        if (wfigsYTDLayerGroup.hasLayer(cached.layer)) wfigsYTDLayerGroup.removeLayer(cached.layer);
+        cached.layer = buildWFIGSYTDChunkLayer(cached.geojson);
+        wfigsYTDLayerGroup.addLayer(cached.layer);
+        cached.lastUsed = Date.now();
+    });
+    wfigsYTDLastDisplayThreshold = wfigsYTDMinimumMappedAcresForZoom();
+    updateWFIGSYTDTimeBox();
+}
+
+function pruneWFIGSYTDChunkCache() {
+    if (wfigsYTDChunkCache.size <= WFIGS_YTD_CHUNK_CACHE_LIMIT) return;
+    const removable = [...wfigsYTDChunkCache.entries()]
+        .filter(([href]) => !wfigsYTDVisibleHrefs.has(href))
+        .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    while (wfigsYTDChunkCache.size > WFIGS_YTD_CHUNK_CACHE_LIMIT && removable.length) {
+        const [href, cached] = removable.shift();
+        if (wfigsYTDLayerGroup.hasLayer(cached.layer)) wfigsYTDLayerGroup.removeLayer(cached.layer);
+        wfigsYTDChunkCache.delete(href);
+    }
+}
+
+async function updateWFIGSYTDViewport() {
+    if (!map.hasLayer(wfigsYTDLayerGroup) || !wfigsYTDManifest) return;
+    const serial = ++wfigsYTDViewportSerial;
+    const zoom = map.getZoom();
+    const threshold = wfigsYTDMinimumMappedAcresForZoom(zoom);
+
+    if (zoom < WFIGS_YTD_MIN_ZOOM) {
+        wfigsYTDLayerGroup.clearLayers();
+        wfigsYTDVisibleHrefs.clear();
+        wfigsYTDLastDisplayThreshold = threshold;
+        updateWFIGSYTDTimeBox();
+        return;
+    }
+
+    const viewport = wfigsMapBBox();
+    const desiredChunks = wfigsYTDManifest.chunks.filter(chunk => wfigsBBoxesIntersect(chunk.bbox, viewport));
+    const desiredHrefs = new Set(desiredChunks.map(chunk => chunk.href));
+
+    [...wfigsYTDVisibleHrefs].forEach(href => {
+        if (desiredHrefs.has(href)) return;
+        const cached = wfigsYTDChunkCache.get(href);
+        if (cached && wfigsYTDLayerGroup.hasLayer(cached.layer)) wfigsYTDLayerGroup.removeLayer(cached.layer);
+        wfigsYTDVisibleHrefs.delete(href);
+    });
+
+    const thresholdChanged = threshold !== wfigsYTDLastDisplayThreshold;
+    if (thresholdChanged) {
+        [...wfigsYTDVisibleHrefs].forEach(href => {
+            const cached = wfigsYTDChunkCache.get(href);
+            if (!cached) return;
+            if (wfigsYTDLayerGroup.hasLayer(cached.layer)) wfigsYTDLayerGroup.removeLayer(cached.layer);
+            cached.layer = buildWFIGSYTDChunkLayer(cached.geojson);
+            wfigsYTDLayerGroup.addLayer(cached.layer);
+        });
+    }
+
+    const results = await Promise.allSettled(
+        desiredChunks.map(async chunk => ({chunk, cached: await loadWFIGSYTDChunk(chunk)}))
+    );
+    if (serial !== wfigsYTDViewportSerial || !map.hasLayer(wfigsYTDLayerGroup)) return;
+
+    let failures = 0;
+    results.forEach(result => {
+        if (result.status !== 'fulfilled') {
+            failures += 1;
+            console.warn('WFIGS YTD chunk load failed:', result.reason);
+            return;
+        }
+        const {chunk, cached} = result.value;
+        if (!desiredHrefs.has(chunk.href)) return;
+        // A newly loaded chunk is built using the current zoom threshold. If the
+        // zoom changed while its request was in flight, rebuild before display.
+        const currentThreshold = wfigsYTDMinimumMappedAcresForZoom();
+        if (currentThreshold !== threshold) return;
+        if (!wfigsYTDLayerGroup.hasLayer(cached.layer)) wfigsYTDLayerGroup.addLayer(cached.layer);
+        wfigsYTDVisibleHrefs.add(chunk.href);
+        cached.lastUsed = Date.now();
+    });
+
+    wfigsYTDLastDisplayThreshold = threshold;
+    wfigsYTDLastError = failures ? `${failures} viewport chunk${failures === 1 ? '' : 's'} failed to load` : '';
+    pruneWFIGSYTDChunkCache();
+    updateWFIGSYTDTimeBox();
+}
+
+function scheduleWFIGSYTDViewportUpdate() {
+    if (!map.hasLayer(wfigsYTDLayerGroup)) return;
+    if (wfigsYTDViewportTimer) window.clearTimeout(wfigsYTDViewportTimer);
+    wfigsYTDViewportTimer = window.setTimeout(() => {
+        wfigsYTDViewportTimer = null;
+        updateWFIGSYTDViewport();
+    }, 140);
+}
+
+async function refreshWFIGSYTDManifest({forceManifest = false} = {}) {
+    if (wfigsYTDManifestRefreshInFlight) return;
+    if (!map.hasLayer(wfigsYTDLayerGroup) && !forceManifest) return;
+    wfigsYTDManifestRefreshInFlight = true;
+    try {
+        const manifest = validateWFIGSManifest(
+            await fetchWFIGSJSON(WFIGS_YTD_MANIFEST_URL), 'ytd'
+        );
+        const version = wfigsManifestVersion(manifest);
+        const changed = forceManifest || !wfigsYTDManifest || version !== wfigsYTDManifestVersion;
+        if (changed) {
+            wfigsYTDLayerGroup.clearLayers();
+            wfigsYTDChunkCache.clear();
+            wfigsYTDVisibleHrefs.clear();
+            wfigsYTDLastDisplayThreshold = null;
+        }
+        wfigsYTDManifest = manifest;
+        wfigsYTDManifestVersion = version;
+        wfigsYTDLastError = '';
+        await updateWFIGSYTDViewport();
+    } catch (error) {
+        wfigsYTDLastError = error?.message || String(error);
+        console.warn('WFIGS YTD manifest refresh failed; retaining loaded chunks:', error);
+    } finally {
+        wfigsYTDManifestRefreshInFlight = false;
+        updateWFIGSYTDTimeBox();
+        updateLegends();
+    }
+}
+
+function formatWFIGSCurrentTimeBox() {
+    if (!wfigsCurrentManifest) {
+        return `
+            <strong>NIFC/WFIGS Current Wildfire Perimeters</strong><br>
+            <span style="color:#ffeb3b;">${wfigsCurrentLastError ? 'Current feed unavailable' : 'Loading current wildfire perimeters...'}</span>
+        `;
+    }
+    const age = wfigsSourceEditAgeMinutes(wfigsCurrentManifest);
+    const delayed = Number.isFinite(age) && age > WFIGS_CURRENT_SOURCE_EDIT_CAUTION_MINUTES;
+    const status = wfigsCurrentLastError
+        ? '<span style="color:#ffb74d;font-weight:bold;">Refresh warning — showing last successful snapshot</span>'
+        : delayed
+            ? `<span style="color:#ffb74d;font-weight:bold;">Source edit &gt;${WFIGS_CURRENT_SOURCE_EDIT_CAUTION_MINUTES} min ago — verify freshness</span>`
+            : '<span style="color:#80cbc4;font-weight:bold;">Near-real-time WFIGS perimeter snapshot</span>';
+    return `
+        <strong>NIFC/WFIGS Current Wildfire Perimeters</strong><br>
+        ${status}<br>
+        <span style="color:#ffeb3b;">Source last edit: ${escapeWFIGSHTML(formatWFIGSDateTime(wfigsCurrentManifest.source_last_edit_utc))}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">${Number(wfigsCurrentManifest.published_fire_count).toLocaleString('en-US')} wildfire perimeters &bull; hover or click for fire details</span>
+    `;
+}
+
+function updateWFIGSCurrentTimeBox() {
+    const box = document.getElementById('wfigs-current-time-box');
+    if (!box) return;
+    if (!map.hasLayer(wfigsCurrentLayerGroup)) {
+        box.style.display = 'none';
+    } else {
+        box.innerHTML = formatWFIGSCurrentTimeBox();
+        box.style.display = 'block';
+    }
+    refreshLegendDockSummary();
+}
+
+function formatWFIGSYTDTimeBox() {
+    if (!wfigsYTDManifest) {
+        return `
+            <strong>NIFC/WFIGS 2026 Wildfire Perimeters</strong><br>
+            <span style="color:#ffeb3b;">${wfigsYTDLastError ? 'Archive manifest unavailable' : 'Loading 2026 perimeter archive...'}</span>
+        `;
+    }
+    let displayedFeatures = 0;
+    wfigsYTDVisibleHrefs.forEach(href => {
+        const cached = wfigsYTDChunkCache.get(href);
+        if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
+    });
+    const warning = wfigsYTDLastError
+        ? `<br><span style="color:#ffb74d;">${escapeWFIGSHTML(wfigsYTDLastError)}; loaded data retained.</span>`
+        : '';
+    return `
+        <strong>NIFC/WFIGS 2026 Wildfire Perimeters</strong><br>
+        <span style="color:#ffeb3b;">Snapshot: ${escapeWFIGSHTML(formatWFIGSDateTime(wfigsYTDManifest.source_last_edit_utc))}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">${Number(wfigsYTDManifest.published_fire_count).toLocaleString('en-US')} mapped fires in ${Number(wfigsYTDManifest.chunk_count).toLocaleString('en-US')} regional chunks</span><br>
+        <span style="font-size:0.82em;color:#80cbc4;">${escapeWFIGSHTML(wfigsYTDThresholdText())}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">Viewport: ${wfigsYTDVisibleHrefs.size} chunks &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span>${warning}
+    `;
+}
+
+function updateWFIGSYTDTimeBox() {
+    const box = document.getElementById('wfigs-ytd-time-box');
+    if (!box) return;
+    if (!map.hasLayer(wfigsYTDLayerGroup)) {
+        box.style.display = 'none';
+    } else {
+        box.innerHTML = formatWFIGSYTDTimeBox();
+        box.style.display = 'block';
+    }
+    refreshLegendDockSummary();
+}
+
+function buildWFIGSLegendHTML() {
+    return `
+        <div style="box-sizing:border-box;width:100%;background:white;padding:9px;border-radius:5px;color:black;font-family:sans-serif;">
+            <strong style="display:block;font-size:13px;line-height:1.2;text-align:center;">Wildfire / Burn Scar Context</strong>
+            <div style="display:grid;grid-template-columns:25px minmax(0,1fr);gap:6px 7px;align-items:center;margin-top:7px;font-size:10px;">
+                <span style="display:block;height:12px;border:2px solid #ff6b45;background:rgba(227,74,51,0.12);"></span>
+                <span>Current WFIGS wildfire perimeter</span>
+                <span style="display:block;height:12px;border:2px dashed #e0a24a;background:rgba(201,138,59,0.06);"></span>
+                <span>2026 WFIGS perimeter archive</span>
+            </div>
+            <span style="display:block;margin-top:7px;font-size:9px;line-height:1.25;text-align:center;color:#555;">Mapped fire extent only — not soil-burn severity. Smaller archived burns appear as you zoom in.</span>
+        </div>
+    `;
+}
+
+wfigsCurrentLayerGroup.on('add', () => {
+    updateWFIGSCurrentTimeBox();
+    refreshWFIGSCurrent({forceManifest: !wfigsCurrentDataLayer});
+    if (map.hasLayer(wfigsYTDLayerGroup)) rebuildVisibleWFIGSYTDChunkLayers();
+});
+wfigsCurrentLayerGroup.on('remove', () => {
+    updateWFIGSCurrentTimeBox();
+    if (map.hasLayer(wfigsYTDLayerGroup)) rebuildVisibleWFIGSYTDChunkLayers();
+});
+wfigsYTDLayerGroup.on('add', () => {
+    updateWFIGSYTDTimeBox();
+    refreshWFIGSYTDManifest({forceManifest: !wfigsYTDManifest});
+});
+wfigsYTDLayerGroup.on('remove', updateWFIGSYTDTimeBox);
+map.on('moveend zoomend', scheduleWFIGSYTDViewportUpdate);
+
+window.setInterval(() => {
+    if (map.hasLayer(wfigsCurrentLayerGroup)) refreshWFIGSCurrent();
+}, WFIGS_CURRENT_MANIFEST_POLL_INTERVAL_MS);
+window.setInterval(() => {
+    if (map.hasLayer(wfigsYTDLayerGroup)) refreshWFIGSYTDManifest();
+}, WFIGS_YTD_MANIFEST_POLL_INTERVAL_MS);
+
+
 let nwmLayerReady = false;
 let sportLayerReady = false;
 let nldasRsmReady = false;
@@ -4308,7 +4918,9 @@ legendDockControl.onAdd = function () {
         'nwm-time-box',
         'sport-time-box',
         'nldas-rsm-010-time-box',
-        'nldas-rsm-0100-time-box'
+        'nldas-rsm-0100-time-box',
+        'wfigs-current-time-box',
+        'wfigs-ytd-time-box'
     ].forEach(id => createLegendDockTimeBox(timeStack, id));
 
     const toggle = dock.querySelector('#legend-dock-toggle');
@@ -4816,6 +5428,9 @@ function updateLegends() {
     if (activeLayerNames.has('Active Hydro Watches')) addLegendBlock(watchLegendHTML);
     if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
     if (activeLayerNames.has('Day 1 ERO (Real-Time)')) addLegendBlock(eroLegendHTML);
+    if (activeLayerNames.has(WFIGS_CURRENT_LAYER_NAME) || activeLayerNames.has(WFIGS_YTD_LAYER_NAME)) {
+        addLegendBlock(buildWFIGSLegendHTML());
+    }
     if (activeLayerNames.has(MRMS_RALA_LAYER_NAME)) addLegendBlock(buildMRMSRALALegendHTML());
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
     if (activeLayerNames.has(MRMS_CREST_24H_LAYER_NAME)) addLegendBlock(mrmsCrest24hLegendHTML);
@@ -5310,6 +5925,14 @@ const dashboardSections = [
             {id: 'nldas-rsm-010', label: 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)', layer: nldasRsm010Layer, kind: 'raster'},
             {id: 'nldas-rsm-0100', label: 'NLDAS-2 Noah Relative Soil Moisture (0-100 cm)', layer: nldasRsm0100Layer, kind: 'raster'},
             {id: 'sport-percentile', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)', layer: sportLayer, kind: 'raster'}
+        ]
+    },
+    {
+        id: 'wildfire-burn-scar',
+        title: 'Wildfire / Burn Scar Context',
+        layers: [
+            {id: 'wfigs-current', label: WFIGS_CURRENT_LAYER_NAME, layer: wfigsCurrentLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS wildfire fire perimeter burn scar post-fire debris flow current active near-real-time'},
+            {id: 'wfigs-ytd-2026', label: WFIGS_YTD_LAYER_NAME, layer: wfigsYTDLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS wildfire fire perimeter burn scar post-fire debris flow recent historical year to date YTD 2026'}
         ]
     },
     {
