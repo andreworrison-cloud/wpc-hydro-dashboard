@@ -719,11 +719,11 @@ for forbidden in [
     if forbidden in app:
         errors.append(f"Legacy broken TIGERweb WMS reference path is still present: {forbidden}")
 
-# Phase WFIGS-4 dashboard integration. The browser consumes only validated
-# wfigs-data products. Current, current-year YTD, and a single selected historical
-# year remain separate, opt-in vector layers. YTD/history are lazy-loaded by
-# viewport and cartographic zoom. The historical archive exposes the previous five
-# completed calendar years and never queries the live ArcGIS service from browsers.
+# Phase WFIGS-4.2 dashboard integration. The browser consumes only validated
+# wfigs-data products. Current and current-year YTD remain separate opt-in layers;
+# the historical archive supports simultaneous toggling of any combination of the
+# previous five completed calendar years. YTD/history remain lazy-loaded by viewport
+# and cartographic zoom, and browsers never query the live ArcGIS service directly.
 required_wfigs_fragments = [
     "const WFIGS_CURRENT_YEAR = new Date().getUTCFullYear();",
     "const WFIGS_CURRENT_LAYER_NAME = 'NIFC/WFIGS Current Wildfire Perimeters';",
@@ -736,7 +736,8 @@ required_wfigs_fragments = [
     "const WFIGS_HISTORY_INDEX_URL = `${WFIGS_HISTORY_ROOT}/manifest.json`;",
     "const WFIGS_YTD_MIN_ZOOM = 6;",
     "const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;",
-    "const WFIGS_HISTORY_CHUNK_CACHE_LIMIT = 36;",
+    "const WFIGS_HISTORY_CHUNK_CACHE_LIMIT_PER_YEAR = 36;",
+    "const WFIGS_HISTORY_YEAR_COLORS =",
     "const WFIGS_HISTORY_ROLLING_YEARS = 5;",
     "function refreshWFIGSCurrent",
     "function refreshWFIGSYTDManifest",
@@ -744,11 +745,15 @@ required_wfigs_fragments = [
     "function refreshWFIGSHistory",
     "function updateWFIGSHistoryViewport",
     "function renderWFIGSHistoryYearControl",
-    "wfigs-history-year-select",
+    "wfigs-history-year-buttons",
+    "function toggleWFIGSHistoryYear",
+    "let wfigsHistorySelectedYears = new Set",
+    "Multiple years may be displayed together",
+    "aria-pressed",
     "if (sectionConfig.id === 'wildfire-burn-scar' && entry.id === 'wfigs-history')",
     "updateWFIGSHistoryLayerDescription",
-    "Selected year: ${wfigsHistorySelectedYear}",
-    "rolling five-year operational window",
+    "Selected years: ${selected.join(', ')}",
+    "Toggle any combination of the rolling five completed calendar years",
     "Current/maintained wildfire footprints; incidents can fall off as they close or become stale.",
     "All mapped ${WFIGS_CURRENT_YEAR} wildfire footprints; no Current-service fall-off.",
     "function buildWFIGSTooltipHTML",
@@ -771,7 +776,7 @@ for fragment in required_wfigs_fragments:
     if fragment not in app:
         errors.append(f"Missing WFIGS Phase-4 frontend contract: {fragment}")
 
-# Current must precede YTD, which must precede the single-year historical selector.
+# Current must precede YTD, which must precede the multi-year historical controls.
 wfigs_start = app.find("title: 'Wildfire / Burn Scar Context'")
 rap_start = app.find("title: 'RAP Mesoanalysis Data'")
 if wfigs_start < 0 or rap_start <= wfigs_start:
@@ -801,6 +806,21 @@ for threshold_fragment in [
 # ArcGIS directly from every user browser.
 if "services3.arcgis.com/T4QMspbfLg3qTGWY" in app:
     errors.append("Frontend contains a direct NIFC/WFIGS ArcGIS query; use wfigs-data backend products instead.")
+
+# Phase 4.2 intentionally replaces the one-year dropdown with multi-year buttons.
+for forbidden in ["wfigs-history-year-select", "let wfigsHistorySelectedYear ="]:
+    if forbidden in app:
+        errors.append(f"Legacy single-year WFIGS selector state remains: {forbidden}")
+
+# YTD and historical perimeters should use solid lines; year identity is carried by
+# bright color rather than dash patterns, which are harder to isolate on busy maps.
+style_start = app.find("function wfigsBaseStyle")
+style_end = app.find("function buildWFIGSTooltipHTML", style_start)
+if style_start >= 0 and style_end > style_start:
+    style_block = app[style_start:style_end]
+    for dashed in ["dashArray: '5 3'", "dashArray: '2 5'"]:
+        if dashed in style_block:
+            errors.append(f"WFIGS dashed perimeter styling reintroduced unexpectedly: {dashed}")
 
 if "wfigs-dashboard-v2-history-v1" not in index:
     errors.append("WFIGS Phase-4 frontend cache-busting token is missing from index.html.")
@@ -862,8 +882,8 @@ if "glm-v1" not in index and "glm-v2" not in index:
         "Frontend cache-busting token for GOES GLM integration is missing."
     )
 
-if "wfigs-dashboard-v2-history-v1-1-year-selector" not in index:
-    errors.append("WFIGS Phase 4.1 historical-year-selector cache-busting token is missing from index.html.")
+if "wfigs-dashboard-v2-history-v1-2-multiyear-toggles" not in index:
+    errors.append("WFIGS Phase 4.2 multi-year historical-toggle cache-busting token is missing from index.html.")
 
 if "mrms-rala-loop-v2" not in index:
     errors.append(
