@@ -1,0 +1,146 @@
+name: Update WFIGS Rolling 5-Year Wildfire History
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Rebuild all five historical years even when year-specific signatures are unchanged
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wfigs-data-publish
+  cancel-in-progress: false
+
+jobs:
+  update-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out dashboard code
+        uses: actions/checkout@v6
+        with:
+          path: repo
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install WFIGS dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'requests>=2.32,<3' 'shapely>=2.0,<3'
+
+      - name: Validate WFIGS history code
+        working-directory: repo
+        run: |
+          python -m py_compile \
+            fetch_wfigs_operational.py \
+            fetch_wfigs_history.py \
+            tools/validate_wfigs_history.py
+
+      - name: Prepare rolling wfigs-data worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C repo fetch --no-tags origin wfigs-data:refs/remotes/origin/wfigs-data || true
+          if git -C repo show-ref --verify --quiet refs/remotes/origin/wfigs-data; then
+            git -C repo worktree add --detach ../wfigs-data refs/remotes/origin/wfigs-data
+          else
+            echo 'wfigs-data branch is required. Run the Current/YTD WFIGS workflow first.' >&2
+            exit 1
+          fi
+          mkdir -p wfigs-data/static/wfigs/history
+
+      - name: Build rolling five-year WFIGS history
+        id: build
+        working-directory: repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          FORCE_ARGS=()
+          if [[ "${{ inputs.force_rebuild }}" == "true" ]]; then
+            FORCE_ARGS+=(--force)
+          fi
+          python fetch_wfigs_history.py \
+            --rolling-years 5 \
+            --output-root _wfigs_history_build \
+            --existing-root ../wfigs-data/static/wfigs/history \
+            "${FORCE_ARGS[@]}"
+
+      - name: Validate rolling historical delivery
+        if: steps.build.outputs.changed == 'true'
+        working-directory: repo
+        run: |
+          python tools/validate_wfigs_history.py \
+            --data-root _wfigs_history_build \
+            --existing-root ../wfigs-data/static/wfigs/history
+
+      - name: Publish rolling history to wfigs-data
+        if: steps.build.outputs.changed == 'true'
+        shell: bash
+        env:
+          CHANGED_YEARS: ${{ steps.build.outputs.changed_years }}
+        run: |
+          set -euo pipefail
+          HISTORY_BUILD='repo/_wfigs_history_build/history'
+          HISTORY_DEST='wfigs-data/static/wfigs/history'
+          mkdir -p "$HISTORY_DEST"
+
+          if [[ -n "${CHANGED_YEARS:-}" ]]; then
+            IFS=',' read -r -a YEARS <<< "$CHANGED_YEARS"
+            for YEAR in "${YEARS[@]}"; do
+              [[ -z "$YEAR" ]] && continue
+              echo "Publishing WFIGS historical year $YEAR"
+              mkdir -p "$HISTORY_DEST/$YEAR"
+              rsync -a --delete "$HISTORY_BUILD/$YEAR/" "$HISTORY_DEST/$YEAR/"
+            done
+          fi
+
+          cp "$HISTORY_BUILD/manifest.json" "$HISTORY_DEST/manifest.json"
+
+          # Enforce the rolling window: remove year directories no longer listed
+          # in the validated history index. This normally matters only after Jan 1.
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('wfigs-data/static/wfigs/history')
+          index = json.loads((root / 'manifest.json').read_text())
+          keep = {str(int(y)) for y in index['available_years']}
+          for path in root.iterdir():
+              if path.is_dir() and path.name.isdigit() and path.name not in keep:
+                  import shutil
+                  print(f'Removing expired rolling-history year {path.name}')
+                  shutil.rmtree(path)
+          PY
+
+          cd wfigs-data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md static/wfigs/history
+          if git diff --cached --quiet; then
+            echo 'Historical WFIGS files are byte-identical; no commit required.'
+            exit 0
+          fi
+          git commit -m "Update WFIGS rolling five-year wildfire history"
+          git push origin HEAD:wfigs-data
+
+      - name: Upload history manifests
+        if: steps.build.outputs.changed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: wfigs-history-manifests
+          path: |
+            repo/_wfigs_history_build/history/manifest.json
+            repo/_wfigs_history_build/history/*/manifest.json
+          if-no-files-found: error
+          retention-days: 14
