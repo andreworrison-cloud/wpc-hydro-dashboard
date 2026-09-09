@@ -2127,8 +2127,11 @@ const WFIGS_HISTORY_MANIFEST_POLL_INTERVAL_MS = 60 * 60 * 1000;
 const WFIGS_CURRENT_SOURCE_EDIT_CAUTION_MINUTES = 45;
 const WFIGS_YTD_MIN_ZOOM = 6;
 const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;
-const WFIGS_HISTORY_CHUNK_CACHE_LIMIT = 36;
+const WFIGS_HISTORY_CHUNK_CACHE_LIMIT_PER_YEAR = 36;
 const WFIGS_HISTORY_ROLLING_YEARS = 5;
+// Bright, fixed recency colors for the five completed years. The newest completed
+// year receives the first color; the palette automatically rolls forward each year.
+const WFIGS_HISTORY_YEAR_COLORS = ['#00e5ff', '#ffea00', '#ff4fd8', '#76ff03', '#9c7cff'];
 
 const wfigsCurrentLayerGroup = L.layerGroup();
 const wfigsYTDLayerGroup = L.layerGroup();
@@ -2136,15 +2139,16 @@ const wfigsHistoryLayerGroup = L.layerGroup();
 let wfigsCurrentManifest = null;
 let wfigsYTDManifest = null;
 let wfigsHistoryIndex = null;
-let wfigsHistoryManifest = null;
+const wfigsHistoryManifests = new Map();
 let wfigsCurrentDataLayer = null;
 let wfigsCurrentManifestVersion = '';
 let wfigsYTDManifestVersion = '';
 let wfigsHistoryIndexVersion = '';
-let wfigsHistoryManifestVersion = '';
+const wfigsHistoryManifestVersions = new Map();
 let wfigsCurrentRefreshInFlight = false;
 let wfigsYTDManifestRefreshInFlight = false;
 let wfigsHistoryRefreshInFlight = false;
+let wfigsHistoryRefreshQueued = false;
 let wfigsCurrentLastError = '';
 let wfigsYTDLastError = '';
 let wfigsHistoryLastError = '';
@@ -2155,9 +2159,11 @@ let wfigsHistoryViewportSerial = 0;
 let wfigsYTDLastDisplayThreshold = null;
 let wfigsHistoryLastDisplayThreshold = null;
 let wfigsYTDVisibleHrefs = new Set();
-let wfigsHistoryVisibleHrefs = new Set();
+const wfigsHistoryVisibleHrefsByYear = new Map();
 let wfigsCurrentActiveFireIds = new Set();
-let wfigsHistorySelectedYear = WFIGS_CURRENT_YEAR - 1;
+// Start with the newest completed year selected, but allow the forecaster to toggle
+// any combination of the rolling five-year archive on at the same time.
+let wfigsHistorySelectedYears = new Set([WFIGS_CURRENT_YEAR - 1]);
 const wfigsYTDChunkCache = new Map();
 const wfigsHistoryChunkCache = new Map();
 
@@ -2196,18 +2202,28 @@ function ensureWFIGSDashboardStyles() {
             background: rgba(37,28,18,0.36);
         }
         .wfigs-history-year-control label {
-            display: block; margin-bottom: 4px; font-size: 9.5px;
+            display: block; margin-bottom: 6px; font-size: 9.5px;
             color: #ffd28a; text-transform: uppercase; font-weight: 700;
             letter-spacing: 0.03em;
         }
-        .wfigs-history-year-control select {
-            width: 100%; box-sizing: border-box; padding: 5px 7px;
-            color: #eef5fb; background: #142331; border: 1px solid #526578;
-            border-radius: 4px; font-size: 11px;
+        .wfigs-history-year-buttons {
+            display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px;
+        }
+        .wfigs-history-year-button {
+            min-width: 0; padding: 5px 3px; border-radius: 4px; cursor: pointer;
+            border: 2px solid var(--wfigs-year-color, #ddd); color: #d5dde5;
+            background: rgba(10,18,27,0.78); font-size: 10px; font-weight: 700;
+            opacity: 0.55; transition: opacity 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        }
+        .wfigs-history-year-button:hover { opacity: 0.9; }
+        .wfigs-history-year-button.is-selected {
+            opacity: 1; color: #fff; background: rgba(255,255,255,0.10);
+            box-shadow: 0 0 0 1px var(--wfigs-year-color, #ddd) inset,
+                        0 0 7px var(--wfigs-year-color, #ddd);
         }
         .wfigs-history-year-note {
-            display: block; margin-top: 5px; color: rgba(235,242,249,0.62);
-            font-size: 9px; line-height: 1.2;
+            display: block; margin-top: 6px; color: rgba(235,242,249,0.68);
+            font-size: 9px; line-height: 1.25;
         }
     `;
     document.head.appendChild(style);
@@ -2251,41 +2267,50 @@ function wfigsLocationText(properties = {}) {
     return parts.length ? parts.join(', ') : 'Location unavailable';
 }
 
-function wfigsBaseStyle(collection) {
+function wfigsHistoryColorForYear(year) {
+    const years = (wfigsHistoryIndex?.available_years || defaultWFIGSHistoryYears()).map(Number);
+    const index = years.indexOf(Number(year));
+    const paletteIndex = index >= 0 ? index : Math.max(0, (WFIGS_CURRENT_YEAR - 1) - Number(year));
+    return WFIGS_HISTORY_YEAR_COLORS[paletteIndex % WFIGS_HISTORY_YEAR_COLORS.length];
+}
+
+function wfigsBaseStyle(collection, archiveYear = null) {
     if (collection === 'current') {
         return {
-            color: '#ff6b45', weight: 2.0, opacity: 0.95,
-            fillColor: '#e34a33', fillOpacity: 0.12
+            color: '#ff5b3a', weight: 2.2, opacity: 0.98,
+            fillColor: '#e33f26', fillOpacity: 0.12, dashArray: null
         };
     }
     if (collection === 'history') {
+        const color = wfigsHistoryColorForYear(archiveYear);
         return {
-            color: '#c8a76a', weight: 1.2, opacity: 0.82,
-            fillColor: '#b08a52', fillOpacity: 0.035, dashArray: '2 5'
+            color, weight: 2.15, opacity: 0.98,
+            fillColor: color, fillOpacity: 0.075, dashArray: null
         };
     }
     return {
-        color: '#e0a24a', weight: 1.35, opacity: 0.88,
-        fillColor: '#c98a3b', fillOpacity: 0.055, dashArray: '5 3'
+        color: '#ffb000', weight: 2.35, opacity: 0.98,
+        fillColor: '#ff8a00', fillOpacity: 0.105, dashArray: null
     };
 }
 
-function wfigsHighlightStyle(collection) {
+function wfigsHighlightStyle(collection, archiveYear = null) {
     if (collection === 'current') {
         return {
-            color: '#fff0b8', weight: 3.1, opacity: 1,
-            fillColor: '#ff7043', fillOpacity: 0.20
+            color: '#fff0b8', weight: 3.2, opacity: 1,
+            fillColor: '#ff7043', fillOpacity: 0.20, dashArray: null
         };
     }
     if (collection === 'history') {
+        const color = wfigsHistoryColorForYear(archiveYear);
         return {
-            color: '#fff0c7', weight: 2.35, opacity: 1,
-            fillColor: '#c8a76a', fillOpacity: 0.12, dashArray: '2 5'
+            color: '#ffffff', weight: 3.0, opacity: 1,
+            fillColor: color, fillOpacity: 0.18, dashArray: null
         };
     }
     return {
-        color: '#ffe2a8', weight: 2.7, opacity: 1,
-        fillColor: '#d89a48', fillOpacity: 0.13, dashArray: null
+        color: '#fff2bd', weight: 3.0, opacity: 1,
+        fillColor: '#ff9800', fillOpacity: 0.18, dashArray: null
     };
 }
 
@@ -2351,11 +2376,11 @@ function bindWFIGSFeatureInteraction(feature, layer, collection, archiveYear = n
     });
     layer.bindPopup(buildWFIGSPopupHTML(properties, collection, archiveYear), {maxWidth: 360});
     layer.on('mouseover', () => {
-        if (typeof layer.setStyle === 'function') layer.setStyle(wfigsHighlightStyle(collection));
+        if (typeof layer.setStyle === 'function') layer.setStyle(wfigsHighlightStyle(collection, archiveYear));
         if (typeof layer.bringToFront === 'function') layer.bringToFront();
     });
     layer.on('mouseout', () => {
-        if (typeof layer.setStyle === 'function') layer.setStyle(wfigsBaseStyle(collection));
+        if (typeof layer.setStyle === 'function') layer.setStyle(wfigsBaseStyle(collection, archiveYear));
     });
 }
 
@@ -2785,27 +2810,60 @@ function wfigsHistoryYearManifestURL(year) {
     return `${WFIGS_HISTORY_ROOT}/${href}`;
 }
 
+function wfigsHistoryAvailableYears() {
+    return (wfigsHistoryIndex?.available_years || defaultWFIGSHistoryYears()).map(Number);
+}
+
+function wfigsHistorySortedSelectedYears() {
+    const selected = wfigsHistorySelectedYears;
+    return wfigsHistoryAvailableYears().filter(year => selected.has(year));
+}
+
+function wfigsHistoryVisibleSet(year) {
+    const numericYear = Number(year);
+    if (!wfigsHistoryVisibleHrefsByYear.has(numericYear)) {
+        wfigsHistoryVisibleHrefsByYear.set(numericYear, new Set());
+    }
+    return wfigsHistoryVisibleHrefsByYear.get(numericYear);
+}
+
 function updateWFIGSHistoryLayerDescription() {
     const description = document.querySelector('.layer-row[data-layer-id="wfigs-history"] .layer-description');
     if (!description) return;
-    description.textContent = `Selected year: ${wfigsHistorySelectedYear}. Choose one completed calendar year from the rolling five-year modern WFIGS archive.`;
+    const selected = wfigsHistorySortedSelectedYears();
+    description.textContent = selected.length
+        ? `Selected years: ${selected.join(', ')}. Toggle any combination of the rolling five completed calendar years.`
+        : 'No historical years selected. Toggle one or more completed calendar years below.';
 }
 
-function updateWFIGSHistoryYearSelector() {
-    const select = document.getElementById('wfigs-history-year-select');
-    if (!select) return;
-    const years = (wfigsHistoryIndex?.available_years || defaultWFIGSHistoryYears()).map(Number);
-    const selected = years.includes(Number(wfigsHistorySelectedYear))
-        ? Number(wfigsHistorySelectedYear)
-        : Number(years[0]);
-    wfigsHistorySelectedYear = selected;
-    select.innerHTML = '';
+function updateWFIGSHistoryYearToggles() {
+    const container = document.getElementById('wfigs-history-year-buttons');
+    if (!container) return;
+    const years = wfigsHistoryAvailableYears();
+    const allowed = new Set(years);
+    const prior = [...wfigsHistorySelectedYears];
+    wfigsHistorySelectedYears = new Set(prior.filter(year => allowed.has(Number(year))).map(Number));
+    // During an annual rollover, preserve a useful default if the old selected set
+    // consisted entirely of the year that just fell out of the five-year window.
+    if (prior.length && !wfigsHistorySelectedYears.size && wfigsHistoryIndex?.default_year) {
+        wfigsHistorySelectedYears.add(Number(wfigsHistoryIndex.default_year));
+    }
+
+    container.innerHTML = '';
     years.forEach(year => {
-        const option = document.createElement('option');
-        option.value = String(year);
-        option.textContent = String(year);
-        option.selected = year === selected;
-        select.append(option);
+        const color = wfigsHistoryColorForYear(year);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'wfigs-history-year-button';
+        button.dataset.year = String(year);
+        button.textContent = String(year);
+        button.style.setProperty('--wfigs-year-color', color);
+        const selected = wfigsHistorySelectedYears.has(year);
+        button.classList.toggle('is-selected', selected);
+        button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        button.setAttribute('aria-label', `${selected ? 'Hide' : 'Show'} ${year} WFIGS wildfire perimeters`);
+        button.addEventListener('click', () => toggleWFIGSHistoryYear(year));
+        container.append(button);
     });
     updateWFIGSHistoryLayerDescription();
 }
@@ -2814,31 +2872,48 @@ function renderWFIGSHistoryYearControl(parent) {
     const wrapper = document.createElement('div');
     wrapper.className = 'wfigs-history-year-control';
     wrapper.innerHTML = `
-        <label for="wfigs-history-year-select">Select historical fire year</label>
-        <select id="wfigs-history-year-select" aria-label="Select historical WFIGS wildfire year"></select>
-        <span class="wfigs-history-year-note">One completed calendar year at a time; rolling five-year operational window.</span>
+        <label>Toggle historical fire years</label>
+        <div id="wfigs-history-year-buttons" class="wfigs-history-year-buttons" role="group" aria-label="Toggle historical WFIGS wildfire years"></div>
+        <span class="wfigs-history-year-note">Multiple years may be displayed together. The newest completed year starts selected; toggle any combination for regional burn-scar analysis.</span>
     `;
     parent.append(wrapper);
-    updateWFIGSHistoryYearSelector();
-    wrapper.querySelector('#wfigs-history-year-select').addEventListener('change', event => {
-        const year = Number(event.target.value);
-        if (!Number.isInteger(year) || year === wfigsHistorySelectedYear) return;
-        wfigsHistorySelectedYear = year;
-        updateWFIGSHistoryLayerDescription();
-        wfigsHistoryManifest = null;
-        wfigsHistoryManifestVersion = '';
-        wfigsHistoryLayerGroup.clearLayers();
-        wfigsHistoryChunkCache.clear();
-        wfigsHistoryVisibleHrefs.clear();
-        wfigsHistoryLastDisplayThreshold = null;
-        wfigsHistoryLastError = '';
-        updateWFIGSHistoryTimeBox();
-        updateLegends();
-        if (map.hasLayer(wfigsHistoryLayerGroup)) refreshWFIGSHistory({forceIndex: false, forceYear: true});
-    });
+    updateWFIGSHistoryYearToggles();
 }
 
-function buildWFIGSHistoryChunkLayer(geojson) {
+function removeWFIGSHistoryYearLayers(year, {clearCache = false} = {}) {
+    const numericYear = Number(year);
+    ++wfigsHistoryViewportSerial;
+    for (const [key, cached] of [...wfigsHistoryChunkCache.entries()]) {
+        if (!key.startsWith(`${numericYear}/`)) continue;
+        if (cached?.layer && wfigsHistoryLayerGroup.hasLayer(cached.layer)) {
+            wfigsHistoryLayerGroup.removeLayer(cached.layer);
+        }
+        if (clearCache) wfigsHistoryChunkCache.delete(key);
+    }
+    wfigsHistoryVisibleSet(numericYear).clear();
+    if (clearCache) wfigsHistoryVisibleHrefsByYear.delete(numericYear);
+}
+
+function toggleWFIGSHistoryYear(year) {
+    const numericYear = Number(year);
+    if (!Number.isInteger(numericYear) || !wfigsHistoryAvailableYears().includes(numericYear)) return;
+    if (wfigsHistorySelectedYears.has(numericYear)) {
+        wfigsHistorySelectedYears.delete(numericYear);
+        removeWFIGSHistoryYearLayers(numericYear);
+    } else {
+        wfigsHistorySelectedYears.add(numericYear);
+    }
+    updateWFIGSHistoryYearToggles();
+    updateWFIGSHistoryTimeBox();
+    updateLegends();
+    if (map.hasLayer(wfigsHistoryLayerGroup) && wfigsHistorySelectedYears.has(numericYear)) {
+        refreshWFIGSHistory({forceIndex: !wfigsHistoryIndex, forceYears: [numericYear]});
+    } else if (map.hasLayer(wfigsHistoryLayerGroup)) {
+        updateWFIGSHistoryViewport();
+    }
+}
+
+function buildWFIGSHistoryChunkLayer(geojson, year) {
     const threshold = wfigsYTDMinimumMappedAcresForZoom();
     const suppressCurrentDuplicates = map.hasLayer(wfigsCurrentLayerGroup);
     return L.geoJSON(geojson, {
@@ -2850,82 +2925,108 @@ function buildWFIGSHistoryChunkLayer(geojson) {
             if (threshold <= 0) return true;
             return Number.isFinite(acres) && acres >= threshold;
         },
-        style: () => wfigsBaseStyle('history'),
-        onEachFeature: (feature, layer) => bindWFIGSFeatureInteraction(feature, layer, 'history', wfigsHistorySelectedYear)
+        style: () => wfigsBaseStyle('history', year),
+        onEachFeature: (feature, layer) => bindWFIGSFeatureInteraction(feature, layer, 'history', year)
     });
 }
 
-async function loadWFIGSHistoryChunk(chunkMeta) {
-    const key = `${wfigsHistorySelectedYear}/${chunkMeta.href}`;
+async function loadWFIGSHistoryChunk(year, chunkMeta) {
+    const numericYear = Number(year);
+    const key = `${numericYear}/${chunkMeta.href}`;
     const cached = wfigsHistoryChunkCache.get(key);
     if (cached) {
         cached.lastUsed = Date.now();
         return cached;
     }
-    const url = `${WFIGS_HISTORY_ROOT}/${wfigsHistorySelectedYear}/${chunkMeta.href}?v=${encodeURIComponent(wfigsHistoryManifest?.source_year_signature || '')}`;
+    const manifest = wfigsHistoryManifests.get(numericYear);
+    if (!manifest) throw new Error(`WFIGS ${numericYear} historical manifest is not loaded`);
+    const url = `${WFIGS_HISTORY_ROOT}/${numericYear}/${chunkMeta.href}?v=${encodeURIComponent(manifest.source_year_signature || manifest.generated_utc || '')}`;
     const geojson = validateWFIGSFeatureCollection(
-        await fetchWFIGSJSON(url), chunkMeta.feature_count, `WFIGS history ${wfigsHistorySelectedYear} ${chunkMeta.id}`
+        await fetchWFIGSJSON(url), chunkMeta.feature_count, `WFIGS history ${numericYear} ${chunkMeta.id}`
     );
-    const entry = {geojson, layer: buildWFIGSHistoryChunkLayer(geojson), lastUsed: Date.now(), key};
+    const entry = {year: numericYear, geojson, layer: buildWFIGSHistoryChunkLayer(geojson, numericYear), lastUsed: Date.now(), key};
     wfigsHistoryChunkCache.set(key, entry);
     return entry;
 }
 
 function rebuildVisibleWFIGSHistoryChunkLayers() {
     if (!map.hasLayer(wfigsHistoryLayerGroup)) return;
-    [...wfigsHistoryVisibleHrefs].forEach(href => {
-        const key = `${wfigsHistorySelectedYear}/${href}`;
-        const cached = wfigsHistoryChunkCache.get(key);
-        if (!cached) return;
-        if (wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
-        cached.layer = buildWFIGSHistoryChunkLayer(cached.geojson);
-        wfigsHistoryLayerGroup.addLayer(cached.layer);
+    wfigsHistorySortedSelectedYears().forEach(year => {
+        const visible = wfigsHistoryVisibleSet(year);
+        [...visible].forEach(href => {
+            const key = `${year}/${href}`;
+            const cached = wfigsHistoryChunkCache.get(key);
+            if (!cached) return;
+            if (wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
+            cached.layer = buildWFIGSHistoryChunkLayer(cached.geojson, year);
+            wfigsHistoryLayerGroup.addLayer(cached.layer);
+        });
     });
     wfigsHistoryLastDisplayThreshold = wfigsYTDMinimumMappedAcresForZoom();
     updateWFIGSHistoryTimeBox();
 }
 
-function pruneWFIGSHistoryChunkCache() {
-    if (wfigsHistoryChunkCache.size <= WFIGS_HISTORY_CHUNK_CACHE_LIMIT) return;
-    const visibleKeys = new Set([...wfigsHistoryVisibleHrefs].map(href => `${wfigsHistorySelectedYear}/${href}`));
-    const removable = [...wfigsHistoryChunkCache.entries()]
+function pruneWFIGSHistoryChunkCache(year) {
+    const numericYear = Number(year);
+    const entries = [...wfigsHistoryChunkCache.entries()].filter(([key]) => key.startsWith(`${numericYear}/`));
+    if (entries.length <= WFIGS_HISTORY_CHUNK_CACHE_LIMIT_PER_YEAR) return;
+    const visibleKeys = new Set([...wfigsHistoryVisibleSet(numericYear)].map(href => `${numericYear}/${href}`));
+    const removable = entries
         .filter(([key]) => !visibleKeys.has(key))
         .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    while (wfigsHistoryChunkCache.size > WFIGS_HISTORY_CHUNK_CACHE_LIMIT && removable.length) {
+    let count = entries.length;
+    while (count > WFIGS_HISTORY_CHUNK_CACHE_LIMIT_PER_YEAR && removable.length) {
         const [key, cached] = removable.shift();
         if (wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
         wfigsHistoryChunkCache.delete(key);
+        count -= 1;
     }
 }
 
 async function updateWFIGSHistoryViewport() {
-    if (!map.hasLayer(wfigsHistoryLayerGroup) || !wfigsHistoryManifest) return;
+    if (!map.hasLayer(wfigsHistoryLayerGroup)) return;
+    const selectedYears = wfigsHistorySortedSelectedYears();
     const serial = ++wfigsHistoryViewportSerial;
     const zoom = map.getZoom();
     const threshold = wfigsYTDMinimumMappedAcresForZoom(zoom);
+
+    if (!selectedYears.length) {
+        for (const year of wfigsHistoryAvailableYears()) removeWFIGSHistoryYearLayers(year);
+        wfigsHistoryLastDisplayThreshold = threshold;
+        wfigsHistoryLastError = '';
+        updateWFIGSHistoryTimeBox();
+        return;
+    }
+
     if (zoom < WFIGS_YTD_MIN_ZOOM) {
-        wfigsHistoryLayerGroup.clearLayers();
-        wfigsHistoryVisibleHrefs.clear();
+        selectedYears.forEach(year => removeWFIGSHistoryYearLayers(year));
         wfigsHistoryLastDisplayThreshold = threshold;
         updateWFIGSHistoryTimeBox();
         return;
     }
 
     const viewport = wfigsMapBBox();
-    const desiredChunks = wfigsHistoryManifest.chunks.filter(chunk => wfigsBBoxesIntersect(chunk.bbox, viewport));
-    const desiredHrefs = new Set(desiredChunks.map(chunk => chunk.href));
-    [...wfigsHistoryVisibleHrefs].forEach(href => {
-        if (desiredHrefs.has(href)) return;
-        const cached = wfigsHistoryChunkCache.get(`${wfigsHistorySelectedYear}/${href}`);
-        if (cached && wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
-        wfigsHistoryVisibleHrefs.delete(href);
-    });
-
     const thresholdChanged = threshold !== wfigsHistoryLastDisplayThreshold;
     if (thresholdChanged) rebuildVisibleWFIGSHistoryChunkLayers();
 
+    const loadRequests = [];
+    selectedYears.forEach(year => {
+        const manifest = wfigsHistoryManifests.get(year);
+        if (!manifest) return;
+        const desiredChunks = manifest.chunks.filter(chunk => wfigsBBoxesIntersect(chunk.bbox, viewport));
+        const desiredHrefs = new Set(desiredChunks.map(chunk => chunk.href));
+        const visible = wfigsHistoryVisibleSet(year);
+        [...visible].forEach(href => {
+            if (desiredHrefs.has(href)) return;
+            const cached = wfigsHistoryChunkCache.get(`${year}/${href}`);
+            if (cached && wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.removeLayer(cached.layer);
+            visible.delete(href);
+        });
+        desiredChunks.forEach(chunk => loadRequests.push({year, chunk}));
+    });
+
     const results = await Promise.allSettled(
-        desiredChunks.map(async chunk => ({chunk, cached: await loadWFIGSHistoryChunk(chunk)}))
+        loadRequests.map(async request => ({...request, cached: await loadWFIGSHistoryChunk(request.year, request.chunk)}))
     );
     if (serial !== wfigsHistoryViewportSerial || !map.hasLayer(wfigsHistoryLayerGroup)) return;
 
@@ -2936,14 +3037,15 @@ async function updateWFIGSHistoryViewport() {
             console.warn('WFIGS historical chunk load failed:', result.reason);
             return;
         }
-        const {chunk, cached} = result.value;
+        const {year, chunk, cached} = result.value;
+        if (!wfigsHistorySelectedYears.has(year)) return;
         if (!wfigsHistoryLayerGroup.hasLayer(cached.layer)) wfigsHistoryLayerGroup.addLayer(cached.layer);
         cached.lastUsed = Date.now();
-        wfigsHistoryVisibleHrefs.add(chunk.href);
+        wfigsHistoryVisibleSet(year).add(chunk.href);
     });
     wfigsHistoryLastDisplayThreshold = threshold;
     wfigsHistoryLastError = failures ? `${failures} viewport chunk${failures === 1 ? '' : 's'} failed to load` : '';
-    pruneWFIGSHistoryChunkCache();
+    selectedYears.forEach(pruneWFIGSHistoryChunkCache);
     updateWFIGSHistoryTimeBox();
 }
 
@@ -2956,37 +3058,47 @@ function scheduleWFIGSHistoryViewportUpdate() {
     }, 130);
 }
 
-async function refreshWFIGSHistory({forceIndex = false, forceYear = false} = {}) {
-    if (wfigsHistoryRefreshInFlight) return;
+async function refreshWFIGSHistory({forceIndex = false, forceYears = []} = {}) {
+    if (wfigsHistoryRefreshInFlight) {
+        wfigsHistoryRefreshQueued = true;
+        return;
+    }
     if (!map.hasLayer(wfigsHistoryLayerGroup) && !forceIndex) return;
     wfigsHistoryRefreshInFlight = true;
     try {
         const index = validateWFIGSHistoryIndex(await fetchWFIGSJSON(WFIGS_HISTORY_INDEX_URL));
         const indexVersion = computeWFIGSHistoryIndexVersion(index);
         const indexChanged = forceIndex || !wfigsHistoryIndex || indexVersion !== wfigsHistoryIndexVersion;
+        const priorSelected = [...wfigsHistorySelectedYears];
         wfigsHistoryIndex = index;
         wfigsHistoryIndexVersion = indexVersion;
-        if (!index.available_years.map(Number).includes(Number(wfigsHistorySelectedYear))) {
-            wfigsHistorySelectedYear = Number(index.default_year);
-            forceYear = true;
+        const available = new Set(index.available_years.map(Number));
+        wfigsHistorySelectedYears = new Set(priorSelected.filter(year => available.has(Number(year))).map(Number));
+        if (priorSelected.length && !wfigsHistorySelectedYears.size) {
+            wfigsHistorySelectedYears.add(Number(index.default_year));
         }
-        updateWFIGSHistoryYearSelector();
+        updateWFIGSHistoryYearToggles();
 
-        const yearManifest = validateWFIGSHistoryYearManifest(
-            await fetchWFIGSJSON(`${wfigsHistoryYearManifestURL(wfigsHistorySelectedYear)}?v=${encodeURIComponent(indexVersion)}`),
-            wfigsHistorySelectedYear
-        );
-        const yearVersion = String(yearManifest.source_year_signature || yearManifest.generated_utc || '');
-        const yearChanged = forceYear || !wfigsHistoryManifest || yearVersion !== wfigsHistoryManifestVersion || indexChanged;
-        if (yearChanged) {
-            wfigsHistoryLayerGroup.clearLayers();
-            wfigsHistoryChunkCache.clear();
-            wfigsHistoryVisibleHrefs.clear();
-            wfigsHistoryLastDisplayThreshold = null;
+        const forced = new Set((forceYears || []).map(Number));
+        const manifestErrors = [];
+        for (const year of wfigsHistorySortedSelectedYears()) {
+            try {
+                const yearManifest = validateWFIGSHistoryYearManifest(
+                    await fetchWFIGSJSON(`${wfigsHistoryYearManifestURL(year)}?v=${encodeURIComponent(indexVersion)}`),
+                    year
+                );
+                const yearVersion = String(yearManifest.source_year_signature || yearManifest.generated_utc || '');
+                const previousVersion = wfigsHistoryManifestVersions.get(year) || '';
+                const yearChanged = forced.has(year) || !wfigsHistoryManifests.has(year) || yearVersion !== previousVersion || indexChanged;
+                if (yearChanged) removeWFIGSHistoryYearLayers(year, {clearCache: true});
+                wfigsHistoryManifests.set(year, yearManifest);
+                wfigsHistoryManifestVersions.set(year, yearVersion);
+            } catch (error) {
+                manifestErrors.push(`${year}: ${error?.message || String(error)}`);
+                console.warn(`WFIGS ${year} historical manifest refresh failed; retaining loaded data:`, error);
+            }
         }
-        wfigsHistoryManifest = yearManifest;
-        wfigsHistoryManifestVersion = yearVersion;
-        wfigsHistoryLastError = '';
+        wfigsHistoryLastError = manifestErrors.join(' | ');
         await updateWFIGSHistoryViewport();
     } catch (error) {
         wfigsHistoryLastError = error?.message || String(error);
@@ -2994,31 +3106,59 @@ async function refreshWFIGSHistory({forceIndex = false, forceYear = false} = {})
     } finally {
         wfigsHistoryRefreshInFlight = false;
         updateWFIGSHistoryTimeBox();
+        if (wfigsHistoryRefreshQueued) {
+            wfigsHistoryRefreshQueued = false;
+            window.setTimeout(() => refreshWFIGSHistory(), 0);
+        }
     }
 }
 
 function formatWFIGSHistoryTimeBox() {
-    if (!wfigsHistoryManifest) {
+    const selectedYears = wfigsHistorySortedSelectedYears();
+    if (!selectedYears.length) {
         return `
             <strong>NIFC/WFIGS Historical Wildfire Perimeters</strong><br>
-            <span style="color:#ffeb3b;">${wfigsHistoryLastError ? 'Historical archive unavailable' : `Loading ${wfigsHistorySelectedYear} wildfire archive...`}</span>
+            <span style="color:#ffeb3b;">No historical years selected — use the year buttons in the sidebar.</span>
         `;
     }
+
+    const loadedYears = selectedYears.filter(year => wfigsHistoryManifests.has(year));
+    if (!loadedYears.length) {
+        return `
+            <strong>NIFC/WFIGS Historical Wildfire Perimeters</strong><br>
+            <span style="color:#ffeb3b;">${wfigsHistoryLastError ? 'Historical archive unavailable' : `Loading ${selectedYears.join(', ')} wildfire archive...`}</span>
+        `;
+    }
+
     let displayedFeatures = 0;
-    wfigsHistoryVisibleHrefs.forEach(href => {
-        const cached = wfigsHistoryChunkCache.get(`${wfigsHistorySelectedYear}/${href}`);
-        if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
+    let visibleChunks = 0;
+    let publishedFires = 0;
+    let archiveChunks = 0;
+    loadedYears.forEach(year => {
+        const manifest = wfigsHistoryManifests.get(year);
+        publishedFires += Number(manifest?.published_fire_count || 0);
+        archiveChunks += Number(manifest?.chunk_count || 0);
+        const visible = wfigsHistoryVisibleSet(year);
+        visibleChunks += visible.size;
+        visible.forEach(href => {
+            const cached = wfigsHistoryChunkCache.get(`${year}/${href}`);
+            if (cached?.layer?.getLayers) displayedFeatures += cached.layer.getLayers().length;
+        });
     });
+    const yearBadges = selectedYears.map(year => {
+        const color = wfigsHistoryColorForYear(year);
+        return `<span style="display:inline-block;margin-right:7px;font-weight:700;color:${color};">■ ${year}</span>`;
+    }).join('');
     const warning = wfigsHistoryLastError
-        ? `<br><span style="color:#ffb74d;">${escapeWFIGSHTML(wfigsHistoryLastError)}; loaded data retained.</span>`
+        ? `<br><span style="color:#ffb74d;">${escapeWFIGSHTML(wfigsHistoryLastError)}; loaded data retained where available.</span>`
         : '';
     return `
-        <strong>NIFC/WFIGS Historical Wildfire Perimeters — ${wfigsHistorySelectedYear}</strong><br>
-        <span style="color:#ffeb3b;">Archive build: ${escapeWFIGSHTML(formatWFIGSDateTime(wfigsHistoryManifest.generated_utc))}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">${Number(wfigsHistoryManifest.published_fire_count).toLocaleString('en-US')} mapped fires in ${Number(wfigsHistoryManifest.chunk_count).toLocaleString('en-US')} regional chunks</span><br>
+        <strong>NIFC/WFIGS Historical Wildfire Perimeters</strong><br>
+        <span style="font-size:0.84em;">${yearBadges}</span><br>
+        <span style="font-size:0.82em;color:#d0d0d0;">Loaded archive: ${publishedFires.toLocaleString('en-US')} mapped fires in ${archiveChunks.toLocaleString('en-US')} regional chunks</span><br>
         <span style="font-size:0.82em;color:#80cbc4;">${escapeWFIGSHTML(wfigsYTDThresholdText())}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">Viewport: ${wfigsHistoryVisibleHrefs.size} chunks &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span><br>
-        <span style="font-size:0.78em;color:#aaa;">Year = Fire Discovery Date (UTC) &bull; modern WFIGS archive</span>${warning}
+        <span style="font-size:0.82em;color:#d0d0d0;">Viewport: ${visibleChunks.toLocaleString('en-US')} year-chunks &bull; ${displayedFeatures.toLocaleString('en-US')} displayed perimeters</span><br>
+        <span style="font-size:0.78em;color:#aaa;">Year = Fire Discovery Date (UTC) &bull; modern WFIGS archive &bull; multiple years can be overlaid</span>${warning}
     `;
 }
 
@@ -3035,16 +3175,26 @@ function updateWFIGSHistoryTimeBox() {
 }
 
 function buildWFIGSLegendHTML() {
+    const selectedYears = wfigsHistorySortedSelectedYears();
+    const historicalLegend = selectedYears.length
+        ? selectedYears.map(year => {
+            const color = wfigsHistoryColorForYear(year);
+            return `
+                <span style="display:block;height:12px;border:2px solid ${color};background:${color}18;"></span>
+                <span>${year} historical wildfire perimeters</span>`;
+        }).join('')
+        : `
+            <span style="display:block;height:12px;border:2px solid #777;background:rgba(0,0,0,0.03);"></span>
+            <span>Historical: no years selected</span>`;
     return `
         <div style="box-sizing:border-box;width:100%;background:white;padding:9px;border-radius:5px;color:black;font-family:sans-serif;">
             <strong style="display:block;font-size:13px;line-height:1.2;text-align:center;">Wildfire / Burn Scar Context</strong>
             <div style="display:grid;grid-template-columns:25px minmax(0,1fr);gap:6px 7px;align-items:center;margin-top:7px;font-size:10px;">
-                <span style="display:block;height:12px;border:2px solid #ff6b45;background:rgba(227,74,51,0.12);"></span>
+                <span style="display:block;height:12px;border:2px solid #ff5b3a;background:rgba(227,63,38,0.12);"></span>
                 <span>Current: actively maintained WFIGS footprint</span>
-                <span style="display:block;height:12px;border:2px dashed #e0a24a;background:rgba(201,138,59,0.06);"></span>
+                <span style="display:block;height:12px;border:2px solid #ffb000;background:rgba(255,138,0,0.10);"></span>
                 <span>${WFIGS_CURRENT_YEAR} YTD: all mapped current-year footprints</span>
-                <span style="display:block;height:12px;border:2px dotted #c8a76a;background:rgba(176,138,82,0.04);"></span>
-                <span>Historical: selected completed year (${wfigsHistorySelectedYear})</span>
+                ${historicalLegend}
             </div>
             <span style="display:block;margin-top:7px;font-size:9px;line-height:1.25;text-align:center;color:#555;">Mapped fire extent only — not soil-burn severity. Archive acreage thresholds are cartographic only; smaller burns appear as you zoom in.</span>
         </div>
@@ -3069,7 +3219,7 @@ wfigsYTDLayerGroup.on('add', () => {
 wfigsYTDLayerGroup.on('remove', updateWFIGSYTDTimeBox);
 wfigsHistoryLayerGroup.on('add', () => {
     updateWFIGSHistoryTimeBox();
-    refreshWFIGSHistory({forceIndex: !wfigsHistoryIndex, forceYear: !wfigsHistoryManifest});
+    refreshWFIGSHistory({forceIndex: !wfigsHistoryIndex});
 });
 wfigsHistoryLayerGroup.on('remove', updateWFIGSHistoryTimeBox);
 map.on('moveend zoomend', scheduleWFIGSYTDViewportUpdate);
@@ -6308,7 +6458,7 @@ const dashboardSections = [
         layers: [
             {id: 'wfigs-current', label: WFIGS_CURRENT_LAYER_NAME, description: 'Current/maintained wildfire footprints; incidents can fall off as they close or become stale.', layer: wfigsCurrentLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS wildfire fire perimeter burn scar post-fire debris flow current active near-real-time maintained fall-off'},
             {id: 'wfigs-ytd', label: WFIGS_YTD_LAYER_NAME, description: `All mapped ${WFIGS_CURRENT_YEAR} wildfire footprints; no Current-service fall-off.`, layer: wfigsYTDLayerGroup, kind: 'vector', keywords: `NIFC WFIGS wildfire fire perimeter burn scar post-fire debris flow recent historical year to date YTD ${WFIGS_CURRENT_YEAR} no fall-off`},
-            {id: 'wfigs-history', label: WFIGS_HISTORY_LAYER_NAME, description: 'Choose one completed calendar year from the rolling five-year modern WFIGS archive.', layer: wfigsHistoryLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS historical wildfire perimeter archive previous five years year selector 2021 2022 2023 2024 2025'}
+            {id: 'wfigs-history', label: WFIGS_HISTORY_LAYER_NAME, description: 'Toggle any combination of the rolling five completed calendar years for regional burn-scar analysis.', layer: wfigsHistoryLayerGroup, kind: 'vector', keywords: 'NIFC WFIGS historical wildfire perimeter archive previous five years multiyear multi-year toggle buttons 2021 2022 2023 2024 2025'}
         ]
     },
     {
@@ -6891,10 +7041,9 @@ function renderDashboardSidebar() {
             } else {
                 (sectionConfig.layers || []).forEach(entry => {
                     body.append(renderLayerRow(entry));
-                    // Keep the historical-year selector visually attached to the
-                    // historical layer row. In Phase 4.0 it was appended at the
-                    // bottom of the wildfire section, which made the control easy
-                    // to miss in a long/scrolling sidebar.
+                    // Keep the multi-year historical toggle buttons visually attached to the
+                    // historical layer row so forecasters can overlay any combination
+                    // of the rolling five completed fire years.
                     if (sectionConfig.id === 'wildfire-burn-scar' && entry.id === 'wfigs-history') {
                         renderWFIGSHistoryYearControl(body);
                     }
