@@ -22,7 +22,7 @@ errors = []
 # Current registry total: 124 dashboard data/config entries + 15 basemap entries.
 # WPC Dark Reference is additive and becomes the operational default; Black Canvas
 # and every previously registered layer/basemap remain present.
-EXPECTED_LAYER_COUNT = 139
+EXPECTED_LAYER_COUNT = 140
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -77,7 +77,7 @@ required_labels = [
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
     "NASA SPoRT-LIS VSM Percentile (0–100 cm)",
     "NIFC/WFIGS Current Wildfire Perimeters",
-    "NIFC/WFIGS 2026 Wildfire Perimeters",
+    "NIFC/WFIGS Historical Wildfire Perimeters",
     "Precipitable Water (PWAT)",
     "3-Hour PWAT Change",
     "+3h Forecast:</b> PWAT",
@@ -719,20 +719,35 @@ for forbidden in [
     if forbidden in app:
         errors.append(f"Legacy broken TIGERweb WMS reference path is still present: {forbidden}")
 
-# Phase WFIGS-3 dashboard integration. The browser must consume only the
-# validated rolling data branch, preserve Current/YTD as distinct vector layers,
-# lazy-load the YTD archive by viewport/zoom, and expose hover/click metadata.
+# Phase WFIGS-4 dashboard integration. The browser consumes only validated
+# wfigs-data products. Current, current-year YTD, and a single selected historical
+# year remain separate, opt-in vector layers. YTD/history are lazy-loaded by
+# viewport and cartographic zoom. The historical archive exposes the previous five
+# completed calendar years and never queries the live ArcGIS service from browsers.
 required_wfigs_fragments = [
+    "const WFIGS_CURRENT_YEAR = new Date().getUTCFullYear();",
     "const WFIGS_CURRENT_LAYER_NAME = 'NIFC/WFIGS Current Wildfire Perimeters';",
-    "const WFIGS_YTD_LAYER_NAME = 'NIFC/WFIGS 2026 Wildfire Perimeters';",
+    "const WFIGS_YTD_LAYER_NAME = `NIFC/WFIGS ${WFIGS_CURRENT_YEAR} YTD Wildfire Perimeters`;",
+    "const WFIGS_HISTORY_LAYER_NAME = 'NIFC/WFIGS Historical Wildfire Perimeters';",
     "const WFIGS_DATA_ROOT = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/wfigs-data/static/wfigs';",
     "const WFIGS_CURRENT_MANIFEST_URL = `${WFIGS_DATA_ROOT}/current/manifest.json`;",
     "const WFIGS_YTD_MANIFEST_URL = `${WFIGS_DATA_ROOT}/ytd/manifest.json`;",
+    "const WFIGS_HISTORY_ROOT = `${WFIGS_DATA_ROOT}/history`;",
+    "const WFIGS_HISTORY_INDEX_URL = `${WFIGS_HISTORY_ROOT}/manifest.json`;",
     "const WFIGS_YTD_MIN_ZOOM = 6;",
     "const WFIGS_YTD_CHUNK_CACHE_LIMIT = 36;",
+    "const WFIGS_HISTORY_CHUNK_CACHE_LIMIT = 36;",
+    "const WFIGS_HISTORY_ROLLING_YEARS = 5;",
     "function refreshWFIGSCurrent",
     "function refreshWFIGSYTDManifest",
     "function updateWFIGSYTDViewport",
+    "function refreshWFIGSHistory",
+    "function updateWFIGSHistoryViewport",
+    "function renderWFIGSHistoryYearControl",
+    "wfigs-history-year-select",
+    "rolling five-year operational window",
+    "Current/maintained wildfire footprints; incidents can fall off as they close or become stale.",
+    "All mapped ${WFIGS_CURRENT_YEAR} wildfire footprints; no Current-service fall-off.",
     "function buildWFIGSTooltipHTML",
     "function buildWFIGSPopupHTML",
     "bindTooltip",
@@ -741,16 +756,19 @@ required_wfigs_fragments = [
     "wfigsCurrentActiveFireIds",
     "wfigsBBoxesIntersect",
     "map.on('moveend zoomend', scheduleWFIGSYTDViewportUpdate);",
+    "map.on('moveend zoomend', scheduleWFIGSHistoryViewportUpdate);",
     "WFIGS depicts mapped wildfire extent. It does not indicate soil-burn severity",
     "wfigs-current-time-box",
     "wfigs-ytd-time-box",
+    "wfigs-history-time-box",
+    "Year = Fire Discovery Date (UTC)",
     "buildWFIGSLegendHTML",
 ]
 for fragment in required_wfigs_fragments:
     if fragment not in app:
-        errors.append(f"Missing WFIGS Phase-3 frontend contract: {fragment}")
+        errors.append(f"Missing WFIGS Phase-4 frontend contract: {fragment}")
 
-# Current must precede YTD within its dedicated hydrologic-context section.
+# Current must precede YTD, which must precede the single-year historical selector.
 wfigs_start = app.find("title: 'Wildfire / Burn Scar Context'")
 rap_start = app.find("title: 'RAP Mesoanalysis Data'")
 if wfigs_start < 0 or rap_start <= wfigs_start:
@@ -758,14 +776,15 @@ if wfigs_start < 0 or rap_start <= wfigs_start:
 else:
     wfigs_block = app[wfigs_start:rap_start]
     current_pos = wfigs_block.find("{id: 'wfigs-current'")
-    ytd_pos = wfigs_block.find("{id: 'wfigs-ytd-2026'")
-    if not (current_pos >= 0 and ytd_pos > current_pos):
-        errors.append("WFIGS Current/YTD layers are missing or out of order.")
+    ytd_pos = wfigs_block.find("{id: 'wfigs-ytd'")
+    history_pos = wfigs_block.find("{id: 'wfigs-history'")
+    if not (current_pos >= 0 and ytd_pos > current_pos and history_pos > ytd_pos):
+        errors.append("WFIGS Current/YTD/Historical layers are missing or out of order.")
     if "defaultActive: true" in wfigs_block:
         errors.append("WFIGS perimeter layers must remain opt-in at dashboard startup.")
 
-# YTD acreage thresholds are cartographic only: the underlying archive remains
-# complete and progressively exposes smaller burns as the forecaster zooms in.
+# Archive acreage thresholds are cartographic only: the underlying data remain
+# complete and progressively expose smaller burns as the forecaster zooms in.
 for threshold_fragment in [
     "if (zoom === 6) return 500;",
     "if (zoom === 7) return 100;",
@@ -780,8 +799,8 @@ for threshold_fragment in [
 if "services3.arcgis.com/T4QMspbfLg3qTGWY" in app:
     errors.append("Frontend contains a direct NIFC/WFIGS ArcGIS query; use wfigs-data backend products instead.")
 
-if "wfigs-dashboard-v1" not in index:
-    errors.append("WFIGS Phase-3 frontend cache-busting token is missing from index.html.")
+if "wfigs-dashboard-v2-history-v1" not in index:
+    errors.append("WFIGS Phase-4 frontend cache-busting token is missing from index.html.")
 
 # WPC Dark Reference must be the first basemap entry so startup and Restore
 # Defaults resolve to it without special-case menu logic.
@@ -870,7 +889,7 @@ if errors:
 print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, looping MRMS RALA/opacity/freshness, MRMS FLASH order, "
-    "antecedent/WFIGS order, MRMS/NLDAS/GLM mappings, compact legends, "
+    "antecedent/WFIGS history order, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
