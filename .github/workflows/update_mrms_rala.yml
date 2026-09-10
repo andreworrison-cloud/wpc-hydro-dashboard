@@ -13,7 +13,7 @@ on:
           - ncep
           - nodd
       rebuild_full_loop:
-        description: 'Ignore the rolling cache and rebuild the complete two-hour loop'
+        description: 'Ignore the rolling cache and rebuild the complete six-hour / 10-minute archive'
         required: false
         default: false
         type: boolean
@@ -105,7 +105,10 @@ jobs:
             echo 'No prior MRMS RALA data branch exists; the first run will build the complete loop.'
           fi
 
-      - name: Build rolling two-hour NOAA MRMS RALA loop
+      - name: Run MRMS 10-minute archive selection self-test
+        run: python fetch_mrms_rala_loop.py --self-test
+
+      - name: Build rolling six-hour NOAA MRMS RALA archive
         env:
           SOURCE_MODE: ${{ inputs.source_mode }}
         shell: bash
@@ -116,13 +119,21 @@ jobs:
             --output-dir "$MRMS_RALA_OUTPUT_DIR" \
             --cache-dir "$MRMS_RALA_CACHE_DIR" \
             --source-mode "${SOURCE_MODE:-auto}" \
-            --loop-minutes 120 \
-            --max-frames 75 \
+            --loop-minutes 360 \
+            --cadence-minutes 10 \
+            --slot-tolerance-minutes 4.5 \
             --freshness-minutes 20 \
             --output-width 7000
 
       - name: Validate rolling MRMS RALA package
-        run: python tools/validate_mrms_rala_loop.py "$MRMS_RALA_OUTPUT_DIR" --minimum-frames 45
+        run: >-
+          python tools/validate_mrms_rala_loop.py "$MRMS_RALA_OUTPUT_DIR"
+          --minimum-frames 35
+          --minimum-span-minutes 350
+          --expected-cadence-minutes 10
+          --max-gap-minutes 20
+          --default-window-minutes 120
+          --minimum-default-window-frames 12
 
       - name: Publish current loop to history-free data branch
         shell: bash
