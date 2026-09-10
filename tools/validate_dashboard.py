@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import json
 import re
+import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,16 +15,19 @@ lightningcast_generator = (ROOT / "fetch_lightningcast.py").read_text(encoding="
 lightningcast_workflow = (ROOT / ".github" / "workflows" / "update_lightningcast.yml").read_text(encoding="utf-8")
 hrrr_tle_generator = (ROOT / "fetch_hrrr_tle.py").read_text(encoding="utf-8")
 hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").read_text(encoding="utf-8")
+nrcs_hsg_generator = (ROOT / "fetch_nrcs_hsg.py").read_text(encoding="utf-8")
+nrcs_hsg_metadata_path = ROOT / "static" / "nrcs_hydrologic_soil_group_metadata.json"
+nrcs_hsg_image_path = ROOT / "static" / "nrcs_hydrologic_soil_group.png"
 mrms_rala_generator = (ROOT / "fetch_mrms_rala.py").read_text(encoding="utf-8")
 mrms_rala_loop_generator = (ROOT / "fetch_mrms_rala_loop.py").read_text(encoding="utf-8")
 mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").read_text(encoding="utf-8")
 
 errors = []
 
-# Current registry total: 125 dashboard data/config entries + 15 basemap entries.
-# WPC Dark Reference is additive and becomes the operational default; Black Canvas
-# and every previously registered layer/basemap remain present.
-EXPECTED_LAYER_COUNT = 140
+# Current registry total: 126 dashboard data/config entries + 15 basemap entries.
+# Phase H1 adds one NRCS Hydrologic Soil Group layer while every prior
+# meteorological/hydrological layer and basemap remains present.
+EXPECTED_LAYER_COUNT = 141
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -32,6 +37,7 @@ required_sections = [
     "Active Hazards & Warnings",
     "Radar and Satellite Data (Real-Time)",
     "Antecedent Hydrologic Conditions",
+    "Land-Surface Runoff Sensitivity",
     "Wildfire / Burn Scar Context",
     "RAP Mesoanalysis Data",
     "HRRR Flash Flood Diagnostics - Experimental",
@@ -76,6 +82,7 @@ required_labels = [
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
     "NASA SPoRT-LIS VSM Percentile (0–100 cm)",
+    "NRCS Hydrologic Soil Group (A–D / Dual)",
     "NIFC/WFIGS Current Wildfire Perimeters",
     "NIFC/WFIGS Historical Wildfire Perimeters",
     "Precipitable Water (PWAT)",
@@ -186,6 +193,158 @@ if antecedent_start >= 0 and rap_start > antecedent_start:
             "Antecedent Hydrologic Conditions layers are not in the "
             "required order."
         )
+
+# Phase H1 — NRCS Hydrologic Soil Group / land-surface runoff sensitivity.
+# This is intentionally a static annual soil-survey layer. Dynamic soil-moisture
+# and RFC FFG products remain separate antecedent-state inputs. The browser must
+# consume the final native-30m-v2 metadata contract produced by the completed
+# national Phase H1 analysis, not the superseded pre-build H1 schema.
+required_hsg_app_fragments = [
+    "title: 'Land-Surface Runoff Sensitivity'",
+    "NRCS Hydrologic Soil Group (A–D / Dual)",
+    "{id: 'nrcs-hsg', label: NRCS_HSG_LAYER_NAME",
+    "static/nrcs_hydrologic_soil_group.png",
+    "static/nrcs_hydrologic_soil_group_metadata.json",
+    "nrcs-hsg-raster",
+    "image-rendering: pixelated !important",
+    "fetchNRCSHSGMetadata",
+    "nrcs-hsg-time-box",
+    "nrcsHsgLegendHTML",
+    "nrcs_hsg_dashboard_h1_native30m_v2",
+    "nrcs-hsg-native30m-h1-v2-3",
+    "data.attribute !== 'hydgrpdcd'",
+    "data.attribute_label !== 'Hydrologic Group - Dominant Conditions'",
+    "data.source_geometry_vintage !== 'FY2026'",
+    "Number(data.source_native_resolution_m) !== 30",
+    "Number(data.scientific_analysis_resolution_m) !== 1000",
+    "data.categorical !== true",
+    "data.smoothing !== false",
+    "data.display_resampling !== 'nearest-neighbor'",
+    "const staticVersion = [data.source_geometry_vintage, data.render_revision, data.generated_utc]",
+    "if (!nrcsHsgReady) fetchNRCSHSGMetadata();",
+    "['A', 'B', 'C', 'D', 'A/D', 'B/D', 'C/D']",
+    "scientific GeoTIFFs",
+]
+for fragment in required_hsg_app_fragments:
+    if fragment not in app:
+        errors.append(f"Missing NRCS HSG Phase H1 app contract fragment: {fragment}")
+
+# Enforce the new hydrologic architecture without disturbing the existing
+# Antecedent -> HSG -> Wildfire -> RAP order around it.
+antecedent_start = app.find("title: 'Antecedent Hydrologic Conditions'")
+hsg_start = app.find("title: 'Land-Surface Runoff Sensitivity'")
+wildfire_start = app.find("title: 'Wildfire / Burn Scar Context'")
+rap_start = app.find("title: 'RAP Mesoanalysis Data'")
+if not (
+    antecedent_start >= 0
+    and hsg_start > antecedent_start
+    and wildfire_start > hsg_start
+    and rap_start > wildfire_start
+):
+    errors.append(
+        "Hydrologic section order is not Antecedent -> Land-Surface Runoff Sensitivity -> Wildfire -> RAP."
+    )
+
+required_hsg_generator_fragments = [
+    'METADATA_MODE = "nrcs_hsg_dashboard_h1_native30m_v2"',
+    'ANALYSIS_METADATA_MODE = "nrcs_hsg_native30m_analysis_v2_3"',
+    'RENDER_REVISION = "nrcs-hsg-native30m-h1-v2-3"',
+    'EXPECTED_SOURCE_VINTAGE = "FY2026"',
+    'EXPECTED_SOURCE_NATIVE_RESOLUTION_M = 30',
+    'EXPECTED_ANALYSIS_RESOLUTION_M = 1000',
+    'EXPECTED_ANALYSIS_CRS = "EPSG:5070"',
+    'MINIMUM_CLASSIFIED_COVERAGE = 0.25',
+    'DEFAULT_OUTPUT_WIDTH = 10000',
+    'OUTPUT_IMAGE = "nrcs_hydrologic_soil_group.png"',
+    'OUTPUT_METADATA = "nrcs_hydrologic_soil_group_metadata.json"',
+    '"A/D"', '"B/D"', '"C/D"',
+    'load_analysis_metadata',
+    'validate_dominant_raster',
+    'muaggatt.hydgrpdcd',
+    'Resampling.nearest',
+    'TARGET_CRS = "EPSG:3857"',
+    '"scientific_analysis_resolution_m"',
+    '"analysis_source_note"',
+    '"categorical": True',
+    '"smoothing": False',
+    'NRCS HSG Phase H1 native30m v2.3 publication self-test: PASS',
+]
+for fragment in required_hsg_generator_fragments:
+    if fragment not in nrcs_hsg_generator:
+        errors.append(f"Missing NRCS HSG Phase H1 generator contract fragment: {fragment}")
+
+# Validate the actual committed dashboard assets against the final Phase H1
+# metadata contract. This guards against accidentally committing the old pilot
+# output or a display image generated from a different scientific source.
+if not nrcs_hsg_metadata_path.exists():
+    errors.append("Missing static/nrcs_hydrologic_soil_group_metadata.json")
+else:
+    try:
+        hsg_meta = json.loads(nrcs_hsg_metadata_path.read_text(encoding="utf-8"))
+        if hsg_meta.get("metadata_mode") != "nrcs_hsg_dashboard_h1_native30m_v2":
+            errors.append("Committed NRCS HSG metadata_mode is not the native30m Phase H1 contract.")
+        if hsg_meta.get("render_revision") != "nrcs-hsg-native30m-h1-v2-3":
+            errors.append("Committed NRCS HSG render revision is not v2.3.")
+        if hsg_meta.get("domain") != "CONUS":
+            errors.append("Committed NRCS HSG domain is not CONUS.")
+        if hsg_meta.get("source_geometry_vintage") != "FY2026":
+            errors.append("Committed NRCS HSG source geometry vintage is not FY2026.")
+        if int(hsg_meta.get("source_native_resolution_m", -1)) != 30:
+            errors.append("Committed NRCS HSG native source resolution is not 30 m.")
+        if int(hsg_meta.get("scientific_analysis_resolution_m", -1)) != 1000:
+            errors.append("Committed NRCS HSG scientific analysis resolution is not 1 km.")
+        if hsg_meta.get("attribute") != "hydgrpdcd":
+            errors.append("Committed NRCS HSG attribute is not hydgrpdcd.")
+        if hsg_meta.get("attribute_label") != "Hydrologic Group - Dominant Conditions":
+            errors.append("Committed NRCS HSG attribute label changed unexpectedly.")
+        if str(hsg_meta.get("image_crs", "")).upper() != "EPSG:3857":
+            errors.append("Committed NRCS HSG display image is not EPSG:3857.")
+        if hsg_meta.get("display_resampling") != "nearest-neighbor":
+            errors.append("Committed NRCS HSG display is not nearest-neighbor categorical rendering.")
+        if hsg_meta.get("smoothing") is not False or hsg_meta.get("categorical") is not True:
+            errors.append("Committed NRCS HSG metadata violates the categorical/no-smoothing contract.")
+        expected_hsg_classes = ["A", "B", "C", "D", "A/D", "B/D", "C/D"]
+        actual_hsg_classes = [item.get("name") for item in hsg_meta.get("classes", [])]
+        if actual_hsg_classes != expected_hsg_classes:
+            errors.append("Committed NRCS HSG class order is not A, B, C, D, A/D, B/D, C/D.")
+        rated_fractions = [float(item.get("rated_display_fraction", 0.0)) for item in hsg_meta.get("classes", [])]
+        if rated_fractions and abs(sum(rated_fractions) - 1.0) > 1e-6:
+            errors.append("Committed NRCS HSG rated class fractions do not sum to 1.")
+        if not str(hsg_meta.get("analysis_source_note", "")).endswith("scientific GeoTIFFs, not this PNG."):
+            errors.append("Committed NRCS HSG metadata is missing the display-vs-science safeguard.")
+        if hsg_meta.get("bounds") != [[23.0, -125.0], [50.5, -66.5]]:
+            errors.append("Committed NRCS HSG display bounds changed unexpectedly.")
+        if int(hsg_meta.get("image_width", -1)) != 10000 or int(hsg_meta.get("image_height", -1)) != 5991:
+            errors.append("Committed NRCS HSG display dimensions are not 10000x5991.")
+    except Exception as exc:
+        errors.append(f"Could not validate committed NRCS HSG metadata: {exc}")
+
+if not nrcs_hsg_image_path.exists():
+    errors.append("Missing static/nrcs_hydrologic_soil_group.png")
+else:
+    try:
+        with nrcs_hsg_image_path.open("rb") as fh:
+            signature = fh.read(8)
+            if signature != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("bad PNG signature")
+            length = struct.unpack(">I", fh.read(4))[0]
+            chunk_type = fh.read(4)
+            if length != 13 or chunk_type != b"IHDR":
+                raise ValueError("missing PNG IHDR")
+            width, height = struct.unpack(">II", fh.read(8))
+        if (width, height) != (10000, 5991):
+            errors.append(f"Committed NRCS HSG PNG dimensions are {width}x{height}, expected 10000x5991.")
+    except Exception as exc:
+        errors.append(f"Could not validate committed NRCS HSG PNG: {exc}")
+
+# HSG is annual/static. Do not let future work accidentally place it on the
+# 15-minute dynamic-soil refresh loop.
+hsg_initial_fetch = app.find("fetchNRCSHSGMetadata();")
+refresh_loop_start = app.find("setInterval(() => {", hsg_initial_fetch)
+refresh_loop_end = app.find("}, 15 * 60 * 1000);", refresh_loop_start)
+if refresh_loop_start >= 0 and refresh_loop_end > refresh_loop_start:
+    if "fetchNRCSHSGMetadata();" in app[refresh_loop_start:refresh_loop_end]:
+        errors.append("Static NRCS HSG layer was incorrectly added to the 15-minute dynamic refresh loop.")
 
 # Confirm direct NOAA MRMS RALA looping, freshness handling, data-branch
 # publication, discoverable opacity, and IEM backup behavior.
@@ -907,6 +1066,8 @@ if "glm-v1" not in index and "glm-v2" not in index:
         "Frontend cache-busting token for GOES GLM integration is missing."
     )
 
+if "nrcs-hsg-native30m-h1-v2-3" not in index:
+    errors.append("NRCS HSG native30m Phase H1 v2.3 cache-busting token is missing from index.html.")
 if "wfigs-dashboard-v2-history-v1-3-conus-overview" not in index:
     errors.append("WFIGS Phase 4.3 CONUS-overview cache-busting token is missing from index.html.")
 if "wfigs-seasonal-trends-v1-1" not in index:
@@ -945,7 +1106,7 @@ if errors:
 print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, looping MRMS RALA/opacity/freshness, MRMS FLASH order, "
-    "antecedent/WFIGS history order, MRMS/NLDAS/GLM mappings, compact legends, "
+    "antecedent/HSG/WFIGS order, NRCS HSG Phase H1 native30m v2.3 assets, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
