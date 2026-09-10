@@ -69,7 +69,7 @@ if (
 
 required_labels = [
     "Active Hydro Warnings & Advisories",
-    "MRMS RALA — Direct NOAA (2-Hour Loop)",
+    "MRMS RALA — Direct NOAA (10-Min Loop)",
     "IEM NEXRAD Radar — Backup (2-Hour Loop)",
     "MRMS FLASH CREST Unit Q — Rolling 24-Hour Maximum",
     "MRMS FLASH FFD — Rolling 24-Hour Maximum Category",
@@ -349,7 +349,7 @@ if refresh_loop_start >= 0 and refresh_loop_end > refresh_loop_start:
 # Confirm direct NOAA MRMS RALA looping, freshness handling, data-branch
 # publication, discoverable opacity, and IEM backup behavior.
 required_mrms_rala_fragments = [
-    "MRMS RALA — Direct NOAA (2-Hour Loop)",
+    "MRMS RALA — Direct NOAA (10-Min Loop)",
     "IEM NEXRAD Radar — Backup (2-Hour Loop)",
     "MRMS_RALA_DATA_ROOT",
     "mrms-rala-data",
@@ -380,6 +380,12 @@ required_mrms_rala_fragments = [
     "MRMS_RALA_MIN_FRAME_STEP_MS = 100",
     "MRMS_RALA_MAX_FRAME_STEP_MS = 1000",
     "MRMS_RALA_FRAME_STEP_INCREMENT_MS = 50",
+    "MRMS_RALA_TARGET_CADENCE_MINUTES = 10",
+    "MRMS_RALA_DEFAULT_WINDOW_MINUTES = 120",
+    "MRMS_RALA_WINDOW_OPTIONS_MINUTES = [120, 240, 360]",
+    "setMRMSRALAWindowMinutes",
+    "mrmsRalaActiveFrames",
+    "mrms-rala-window-select",
     "setIEMRadarAnimationFPS",
     "setMRMSRALAFrameStep",
     "mrms-rala-speed-slider",
@@ -418,6 +424,12 @@ required_mrms_rala_loop_generator_fragments = [
     'loop_minutes',
     'reused_cached_frames',
     'new_frames_rendered',
+    'cached_fallback_frames',
+    'target_frame_cadence_minutes',
+    'default_dashboard_window_minutes',
+    'dashboard_window_options_minutes',
+    'nominal_time_utc',
+    'slot_tolerance_minutes',
     'Official NOAA MRMS only',
     'NCEP MRMS HTTPS is preferred',
     'output-width',
@@ -433,7 +445,11 @@ required_mrms_rala_workflow_fragments = [
     "actions/setup-python@v6",
     "fetch_mrms_rala_loop.py",
     "tools/validate_mrms_rala_loop.py",
-    "--loop-minutes 120",
+    "--loop-minutes 360",
+    "--cadence-minutes 10",
+    "--slot-tolerance-minutes 4.5",
+    "--minimum-span-minutes 350",
+    "--expected-cadence-minutes 10",
     "--output-width 7000",
     "mrms-rala-data",
     "git push --force origin HEAD:refs/heads/mrms-rala-data",
@@ -1083,6 +1099,8 @@ if "mrms-rala-loop-v2" not in index:
 
 if "mrms-rala-loop-v2-10-viewer-style-speed" not in index:
     errors.append("MRMS RALA v2.10 viewer-style speed cache-busting token is missing from index.html.")
+if "mrms-rala-loop-v2-11-10min-windows" not in index:
+    errors.append("MRMS RALA v2.11 10-minute / 2-4-6 hour cache-busting token is missing from index.html.")
 
 if "MRMS_RALA_DEFAULT_FRAME_STEP_MS = 200" not in app:
     errors.append("MRMS RALA viewer-style 200-ms default frame step is missing from app.js.")
@@ -1092,6 +1110,8 @@ if "frameStep:" in app and "MRMS_RALA_SPEED_PROFILES" in app:
     errors.append("Legacy MRMS frame-skipping speed profiles are still present in app.js.")
 if "mrms-rala-speed-slider" not in app or "IEM_RADAR_MAX_FPS = 10" not in app:
     errors.append("Independent viewer-style MRMS / FPS IEM controls are incomplete in app.js.")
+if "mrms-rala-window-select" not in app or "MRMS_RALA_DEFAULT_WINDOW_MINUTES = 120" not in app:
+    errors.append("MRMS RALA 2/4/6-hour window selector is incomplete in app.js.")
 if "mrmsRalaBufferLayer" not in app or "loadMRMSRALAFrameIntoLayer" not in app:
     errors.append("MRMS RALA double-buffer rendering is incomplete in app.js.")
 if "dashboardRadarSpeedMode = 'iem'" not in app or "dashboardRadarSpeedMode = 'mrms'" not in app:
