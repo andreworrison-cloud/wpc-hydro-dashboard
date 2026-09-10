@@ -12,6 +12,12 @@ customStyle.innerHTML = `
         image-rendering: pixelated !important;
     }
 
+    /* NRCS HSG is a seven-class categorical soil raster. Never blend adjacent
+       hydrologic classes in the browser; retain the categorical appearance. */
+    img.nrcs-hsg-raster {
+        image-rendering: pixelated !important;
+    }
+
     .glm-trend-card {
         margin: 8px 8px 10px;
         overflow: hidden;
@@ -2080,6 +2086,9 @@ const NWM_IMAGE_URL = 'static/nwm_soil_saturation.png';
 const SPORT_IMAGE_URL = 'static/sport_soil_percentile.png';
 const NLDAS_RSM_0_10_IMAGE_URL = 'static/nldas_rsm_0_10cm.png';
 const NLDAS_RSM_0_100_IMAGE_URL = 'static/nldas_rsm_0_100cm.png';
+const NRCS_HSG_IMAGE_URL = 'static/nrcs_hydrologic_soil_group.png';
+const NRCS_HSG_METADATA_URL = 'static/nrcs_hydrologic_soil_group_metadata.json';
+const NRCS_HSG_LAYER_NAME = 'NRCS Hydrologic Soil Group (A–D / Dual)';
 const soilPlaceholderBounds = [[24.0, -125.0], [50.0, -66.0]];
 
 const nwmLayer = L.imageOverlay(
@@ -2104,6 +2113,17 @@ const nldasRsm0100Layer = L.imageOverlay(
     NLDAS_RSM_0_100_IMAGE_URL,
     soilPlaceholderBounds,
     {zIndex: 10, opacity: 0, interactive: false}
+);
+
+const nrcsHsgLayer = L.imageOverlay(
+    NRCS_HSG_IMAGE_URL,
+    soilPlaceholderBounds,
+    {
+        zIndex: 10,
+        opacity: 0,
+        interactive: false,
+        className: 'nrcs-hsg-raster'
+    }
 );
 
 // --- NIFC/WFIGS WILDFIRE / BURN-SCAR CONTEXT ---
@@ -3794,6 +3814,8 @@ window.setInterval(() => {
 let nwmLayerReady = false;
 let sportLayerReady = false;
 let nldasRsmReady = false;
+let nrcsHsgReady = false;
+let nrcsHsgMetadata = null;
 
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
@@ -3804,6 +3826,7 @@ let eroValidRangeStr = "Unknown";
 let nwmValidTime = "Unknown";
 let sportValidTime = "Unknown";
 let nldasRsmValidTime = "Unknown";
+let nrcsHsgSourceVintage = "Unknown";
 
 function fetchRAPMetadata() {
     fetch('static/rap_metadata.json?t=' + new Date().getTime())
@@ -5788,6 +5811,97 @@ async function fetchNLDASRSMMetadata() {
     }
 }
 
+async function fetchNRCSHSGMetadata() {
+    try {
+        const response = await fetch(
+            `${NRCS_HSG_METADATA_URL}?t=${Date.now()}`,
+            {cache: 'no-store'}
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        if (data.metadata_mode !== 'nrcs_hsg_dashboard_h1_native30m_v2') {
+            throw new Error(`Unexpected HSG metadata mode: ${data.metadata_mode || 'missing'}`);
+        }
+        if (data.render_revision !== 'nrcs-hsg-native30m-h1-v2-3') {
+            throw new Error(`Unexpected HSG render revision: ${data.render_revision || 'missing'}`);
+        }
+        if (data.domain !== 'CONUS') {
+            throw new Error(`Unexpected HSG domain: ${data.domain || 'missing'}`);
+        }
+        if (
+            data.attribute !== 'hydgrpdcd' ||
+            data.attribute_label !== 'Hydrologic Group - Dominant Conditions'
+        ) {
+            throw new Error('NRCS HSG metadata does not preserve the hydgrpdcd dominant-condition contract');
+        }
+        if (
+            data.source_geometry_vintage !== 'FY2026' ||
+            Number(data.source_native_resolution_m) !== 30 ||
+            Number(data.scientific_analysis_resolution_m) !== 1000
+        ) {
+            throw new Error('NRCS HSG metadata does not preserve the FY2026 native-30m / 1-km analysis contract');
+        }
+        if (data.categorical !== true || data.smoothing !== false || data.display_resampling !== 'nearest-neighbor') {
+            throw new Error('NRCS HSG display metadata violates the categorical no-smoothing contract');
+        }
+
+        const expectedClasses = ['A', 'B', 'C', 'D', 'A/D', 'B/D', 'C/D'];
+        const classNames = (data.classes || []).map(item => item.name);
+        if (
+            classNames.length !== expectedClasses.length ||
+            !expectedClasses.every((name, index) => classNames[index] === name)
+        ) {
+            throw new Error('NRCS HSG metadata class order/contents changed; expected A, B, C, D, A/D, B/D, C/D');
+        }
+        if (!String(data.analysis_source_note || '').includes('scientific GeoTIFFs')) {
+            throw new Error('NRCS HSG metadata is missing the scientific-analysis/display separation note');
+        }
+
+        const imageCrs = String(data.image_crs || data.crs || '').toUpperCase();
+        if (imageCrs !== 'EPSG:3857') {
+            throw new Error(`NRCS HSG expected EPSG:3857, found ${imageCrs || 'missing CRS'}`);
+        }
+        const exactBounds = validateRasterBounds(data.bounds, 'NRCS Hydrologic Soil Group');
+        const staticVersion = [data.source_geometry_vintage, data.render_revision, data.generated_utc]
+            .filter(Boolean)
+            .join('-');
+        nrcsHsgLayer.setBounds(exactBounds);
+        nrcsHsgLayer.setUrl(`${NRCS_HSG_IMAGE_URL}?v=${encodeURIComponent(staticVersion)}`);
+        nrcsHsgLayer.setOpacity(0.88);
+
+        nrcsHsgMetadata = data;
+        nrcsHsgSourceVintage = String(data.source_geometry_vintage || 'Unknown');
+        nrcsHsgReady = true;
+
+        const timeBox = document.getElementById('nrcs-hsg-time-box');
+        if (timeBox && timeBox.style.display === 'block') {
+            timeBox.innerHTML = formatNRCSHSGTimeBox(data);
+        }
+    } catch (error) {
+        nrcsHsgReady = false;
+        nrcsHsgLayer.setOpacity(0);
+        console.error('NRCS HSG raster metadata update failed:', error);
+    }
+}
+
+function formatNRCSHSGTimeBox(metadata = nrcsHsgMetadata) {
+    const sourceVintage = metadata?.source_geometry_vintage || nrcsHsgSourceVintage || 'Unknown';
+    const nativeResolution = Number(metadata?.source_native_resolution_m);
+    const analysisResolution = Number(metadata?.scientific_analysis_resolution_m);
+    const resolutionText = (
+        Number.isFinite(nativeResolution) && Number.isFinite(analysisResolution)
+            ? `${nativeResolution} m source → ${analysisResolution / 1000} km analysis`
+            : 'native-source / equal-area analysis'
+    );
+    return `
+        <strong>NRCS Hydrologic Soil Group</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">gNATSGO ${sourceVintage}</span><br>
+        <span style="color:#d7edf8;">${resolutionText}</span><br>
+        <span style="color:#ffeb3b;">Static annual soil-survey layer</span>
+    `;
+}
+
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
@@ -5799,6 +5913,7 @@ refreshHRRRTLEFromManifest({forceMetadata: true});
 fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
+fetchNRCSHSGMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
@@ -5994,6 +6109,7 @@ legendDockControl.onAdd = function () {
         'sport-time-box',
         'nldas-rsm-010-time-box',
         'nldas-rsm-0100-time-box',
+        'nrcs-hsg-time-box',
         'wfigs-current-time-box',
         'wfigs-ytd-time-box',
         'wfigs-history-time-box'
@@ -6356,6 +6472,32 @@ function buildNLDASRSMHTML(title) {
 const nldasRsm010LegendHTML = buildNLDASRSMHTML('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)');
 const nldasRsm0100LegendHTML = buildNLDASRSMHTML('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)');
 
+const nrcsHsgLegendHTML = `
+    <div style="background:white;padding:10px;border-radius:5px;color:black;font-family:sans-serif;min-width:270px;">
+        <div style="text-align:center;font-weight:800;font-size:13px;margin-bottom:2px;">NRCS Hydrologic Soil Group</div>
+        <div style="text-align:center;font-size:9px;margin-bottom:7px;color:#444;">Hydrologic Group — Dominant Conditions (hydgrpdcd)</div>
+        ${[
+            ['#2c7bb6', 'A', 'High infiltration / low runoff potential'],
+            ['#abd9e9', 'B', 'Moderate infiltration / moderately low runoff'],
+            ['#fdae61', 'C', 'Slow infiltration / moderately high runoff'],
+            ['#d7191c', 'D', 'Very slow infiltration / high runoff potential'],
+            ['#c2a5cf', 'A/D', 'A if drained; D if undrained'],
+            ['#9970ab', 'B/D', 'B if drained; D if undrained'],
+            ['#762a83', 'C/D', 'C if drained; D if undrained']
+        ].map(([color, label, description]) => `
+            <div style="display:grid;grid-template-columns:18px 34px 1fr;gap:6px;align-items:center;margin:3px 0;font-size:9px;">
+                <span style="width:16px;height:13px;background:${color};border:1px solid #555;"></span>
+                <strong>${label}</strong>
+                <span>${description}</span>
+            </div>
+        `).join('')}
+        <div style="margin-top:7px;padding-top:6px;border-top:1px solid #bbb;font-size:8px;line-height:1.25;color:#555;">
+            FY2026 USDA-NRCS gNATSGO, native 30 m source aggregated to the 1 km equal-area Phase H1 analysis.
+            Dual groups are preserved; drainage state is not inferred. Static soil-property context — not a real-time soil-moisture field or standalone runoff threshold.
+        </div>
+    </div>
+`;
+
 const GLM_FALLBACK_RENDERING = {
     5: {
         labels: ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '128–255', '≥256'],
@@ -6519,6 +6661,7 @@ function updateLegends() {
     if (activeLayerNames.has('NASA SPoRT-LIS VSM Percentile (0–100 cm)')) addLegendBlock(sportLegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)')) addLegendBlock(nldasRsm010LegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)')) addLegendBlock(nldasRsm0100LegendHTML);
+    if (activeLayerNames.has(NRCS_HSG_LAYER_NAME)) addLegendBlock(nrcsHsgLegendHTML);
     GLM_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.name))
         .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
@@ -6582,6 +6725,7 @@ map.on('overlayadd', function(eventLayer) {
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
+    const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         // Refresh bounds, valid times, and cache-busted RAP image URLs
@@ -6731,6 +6875,16 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
+    if (eventLayer.name === NRCS_HSG_LAYER_NAME) {
+        if (!nrcsHsgReady) fetchNRCSHSGMetadata();
+        if (nrcsHsgTimeBox) {
+            nrcsHsgTimeBox.innerHTML = nrcsHsgReady
+                ? formatNRCSHSGTimeBox(nrcsHsgMetadata)
+                : `<strong>NRCS Hydrologic Soil Group</strong><br><span style="color:#ffeb3b;">Loading annual soil layer...</span>`;
+            nrcsHsgTimeBox.style.display = 'block';
+        }
+    }
+
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
         let titleText = "";
         let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
@@ -6818,6 +6972,7 @@ map.on('overlayremove', function(eventLayer) {
     const sportTimeBox = document.getElementById('sport-time-box');
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
+    const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -6880,6 +7035,10 @@ map.on('overlayremove', function(eventLayer) {
         if (nldasRsm0100TimeBox) nldasRsm0100TimeBox.style.display = 'none';
     }
     
+    if (eventLayer.name === NRCS_HSG_LAYER_NAME) {
+        if (nrcsHsgTimeBox) nrcsHsgTimeBox.style.display = 'none';
+    }
+
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
         const hasCAM = Array.from(activeLayerNames).some(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
         if (!hasCAM) camTimeBox.style.display = 'none';
@@ -7005,6 +7164,16 @@ const dashboardSections = [
             {id: 'nldas-rsm-010', label: 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)', layer: nldasRsm010Layer, kind: 'raster'},
             {id: 'nldas-rsm-0100', label: 'NLDAS-2 Noah Relative Soil Moisture (0-100 cm)', layer: nldasRsm0100Layer, kind: 'raster'},
             {id: 'sport-percentile', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)', layer: sportLayer, kind: 'raster'}
+        ]
+    },
+    {
+        id: 'land-surface-runoff',
+        title: 'Land-Surface Runoff Sensitivity',
+        layers: [
+            {id: 'nrcs-hsg', label: NRCS_HSG_LAYER_NAME,
+             description: 'FY2026 USDA-NRCS gNATSGO HSG from native 30 m MUKEY geometry and map-unit dominant conditions, aggregated on the retained 1 km equal-area Phase H1 analysis; preserves all seven HSG classes.',
+             layer: nrcsHsgLayer, kind: 'raster',
+             keywords: 'USDA NRCS gNATSGO SSURGO hydrologic soil group HSG hydgrpdcd A B C D A/D B/D C/D infiltration runoff susceptibility soil type'}
         ]
     },
     {
