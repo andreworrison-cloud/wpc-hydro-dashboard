@@ -895,11 +895,12 @@ map.on('baselayerchange', function(e) {
 // --- RADAR LOOP TIME CONTROL ---
 // The two radar feeds keep separate playback controls. IEM remains on the
 // conventional Leaflet.TimeDimension FPS control because the tiled WMS responds
-// correctly to it. Direct NOAA MRMS RALA uses an Operational Product Viewer-
-// style frame-delay control: every native source frame is preserved and shown in
-// chronological order, while the delay between frames changes from Slow to Fast.
+// correctly to it. Direct NOAA MRMS RALA publishes real analyses on a deliberate
+// 10-minute cadence and uses an Operational Product Viewer-style frame-delay
+// control. The backend retains six hours; the browser defaults to the latest two
+// hours and can expose four or six hours without rebuilding the archive.
 map.timeDimension = L.timeDimension({
-    period: "PT2M"
+    period: "PT10M"
 });
 
 const IEM_RADAR_DEFAULT_FPS = 5;
@@ -909,6 +910,9 @@ const MRMS_RALA_DEFAULT_FRAME_STEP_MS = 200;
 const MRMS_RALA_MIN_FRAME_STEP_MS = 100;
 const MRMS_RALA_MAX_FRAME_STEP_MS = 1000;
 const MRMS_RALA_FRAME_STEP_INCREMENT_MS = 50;
+const MRMS_RALA_TARGET_CADENCE_MINUTES = 10;
+const MRMS_RALA_DEFAULT_WINDOW_MINUTES = 120;
+const MRMS_RALA_WINDOW_OPTIONS_MINUTES = [120, 240, 360];
 
 let dashboardRadarSpeedMode = 'mrms';
 let iemRadarRequestedFPS = IEM_RADAR_DEFAULT_FPS;
@@ -918,6 +922,8 @@ let mrmsRalaAnimationPlaying = false;
 let mrmsRalaSpeedControl = null;
 let mrmsRalaSpeedSlider = null;
 let mrmsRalaSpeedValue = null;
+let mrmsRalaWindowSelect = null;
+let mrmsRalaWindowMinutes = MRMS_RALA_DEFAULT_WINDOW_MINUTES;
 let mrmsRalaTimelineEchoTime = null;
 
 const dashboardTimeControl = L.control.timeDimension({
@@ -987,6 +993,10 @@ function syncMRMSRALAFrameStepControl() {
     if (mrmsRalaSpeedValue) mrmsRalaSpeedValue.textContent = `${mrmsRalaFrameStepMs} ms`;
 }
 
+function syncMRMSRALAWindowControl() {
+    if (mrmsRalaWindowSelect) mrmsRalaWindowSelect.value = String(mrmsRalaWindowMinutes);
+}
+
 function stopMRMSRALAAnimation() {
     mrmsRalaAnimationPlaying = false;
     if (mrmsRalaAnimationTimer) {
@@ -1015,8 +1025,8 @@ async function advanceMRMSRALAOneFrame() {
     const nextIndex = (currentIndex + 1) % times.length;
     const nextTime = times[nextIndex];
 
-    // Display exactly the next native frame. No frame skipping, interpolation,
-    // temporal averaging, or synthetic frames are allowed in the MRMS loop.
+    // Display exactly the next published 10-minute MRMS analysis. No browser-side
+    // frame skipping, temporal interpolation, averaging, or synthetic frames are used.
     const displayed = await showMRMSRALAFrame(nextTime);
     if (!displayed) return false;
 
@@ -1065,6 +1075,21 @@ function setMRMSRALAFrameStep(milliseconds) {
     return true;
 }
 
+function setMRMSRALAWindowMinutes(minutes) {
+    const numeric = Number(minutes);
+    if (!MRMS_RALA_WINDOW_OPTIONS_MINUTES.includes(numeric)) return false;
+    const wasPlaying = mrmsRalaAnimationPlaying;
+    stopMRMSRALAAnimation();
+    mrmsRalaWindowMinutes = numeric;
+    syncMRMSRALAWindowControl();
+    if (mrmsRalaReady && mrmsRalaFresh && map.hasLayer(mrmsRalaLayer)) {
+        activateMRMSRALATimeline({jumpToLatest: true, applyDefaultSpeed: false, autoPlay: wasPlaying});
+        showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
+    }
+    updateMRMSRALATimeBox();
+    return true;
+}
+
 function createMRMSRALAFrameStepControl() {
     const container = dashboardTimeControl?._container;
     if (!container || mrmsRalaSpeedControl) return;
@@ -1078,7 +1103,27 @@ function createMRMSRALAFrameStepControl() {
     control.style.display = 'none';
     control.style.padding = '0 7px';
     control.style.whiteSpace = 'nowrap';
-    control.style.minWidth = '230px';
+    control.style.minWidth = '315px';
+
+    const loopLabel = L.DomUtil.create('span', 'mrms-rala-window-label', control);
+    loopLabel.textContent = 'Loop';
+    loopLabel.style.fontSize = '11px';
+    loopLabel.style.fontWeight = '600';
+    loopLabel.style.marginRight = '4px';
+
+    const windowSelect = L.DomUtil.create('select', 'mrms-rala-window-select', control);
+    windowSelect.setAttribute('aria-label', 'MRMS RALA loop length');
+    windowSelect.style.marginRight = '8px';
+    windowSelect.style.fontSize = '10px';
+    MRMS_RALA_WINDOW_OPTIONS_MINUTES.forEach(minutes => {
+        const option = document.createElement('option');
+        option.value = String(minutes);
+        option.textContent = `${minutes / 60} h`;
+        windowSelect.appendChild(option);
+    });
+    windowSelect.addEventListener('change', event => {
+        setMRMSRALAWindowMinutes(Number(event.target.value));
+    });
 
     const slow = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
     slow.textContent = 'Slow';
@@ -1117,7 +1162,9 @@ function createMRMSRALAFrameStepControl() {
     mrmsRalaSpeedControl = control;
     mrmsRalaSpeedSlider = slider;
     mrmsRalaSpeedValue = value;
+    mrmsRalaWindowSelect = windowSelect;
     syncMRMSRALAFrameStepControl();
+    syncMRMSRALAWindowControl();
     syncRadarSpeedControlVisibility();
 }
 
@@ -1228,8 +1275,8 @@ const radarWMS = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/
 });
 const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension: false });
 
-// --- DIRECT NOAA MRMS RALA — OPERATIONAL TWO-HOUR LOOP ---
-const MRMS_RALA_LAYER_NAME = 'MRMS RALA — Direct NOAA (2-Hour Loop)';
+// --- DIRECT NOAA MRMS RALA — OPERATIONAL 10-MINUTE / 2–6 HOUR LOOP ---
+const MRMS_RALA_LAYER_NAME = 'MRMS RALA — Direct NOAA (10-Min Loop)';
 const MRMS_RALA_DATA_ROOT = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/mrms-rala-data';
 const MRMS_RALA_MANIFEST_URL = `${MRMS_RALA_DATA_ROOT}/mrms_rala_loop_manifest.json`;
 const MRMS_RALA_MANIFEST_POLL_INTERVAL_MS = 60 * 1000;
@@ -4018,6 +4065,18 @@ function validateMRMSRALAManifest(manifest) {
     if (!manifest.latest_valid_time_utc || !Array.isArray(manifest.frames) || manifest.frames.length < 2) {
         throw new Error('MRMS RALA loop manifest has an incomplete frame inventory');
     }
+    if (Number(manifest.loop_window_minutes) !== 360) {
+        throw new Error(`MRMS RALA archive must retain six hours, found ${manifest.loop_window_minutes}`);
+    }
+    if (Number(manifest.target_frame_cadence_minutes) !== MRMS_RALA_TARGET_CADENCE_MINUTES) {
+        throw new Error(`MRMS RALA published cadence must remain ${MRMS_RALA_TARGET_CADENCE_MINUTES} minutes`);
+    }
+    const windowOptions = Array.isArray(manifest.dashboard_window_options_minutes)
+        ? manifest.dashboard_window_options_minutes.map(Number)
+        : [];
+    if (!MRMS_RALA_WINDOW_OPTIONS_MINUTES.every(value => windowOptions.includes(value))) {
+        throw new Error('MRMS RALA manifest is missing the 2/4/6-hour window options');
+    }
 
     const display = manifest.display || {};
     if (String(display.projection || '').toUpperCase() !== 'EPSG:3857') {
@@ -4035,13 +4094,22 @@ function validateMRMSRALAManifest(manifest) {
     const bounds = validateRasterBounds(display.leaflet_bounds, MRMS_RALA_LAYER_NAME);
 
     let previousTime = Number.NEGATIVE_INFINITY;
+    let previousNominalTime = Number.NEGATIVE_INFINITY;
     const frames = manifest.frames.map(item => {
         const millis = new Date(item.valid_time_utc || '').getTime();
-        if (!Number.isFinite(millis) || millis <= previousTime || !item.png) {
-            throw new Error('MRMS RALA loop frames are invalid or not strictly chronological');
+        const nominalMillis = new Date(item.nominal_time_utc || '').getTime();
+        if (
+            !Number.isFinite(millis) ||
+            !Number.isFinite(nominalMillis) ||
+            millis <= previousTime ||
+            nominalMillis <= previousNominalTime ||
+            !item.png
+        ) {
+            throw new Error('MRMS RALA loop frames/nominal slots are invalid or not strictly chronological');
         }
         previousTime = millis;
-        return {...item, timeMillis: millis};
+        previousNominalTime = nominalMillis;
+        return {...item, timeMillis: millis, nominalMillis};
     });
     const latest = frames[frames.length - 1];
     if (latest.valid_time_utc !== manifest.latest_valid_time_utc) {
@@ -4082,14 +4150,22 @@ function preloadMRMSRALAFrame(frame) {
     return promise;
 }
 
+function mrmsRalaActiveFrames() {
+    if (!mrmsRalaFrames.length) return [];
+    const latestNominal = mrmsRalaFrames[mrmsRalaFrames.length - 1].nominalMillis;
+    const cutoff = latestNominal - mrmsRalaWindowMinutes * 60 * 1000;
+    return mrmsRalaFrames.filter(frame => frame.nominalMillis >= cutoff - 1);
+}
+
 function nearestMRMSRALAFrame(timeMillis) {
-    if (!mrmsRalaFrames.length) return null;
+    const activeFrames = mrmsRalaActiveFrames();
+    if (!activeFrames.length) return null;
     const target = Number(timeMillis);
-    if (!Number.isFinite(target)) return mrmsRalaFrames[mrmsRalaFrames.length - 1];
-    let best = mrmsRalaFrames[0];
+    if (!Number.isFinite(target)) return activeFrames[activeFrames.length - 1];
+    let best = activeFrames[0];
     let bestDifference = Math.abs(best.timeMillis - target);
-    for (let index = 1; index < mrmsRalaFrames.length; index += 1) {
-        const candidate = mrmsRalaFrames[index];
+    for (let index = 1; index < activeFrames.length; index += 1) {
+        const candidate = activeFrames[index];
         const difference = Math.abs(candidate.timeMillis - target);
         if (difference < bestDifference) {
             best = candidate;
@@ -4157,10 +4233,11 @@ function loadMRMSRALAFrameIntoLayer(layer, frame) {
 }
 
 function nextMRMSRALAFrameAfter(frame) {
-    if (!frame || !mrmsRalaFrames.length) return null;
-    const index = mrmsRalaFrames.findIndex(item => item.valid_time_utc === frame.valid_time_utc);
+    const activeFrames = mrmsRalaActiveFrames();
+    if (!frame || !activeFrames.length) return null;
+    const index = activeFrames.findIndex(item => item.valid_time_utc === frame.valid_time_utc);
     if (index < 0) return null;
-    return mrmsRalaFrames[(index + 1) % mrmsRalaFrames.length];
+    return activeFrames[(index + 1) % activeFrames.length];
 }
 
 function primeNextMRMSRALABuffer(frame) {
@@ -4213,7 +4290,7 @@ function warmMRMSRALALoopCache() {
     // Warm the HTTP cache in chronological playback order. Keep concurrency
     // modest so background prefetching does not compete with the next-frame
     // display buffer or make the initial dashboard render sluggish.
-    const frames = [...mrmsRalaFrames];
+    const frames = [...mrmsRalaActiveFrames()];
     const workers = Math.min(3, frames.length);
     let nextIndex = 0;
     const worker = async () => {
@@ -4236,14 +4313,16 @@ function activateMRMSRALATimeline({jumpToLatest = true, applyDefaultSpeed = fals
     const player = dashboardTimeControl?._player;
     if (player?.isPlaying()) player.stop();
 
-    // Each feed owns its own speed state. MRMS defaults to the same 200-ms
-    // frame-step concept exposed by the NOAA Operational Product Viewer, then
-    // preserves the forecaster's selected delay when switching feeds.
+    // Each feed owns its own speed state. MRMS uses the 200-ms viewer-style
+    // default, but the much lighter 10-minute archive makes the full loop visibly
+    // faster without dropping any frame from the selected 2/4/6-hour window.
     if (applyDefaultSpeed) mrmsRalaFrameStepMs = MRMS_RALA_DEFAULT_FRAME_STEP_MS;
     syncMRMSRALAFrameStepControl();
+    syncMRMSRALAWindowControl();
     syncRadarSpeedControlVisibility();
 
-    const times = mrmsRalaFrames.map(frame => frame.timeMillis);
+    const activeFrames = mrmsRalaActiveFrames();
+    const times = activeFrames.map(frame => frame.timeMillis);
     map.timeDimension.setAvailableTimes(times, 'replace');
     if (jumpToLatest) map.timeDimension.setCurrentTime(times[times.length - 1]);
     else showMRMSRALAFrame(map.timeDimension.getCurrentTime());
@@ -4280,9 +4359,11 @@ function formatMRMSRALATimeBox(metadata) {
     const ageText = Number.isFinite(latestAge) ? `${latestAge.toFixed(1)} min old` : 'age unavailable';
     const opacity = Math.round(Number(mrmsRalaOpacityTarget.options.opacity) * 100);
     const currentTime = mrmsRalaCurrentFrame?.valid_time_utc || metadata.latest_valid_time_utc;
-    const frameCount = Number(metadata.frame_count || mrmsRalaFrames.length || 0);
-    const spacing = Number(metadata.median_frame_spacing_minutes);
-    const spacingText = Number.isFinite(spacing) ? `${spacing.toFixed(1)}-min median spacing` : 'native MRMS cadence';
+    const activeFrameCount = mrmsRalaActiveFrames().length;
+    const archiveFrameCount = Number(metadata.frame_count || mrmsRalaFrames.length || 0);
+    const cadence = Number(metadata.target_frame_cadence_minutes);
+    const cadenceText = Number.isFinite(cadence) ? `${cadence.toFixed(0)}-min cadence` : 'MRMS cadence';
+    const selectedHours = mrmsRalaWindowMinutes / 60;
 
     if (!mrmsRalaFresh) {
         return `
@@ -4297,7 +4378,8 @@ function formatMRMSRALATimeBox(metadata) {
         <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
         <span style="color:#4fc3f7;font-weight:bold;">Frame: ${formatMetadataUTC(currentTime)}</span><br>
         <span style="color:#ffeb3b;">Latest: ${formatMetadataUTC(metadata.latest_valid_time_utc)} &bull; ${ageText}</span><br>
-        <span style="font-size:0.82em;color:#d0d0d0;">${frameCount} frames &bull; ${spacingText} &bull; &ge;5 dBZ</span>
+        <span style="font-size:0.82em;color:#d0d0d0;">${selectedHours} h selected &bull; ${activeFrameCount} frames &bull; ${cadenceText} &bull; &ge;5 dBZ</span><br>
+        <span style="font-size:0.78em;color:#b8b8b8;">6 h archive available &bull; ${archiveFrameCount} retained frames</span>
         <div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.18);">
             <label for="mrms-rala-opacity-inline" style="display:flex;justify-content:space-between;gap:10px;font-size:0.82em;color:#e6e6e6;">
                 <span>Radar opacity</span><strong id="mrms-rala-opacity-inline-value">${opacity}%</strong>
@@ -4362,7 +4444,7 @@ function buildMRMSRALALegendHTML() {
 }
 
 function mrmsRalaManifestVersion(manifest) {
-    return [manifest?.latest_valid_time_utc || '', manifest?.generated_utc || '', manifest?.frame_count || ''].join('|');
+    return [manifest?.latest_valid_time_utc || '', manifest?.generated_utc || '', manifest?.frame_count || '', manifest?.target_frame_cadence_minutes || '', manifest?.generator_revision || ''].join('|');
 }
 
 async function fetchMRMSRALAManifest() {
@@ -4390,7 +4472,7 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
             applyMRMSRALAFreshnessState();
 
             if (mrmsRalaFresh) {
-                await preloadMRMSRALAFrame(mrmsRalaFrames[mrmsRalaFrames.length - 1]);
+                await preloadMRMSRALAFrame(mrmsRalaActiveFrames()[mrmsRalaActiveFrames().length - 1]);
                 if (map.hasLayer(mrmsRalaLayer)) {
                     activateMRMSRALATimeline({jumpToLatest: true});
                     await showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
@@ -7134,7 +7216,7 @@ const dashboardSections = [
         id: 'radar-satellite',
         title: 'Radar and Satellite Data (Real-Time)',
         layers: [
-            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km two hour loop'},
+            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km 10 minute cadence two four six hour loop'},
             {id: 'nexrad-loop', label: 'IEM NEXRAD Radar — Backup (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: false},
             {id: 'mrms-ffd', label: 'MRMS DVD Flash Flood Detector', layer: ffdLayer, kind: 'vector'},
             {id: 'mrms-qpe-1h', label: 'MRMS 1-Hour QPE', layer: mrms1hr, kind: 'raster'},
