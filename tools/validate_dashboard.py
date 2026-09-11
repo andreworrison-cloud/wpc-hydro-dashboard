@@ -364,8 +364,8 @@ required_nlcd_app_fragments = [
     "fetchNLCDImperviousMetadata",
     "nlcd-impervious-time-box",
     "nlcdImperviousLegendHTML",
-    "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final",
-    "annual-nlcd-fctimp-2025-h2-v1-1-final",
+    "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_clarified",
+    "annual-nlcd-fctimp-2025-h2-v1-1-clarified",
     "data.source_product !== 'FctImp'",
     "Number(data.source_map_year) !== 2025",
     "Number(data.source_native_resolution_m) !== 30",
@@ -374,7 +374,10 @@ required_nlcd_app_fragments = [
     "data.display_resampling !== 'nearest-neighbor'",
     "data.smoothing !== false",
     "Number(data.display_min_valid_coverage_fraction) !== 0.25",
+    "String(data.zero_percent_color || '').toLowerCase() !== '#bdbdbd'",
+    "Number(data.zero_percent_alpha) !== 150",
     "data.persistent_source_nodata_display !== 'transparent'",
+    "data.insufficient_valid_coverage_display !== 'transparent'",
     "data.final_coverage_qa !== 'nlcd_h2_v1_1_final_coverage_qa.json'",
     "if (!nlcdImperviousReady) fetchNLCDImperviousMetadata();",
     "scientific GeoTIFFs",
@@ -395,9 +398,9 @@ if land_surface_start >= 0 and wildfire_start > land_surface_start:
         )
 
 required_nlcd_generator_fragments = [
-    'METADATA_MODE = "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final"',
+    'METADATA_MODE = "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_clarified"',
     'ANALYSIS_METADATA_MODE = "annual_nlcd_fractional_impervious_h2_v1_1"',
-    'RENDER_REVISION = "annual-nlcd-fctimp-2025-h2-v1-1-final"',
+    'RENDER_REVISION = "annual-nlcd-fctimp-2025-h2-v1-1-clarified"',
     'EXPECTED_SOURCE_PRODUCT = "FctImp"',
     'EXPECTED_MAP_YEAR = 2025',
     'EXPECTED_SOURCE_NATIVE_RESOLUTION_M = 30',
@@ -412,8 +415,12 @@ required_nlcd_generator_fragments = [
     'OUTPUT_METADATA = "usgs_nlcd_fractional_impervious_2025_metadata.json"',
     'load_final_qa',
     'Resampling.nearest',
+    '"zero_percent_display": "neutral-tint"',
+    '"zero_percent_color": ZERO_PERCENT_COLOR',
+    '"zero_percent_alpha": ZERO_PERCENT_ALPHA',
     '"persistent_source_nodata_display": "transparent"',
-    'Annual NLCD Phase H2 v1.1 final publication self-test: PASS',
+    '"insufficient_valid_coverage_display": "transparent"',
+    'Annual NLCD Phase H2 v1.1 clarification publication self-test: PASS',
 ]
 for fragment in required_nlcd_generator_fragments:
     if fragment not in nlcd_impervious_generator:
@@ -424,10 +431,10 @@ if not nlcd_impervious_metadata_path.exists():
 else:
     try:
         nlcd_meta = json.loads(nlcd_impervious_metadata_path.read_text(encoding="utf-8"))
-        if nlcd_meta.get("metadata_mode") != "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final":
-            errors.append("Committed Annual NLCD metadata_mode is not the H2 v1.1 final contract.")
-        if nlcd_meta.get("render_revision") != "annual-nlcd-fctimp-2025-h2-v1-1-final":
-            errors.append("Committed Annual NLCD render revision is not v1.1 final.")
+        if nlcd_meta.get("metadata_mode") != "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_clarified":
+            errors.append("Committed Annual NLCD metadata_mode is not the H2 v1.1 clarified contract.")
+        if nlcd_meta.get("render_revision") != "annual-nlcd-fctimp-2025-h2-v1-1-clarified":
+            errors.append("Committed Annual NLCD render revision is not the clarified display revision.")
         if nlcd_meta.get("source") != "USGS Annual NLCD Collection 1.2":
             errors.append("Committed Annual NLCD source changed unexpectedly.")
         if nlcd_meta.get("source_product") != "FctImp":
@@ -446,10 +453,16 @@ else:
             errors.append("Committed Annual NLCD display violates the nearest-neighbor/no-smoothing contract.")
         if float(nlcd_meta.get("display_min_valid_coverage_fraction", -1)) != 0.25:
             errors.append("Committed Annual NLCD display valid-coverage threshold is not 0.25.")
-        if nlcd_meta.get("zero_percent_display") != "transparent":
-            errors.append("Committed Annual NLCD zero-percent display must remain transparent.")
+        if nlcd_meta.get("zero_percent_display") != "neutral-tint":
+            errors.append("Committed Annual NLCD zero-percent display must be the clarified neutral tint.")
+        if str(nlcd_meta.get("zero_percent_color", "")).lower() != "#bdbdbd":
+            errors.append("Committed Annual NLCD zero-percent color changed unexpectedly.")
+        if int(nlcd_meta.get("zero_percent_alpha", -1)) != 150:
+            errors.append("Committed Annual NLCD zero-percent alpha changed unexpectedly.")
         if nlcd_meta.get("persistent_source_nodata_display") != "transparent":
             errors.append("Committed Annual NLCD persistent source NoData must remain transparent.")
+        if nlcd_meta.get("insufficient_valid_coverage_display") != "transparent":
+            errors.append("Committed Annual NLCD insufficient-coverage display must remain transparent.")
         if nlcd_meta.get("final_coverage_qa") != "nlcd_h2_v1_1_final_coverage_qa.json":
             errors.append("Committed Annual NLCD metadata lost final coverage-QA provenance.")
         if nlcd_meta.get("leaflet_bounds") != [[23.0, -125.0], [50.5, -66.5]]:
@@ -1246,8 +1259,8 @@ if "glm-v1" not in index and "glm-v2" not in index:
 
 if "nrcs-hsg-native30m-h1-v2-3" not in index:
     errors.append("NRCS HSG native30m Phase H1 v2.3 cache-busting token is missing from index.html.")
-if "annual-nlcd-fctimp-2025-h2-v1-1-final" not in index:
-    errors.append("Annual NLCD Phase H2 v1.1 final cache-busting token is missing from index.html.")
+if "annual-nlcd-fctimp-2025-h2-v1-1-clarified" not in index:
+    errors.append("Annual NLCD Phase H2 clarified cache-busting token is missing from index.html.")
 if "wfigs-dashboard-v2-history-v1-3-conus-overview" not in index:
     errors.append("WFIGS Phase 4.3 CONUS-overview cache-busting token is missing from index.html.")
 if "wfigs-seasonal-trends-v1-1" not in index:
@@ -1290,7 +1303,7 @@ if errors:
 print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, looping MRMS RALA/opacity/freshness, MRMS FLASH order, "
-    "antecedent/HSG+NLCD/WFIGS order, NRCS HSG Phase H1 and Annual NLCD Phase H2 static assets, MRMS/NLDAS/GLM mappings, compact legends, "
+    "antecedent/HSG+NLCD/WFIGS order, NRCS HSG Phase H1 and clarified Annual NLCD Phase H2 static assets, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
