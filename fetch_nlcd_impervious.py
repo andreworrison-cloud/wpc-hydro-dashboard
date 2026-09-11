@@ -21,9 +21,9 @@ from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from rasterio.warp import reproject
 
-METADATA_MODE = "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final"
+METADATA_MODE = "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_clarified"
 ANALYSIS_METADATA_MODE = "annual_nlcd_fractional_impervious_h2_v1_1"
-RENDER_REVISION = "annual-nlcd-fctimp-2025-h2-v1-1-final"
+RENDER_REVISION = "annual-nlcd-fctimp-2025-h2-v1-1-clarified"
 
 EXPECTED_SOURCE = "USGS Annual NLCD Collection 1.2 Fractional Impervious Surface"
 EXPECTED_SOURCE_PRODUCT = "FctImp"
@@ -41,6 +41,9 @@ MINIMUM_VALID_COVERAGE = 0.25
 
 OUTPUT_IMAGE = "usgs_nlcd_fractional_impervious_2025.png"
 OUTPUT_METADATA = "usgs_nlcd_fractional_impervious_2025_metadata.json"
+
+ZERO_PERCENT_COLOR = "#bdbdbd"
+ZERO_PERCENT_ALPHA = 150
 
 DISPLAY_BINS = [
     {"min": 0.0, "max": 5.0, "color": "#ffffcc", "label": ">0–5%"},
@@ -174,17 +177,25 @@ def publish(mean_tif: Path, coverage_tif: Path, analysis_metadata: Path,
     rgba = np.zeros((output_height, output_width, 4), dtype=np.uint8)
     valid = (
         np.isfinite(mean_display)
-        & (mean_display > 0.0)
         & (cov_display >= MINIMUM_VALID_COVERAGE)
     )
+
+    zero_mask = valid & np.isclose(mean_display, 0.0, atol=1.0e-6)
+    zr, zg, zb = hex_rgb(ZERO_PERCENT_COLOR)
+    rgba[zero_mask, 0] = zr
+    rgba[zero_mask, 1] = zg
+    rgba[zero_mask, 2] = zb
+    rgba[zero_mask, 3] = ZERO_PERCENT_ALPHA
+
+    positive_valid = valid & (mean_display > 0.0)
 
     for item in DISPLAY_BINS:
         lo = float(item["min"])
         hi = float(item["max"])
         mask = (
-            valid & (mean_display > 0.0) & (mean_display < hi)
+            positive_valid & (mean_display < hi)
             if lo == 0.0
-            else valid & (mean_display >= lo) & (mean_display < hi)
+            else positive_valid & (mean_display >= lo) & (mean_display < hi)
         )
         r, g, b = hex_rgb(item["color"])
         rgba[mask, 0] = r
@@ -222,11 +233,15 @@ def publish(mean_tif: Path, coverage_tif: Path, analysis_metadata: Path,
         "smoothing": False,
         "display_min_valid_coverage_fraction": MINIMUM_VALID_COVERAGE,
         "display_bins": DISPLAY_BINS,
-        "zero_percent_display": "transparent",
+        "zero_percent_display": "neutral-tint",
+        "zero_percent_color": ZERO_PERCENT_COLOR,
+        "zero_percent_alpha": ZERO_PERCENT_ALPHA,
         "persistent_source_nodata_display": "transparent",
+        "insufficient_valid_coverage_display": "transparent",
         "dynamic_model_use_note": (
             "Future H4/dynamic calculations must use v1.1 scientific GeoTIFFs "
-            "and coverage/QA fields, never this PNG."
+            "and coverage/QA fields, never this PNG. Valid 0% impervious cells are "
+            "shown with a neutral tint; NoData/insufficient coverage remains transparent."
         ),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -234,9 +249,9 @@ def publish(mean_tif: Path, coverage_tif: Path, analysis_metadata: Path,
 
 
 def self_test() -> None:
-    assert METADATA_MODE == "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final"
+    assert METADATA_MODE == "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_clarified"
     assert ANALYSIS_METADATA_MODE == "annual_nlcd_fractional_impervious_h2_v1_1"
-    assert RENDER_REVISION == "annual-nlcd-fctimp-2025-h2-v1-1-final"
+    assert RENDER_REVISION == "annual-nlcd-fctimp-2025-h2-v1-1-clarified"
     assert EXPECTED_MAP_YEAR == 2025
     assert EXPECTED_SOURCE_NATIVE_RESOLUTION_M == 30
     assert EXPECTED_ANALYSIS_RESOLUTION_M == 1000
@@ -244,7 +259,9 @@ def self_test() -> None:
     assert DEFAULT_OUTPUT_WIDTH == 9000
     assert MINIMUM_VALID_COVERAGE == 0.25
     assert len(DISPLAY_BINS) == 7
-    print("Annual NLCD Phase H2 v1.1 final publication self-test: PASS")
+    assert ZERO_PERCENT_COLOR == "#bdbdbd"
+    assert ZERO_PERCENT_ALPHA == 150
+    print("Annual NLCD Phase H2 v1.1 clarification publication self-test: PASS")
 
 
 def parse_args():

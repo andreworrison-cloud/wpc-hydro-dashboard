@@ -1,0 +1,31 @@
+WPC Hydrometeorological Dashboard — Phase H2 Annual NLCD Clarification Adjustment
+===================================================================================
+
+Commit together:
+- app.js
+- index.html
+- fetch_nlcd_impervious.py
+- tools/validate_dashboard.py
+- static/usgs_nlcd_fractional_impervious_2025.png
+- static/usgs_nlcd_fractional_impervious_2025_metadata.json
+
+Purpose:
+- Clarify the Annual NLCD impervious display by distinguishing valid 0% impervious cells
+  from source NoData / insufficient source coverage.
+
+Display contract:
+- Valid 0% impervious land cells -> neutral gray tint (#bdbdbd, alpha 150)
+- >0% impervious bins -> unchanged 7-bin color scale
+- Source NoData / insufficient valid coverage -> transparent (basemap visible)
+
+Legend clarification:
+- Adds explicit 0% row.
+- Adds note that basemap visible / no color means NoData or insufficient source coverage,
+  not an imperviousness class.
+
+Science contract:
+- Unchanged. Future H4/dynamic work must still use the retained H2 v1.1 scientific GeoTIFFs,
+  not this PNG.
+
+Suggested commit message:
+  Clarify Annual NLCD H2 display for 0% impervious vs NoData

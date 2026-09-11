@@ -6017,10 +6017,10 @@ async function fetchNLCDImperviousMetadata() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
-        if (data.metadata_mode !== 'usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final') {
+        if (data.metadata_mode !== 'usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_clarified') {
             throw new Error(`Unexpected NLCD metadata mode: ${data.metadata_mode || 'missing'}`);
         }
-        if (data.render_revision !== 'annual-nlcd-fctimp-2025-h2-v1-1-final') {
+        if (data.render_revision !== 'annual-nlcd-fctimp-2025-h2-v1-1-clarified') {
             throw new Error(`Unexpected NLCD render revision: ${data.render_revision || 'missing'}`);
         }
         if (
@@ -6048,10 +6048,15 @@ async function fetchNLCDImperviousMetadata() {
             throw new Error('Annual NLCD minimum valid-coverage display threshold changed');
         }
         if (
-            data.zero_percent_display !== 'transparent' ||
+            data.zero_percent_display !== 'neutral-tint' ||
+            String(data.zero_percent_color || '').toLowerCase() !== '#bdbdbd' ||
+            Number(data.zero_percent_alpha) !== 150 ||
             data.persistent_source_nodata_display !== 'transparent'
         ) {
-            throw new Error('Annual NLCD transparent zero/NoData display contract changed');
+            throw new Error('Annual NLCD zero-percent / NoData display contract changed');
+        }
+        if (data.insufficient_valid_coverage_display !== 'transparent') {
+            throw new Error('Annual NLCD insufficient-coverage display contract changed');
         }
         if (data.final_coverage_qa !== 'nlcd_h2_v1_1_final_coverage_qa.json') {
             throw new Error('Annual NLCD final QA provenance changed unexpectedly');
@@ -6124,7 +6129,7 @@ function formatNLCDImperviousTimeBox(metadata = nlcdImperviousMetadata) {
         <strong>USGS Annual NLCD Impervious Surface</strong><br>
         <span style="color:#4fc3f7;font-weight:bold;">Collection 1.2 • ${mapYear}</span><br>
         <span style="color:#d7edf8;">${resolutionText}</span><br>
-        <span style="color:#ffeb3b;">Static annual land-surface layer</span>
+        <span style="color:#ffeb3b;">0% shown in neutral gray • NoData remains transparent</span>
     `;
 }
 
@@ -6730,6 +6735,11 @@ const nlcdImperviousLegendHTML = `
     <div style="background:white;padding:10px;border-radius:5px;color:black;font-family:sans-serif;min-width:270px;">
         <div style="text-align:center;font-weight:800;font-size:13px;margin-bottom:2px;">USGS Annual NLCD Impervious Surface</div>
         <div style="text-align:center;font-size:9px;margin-bottom:7px;color:#444;">2025 Fractional Impervious Surface • mean % per 1 km analysis cell</div>
+        <div style="display:grid;grid-template-columns:18px 52px 1fr;gap:6px;align-items:center;margin:3px 0;font-size:9px;">
+            <span style="width:16px;height:13px;background:#bdbdbd;border:1px solid #555;"></span>
+            <strong>0%</strong>
+            <span>No mapped impervious surface</span>
+        </div>
         ${[
             ['#ffffcc', '>0–5%', 'Very low impervious fraction'],
             ['#ffeda0', '5–10%', 'Low impervious fraction'],
@@ -6747,7 +6757,7 @@ const nlcdImperviousLegendHTML = `
         `).join('')}
         <div style="margin-top:7px;padding-top:6px;border-top:1px solid #bbb;font-size:8px;line-height:1.25;color:#555;">
             USGS Annual NLCD Collection 1.2 (2025), native 30 m source aggregated to the retained 1 km equal-area Phase H2 analysis.
-            Display bins are visualization only. Zero percent and persistent source NoData are transparent.
+            0% valid land cells are shown with a neutral gray tint. Basemap visible / no color indicates source NoData or insufficient valid source coverage, not an imperviousness category.
             Static land-surface context — not a rainfall threshold or dynamic runoff estimate.
         </div>
     </div>
@@ -7448,7 +7458,7 @@ const dashboardSections = [
              keywords: 'USDA NRCS gNATSGO SSURGO hydrologic soil group HSG hydgrpdcd A B C D A/D B/D C/D infiltration runoff susceptibility soil type'}
 ,
             {id: 'nlcd-impervious', label: NLCD_IMPERVIOUS_LAYER_NAME,
-             description: '2025 USGS Annual NLCD Collection 1.2 Fractional Impervious Surface from native 30 m source, aggregated to the retained 1 km equal-area Phase H2 analysis; persistent source NoData is retained rather than inferred.',
+             description: '2025 USGS Annual NLCD Collection 1.2 Fractional Impervious Surface from native 30 m source, aggregated to the retained 1 km equal-area Phase H2 analysis; 0% valid land cells are shown in neutral gray while source NoData/insufficient coverage remains transparent.',
              layer: nlcdImperviousLayer, kind: 'raster',
              keywords: 'USGS Annual NLCD fractional impervious surface imperviousness urban pavement rooftop roads developed land cover runoff sensitivity infiltration 2025 Collection 1.2 FctImp'}
         ]
