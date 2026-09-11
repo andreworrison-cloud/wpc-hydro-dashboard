@@ -18,6 +18,9 @@ hrrr_tle_workflow = (ROOT / ".github" / "workflows" / "update_hrrr_tle.yml").rea
 nrcs_hsg_generator = (ROOT / "fetch_nrcs_hsg.py").read_text(encoding="utf-8")
 nrcs_hsg_metadata_path = ROOT / "static" / "nrcs_hydrologic_soil_group_metadata.json"
 nrcs_hsg_image_path = ROOT / "static" / "nrcs_hydrologic_soil_group.png"
+nlcd_impervious_generator = (ROOT / "fetch_nlcd_impervious.py").read_text(encoding="utf-8")
+nlcd_impervious_metadata_path = ROOT / "static" / "usgs_nlcd_fractional_impervious_2025_metadata.json"
+nlcd_impervious_image_path = ROOT / "static" / "usgs_nlcd_fractional_impervious_2025.png"
 mrms_rala_generator = (ROOT / "fetch_mrms_rala.py").read_text(encoding="utf-8")
 mrms_rala_loop_generator = (ROOT / "fetch_mrms_rala_loop.py").read_text(encoding="utf-8")
 mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").read_text(encoding="utf-8")
@@ -27,7 +30,7 @@ errors = []
 # Current registry total: 126 dashboard data/config entries + 15 basemap entries.
 # Phase H1 adds one NRCS Hydrologic Soil Group layer while every prior
 # meteorological/hydrological layer and basemap remains present.
-EXPECTED_LAYER_COUNT = 141
+EXPECTED_LAYER_COUNT = 142
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -83,6 +86,7 @@ required_labels = [
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
     "NASA SPoRT-LIS VSM Percentile (0–100 cm)",
     "NRCS Hydrologic Soil Group (A–D / Dual)",
+    "USGS Annual NLCD Fractional Impervious Surface (%)",
     "NIFC/WFIGS Current Wildfire Perimeters",
     "NIFC/WFIGS Historical Wildfire Perimeters",
     "Precipitable Water (PWAT)",
@@ -345,6 +349,164 @@ refresh_loop_end = app.find("}, 15 * 60 * 1000);", refresh_loop_start)
 if refresh_loop_start >= 0 and refresh_loop_end > refresh_loop_start:
     if "fetchNRCSHSGMetadata();" in app[refresh_loop_start:refresh_loop_end]:
         errors.append("Static NRCS HSG layer was incorrectly added to the 15-minute dynamic refresh loop.")
+
+
+# Phase H2 — USGS Annual NLCD fractional imperviousness.
+# This is the second static Land-Surface Runoff Sensitivity layer. HSG remains
+# first; Annual NLCD follows immediately beneath it. Both remain separate from
+# dynamic antecedent-state fields.
+required_nlcd_app_fragments = [
+    "USGS Annual NLCD Fractional Impervious Surface (%)",
+    "{id: 'nlcd-impervious', label: NLCD_IMPERVIOUS_LAYER_NAME",
+    "static/usgs_nlcd_fractional_impervious_2025.png",
+    "static/usgs_nlcd_fractional_impervious_2025_metadata.json",
+    "nlcd-impervious-raster",
+    "fetchNLCDImperviousMetadata",
+    "nlcd-impervious-time-box",
+    "nlcdImperviousLegendHTML",
+    "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final",
+    "annual-nlcd-fctimp-2025-h2-v1-1-final",
+    "data.source_product !== 'FctImp'",
+    "Number(data.source_map_year) !== 2025",
+    "Number(data.source_native_resolution_m) !== 30",
+    "Number(data.scientific_analysis_resolution_m) !== 1000",
+    "String(data.scientific_analysis_crs || '').toUpperCase() !== 'EPSG:5070'",
+    "data.display_resampling !== 'nearest-neighbor'",
+    "data.smoothing !== false",
+    "Number(data.display_min_valid_coverage_fraction) !== 0.25",
+    "data.persistent_source_nodata_display !== 'transparent'",
+    "data.final_coverage_qa !== 'nlcd_h2_v1_1_final_coverage_qa.json'",
+    "if (!nlcdImperviousReady) fetchNLCDImperviousMetadata();",
+    "scientific GeoTIFFs",
+]
+for fragment in required_nlcd_app_fragments:
+    if fragment not in app:
+        errors.append(f"Missing Annual NLCD Phase H2 app contract fragment: {fragment}")
+
+land_surface_start = app.find("title: 'Land-Surface Runoff Sensitivity'")
+wildfire_start = app.find("title: 'Wildfire / Burn Scar Context'")
+if land_surface_start >= 0 and wildfire_start > land_surface_start:
+    land_surface_block = app[land_surface_start:wildfire_start]
+    hsg_layer_pos = land_surface_block.find("{id: 'nrcs-hsg'")
+    nlcd_layer_pos = land_surface_block.find("{id: 'nlcd-impervious'")
+    if not (hsg_layer_pos >= 0 and nlcd_layer_pos > hsg_layer_pos):
+        errors.append(
+            "Land-Surface Runoff Sensitivity must list NRCS HSG first and Annual NLCD imperviousness second."
+        )
+
+required_nlcd_generator_fragments = [
+    'METADATA_MODE = "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final"',
+    'ANALYSIS_METADATA_MODE = "annual_nlcd_fractional_impervious_h2_v1_1"',
+    'RENDER_REVISION = "annual-nlcd-fctimp-2025-h2-v1-1-final"',
+    'EXPECTED_SOURCE_PRODUCT = "FctImp"',
+    'EXPECTED_MAP_YEAR = 2025',
+    'EXPECTED_SOURCE_NATIVE_RESOLUTION_M = 30',
+    'EXPECTED_ANALYSIS_RESOLUTION_M = 1000',
+    'EXPECTED_ANALYSIS_CRS = "EPSG:5070"',
+    'EXPECTED_GRID_WIDTH = 4621',
+    'EXPECTED_GRID_HEIGHT = 2913',
+    'TARGET_CRS = "EPSG:3857"',
+    'DEFAULT_OUTPUT_WIDTH = 9000',
+    'MINIMUM_VALID_COVERAGE = 0.25',
+    'OUTPUT_IMAGE = "usgs_nlcd_fractional_impervious_2025.png"',
+    'OUTPUT_METADATA = "usgs_nlcd_fractional_impervious_2025_metadata.json"',
+    'load_final_qa',
+    'Resampling.nearest',
+    '"persistent_source_nodata_display": "transparent"',
+    'Annual NLCD Phase H2 v1.1 final publication self-test: PASS',
+]
+for fragment in required_nlcd_generator_fragments:
+    if fragment not in nlcd_impervious_generator:
+        errors.append(f"Missing Annual NLCD Phase H2 generator contract fragment: {fragment}")
+
+if not nlcd_impervious_metadata_path.exists():
+    errors.append("Missing static/usgs_nlcd_fractional_impervious_2025_metadata.json")
+else:
+    try:
+        nlcd_meta = json.loads(nlcd_impervious_metadata_path.read_text(encoding="utf-8"))
+        if nlcd_meta.get("metadata_mode") != "usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final":
+            errors.append("Committed Annual NLCD metadata_mode is not the H2 v1.1 final contract.")
+        if nlcd_meta.get("render_revision") != "annual-nlcd-fctimp-2025-h2-v1-1-final":
+            errors.append("Committed Annual NLCD render revision is not v1.1 final.")
+        if nlcd_meta.get("source") != "USGS Annual NLCD Collection 1.2":
+            errors.append("Committed Annual NLCD source changed unexpectedly.")
+        if nlcd_meta.get("source_product") != "FctImp":
+            errors.append("Committed Annual NLCD source product is not FctImp.")
+        if int(nlcd_meta.get("source_map_year", -1)) != 2025:
+            errors.append("Committed Annual NLCD source map year is not 2025.")
+        if int(nlcd_meta.get("source_native_resolution_m", -1)) != 30:
+            errors.append("Committed Annual NLCD native source resolution is not 30 m.")
+        if int(nlcd_meta.get("scientific_analysis_resolution_m", -1)) != 1000:
+            errors.append("Committed Annual NLCD scientific analysis resolution is not 1 km.")
+        if str(nlcd_meta.get("scientific_analysis_crs", "")).upper() != "EPSG:5070":
+            errors.append("Committed Annual NLCD scientific analysis CRS is not EPSG:5070.")
+        if str(nlcd_meta.get("image_crs", "")).upper() != "EPSG:3857":
+            errors.append("Committed Annual NLCD display image is not EPSG:3857.")
+        if nlcd_meta.get("display_resampling") != "nearest-neighbor" or nlcd_meta.get("smoothing") is not False:
+            errors.append("Committed Annual NLCD display violates the nearest-neighbor/no-smoothing contract.")
+        if float(nlcd_meta.get("display_min_valid_coverage_fraction", -1)) != 0.25:
+            errors.append("Committed Annual NLCD display valid-coverage threshold is not 0.25.")
+        if nlcd_meta.get("zero_percent_display") != "transparent":
+            errors.append("Committed Annual NLCD zero-percent display must remain transparent.")
+        if nlcd_meta.get("persistent_source_nodata_display") != "transparent":
+            errors.append("Committed Annual NLCD persistent source NoData must remain transparent.")
+        if nlcd_meta.get("final_coverage_qa") != "nlcd_h2_v1_1_final_coverage_qa.json":
+            errors.append("Committed Annual NLCD metadata lost final coverage-QA provenance.")
+        if nlcd_meta.get("leaflet_bounds") != [[23.0, -125.0], [50.5, -66.5]]:
+            errors.append("Committed Annual NLCD display bounds changed unexpectedly.")
+        if int(nlcd_meta.get("image_width", -1)) != 9000 or int(nlcd_meta.get("image_height", -1)) != 5392:
+            errors.append("Committed Annual NLCD display dimensions are not 9000x5392.")
+        expected_bins = [
+            (0.0, 5.0, "#ffffcc", ">0–5%"),
+            (5.0, 10.0, "#ffeda0", "5–10%"),
+            (10.0, 20.0, "#fed976", "10–20%"),
+            (20.0, 40.0, "#feb24c", "20–40%"),
+            (40.0, 60.0, "#fd8d3c", "40–60%"),
+            (60.0, 80.0, "#f03b20", "60–80%"),
+            (80.0, 100.0001, "#bd0026", "80–100%"),
+        ]
+        actual_bins = [
+            (
+                float(item.get("min")),
+                float(item.get("max")),
+                str(item.get("color", "")).lower(),
+                item.get("label"),
+            )
+            for item in nlcd_meta.get("display_bins", [])
+        ]
+        if actual_bins != expected_bins:
+            errors.append("Committed Annual NLCD display bins/colors changed unexpectedly.")
+        if "scientific GeoTIFFs" not in str(nlcd_meta.get("dynamic_model_use_note", "")):
+            errors.append("Committed Annual NLCD metadata is missing the display-vs-science safeguard.")
+    except Exception as exc:
+        errors.append(f"Could not validate committed Annual NLCD metadata: {exc}")
+
+if not nlcd_impervious_image_path.exists():
+    errors.append("Missing static/usgs_nlcd_fractional_impervious_2025.png")
+else:
+    try:
+        with nlcd_impervious_image_path.open("rb") as fh:
+            signature = fh.read(8)
+            if signature != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("bad PNG signature")
+            length = struct.unpack(">I", fh.read(4))[0]
+            chunk_type = fh.read(4)
+            if length != 13 or chunk_type != b"IHDR":
+                raise ValueError("missing PNG IHDR")
+            width, height = struct.unpack(">II", fh.read(8))
+        if (width, height) != (9000, 5392):
+            errors.append(
+                f"Committed Annual NLCD PNG dimensions are {width}x{height}, expected 9000x5392."
+            )
+    except Exception as exc:
+        errors.append(f"Could not validate committed Annual NLCD PNG: {exc}")
+
+nlcd_initial_fetch = app.find("fetchNLCDImperviousMetadata();")
+refresh_loop_start = app.find("setInterval(() => {", nlcd_initial_fetch)
+refresh_loop_end = app.find("}, 15 * 60 * 1000);", refresh_loop_start)
+if refresh_loop_start >= 0 and refresh_loop_end > refresh_loop_start:
+    if "fetchNLCDImperviousMetadata();" in app[refresh_loop_start:refresh_loop_end]:
+        errors.append("Static Annual NLCD layer was incorrectly added to the 15-minute dynamic refresh loop.")
 
 # Confirm direct NOAA MRMS RALA looping, freshness handling, data-branch
 # publication, discoverable opacity, and IEM backup behavior.
@@ -1084,6 +1246,8 @@ if "glm-v1" not in index and "glm-v2" not in index:
 
 if "nrcs-hsg-native30m-h1-v2-3" not in index:
     errors.append("NRCS HSG native30m Phase H1 v2.3 cache-busting token is missing from index.html.")
+if "annual-nlcd-fctimp-2025-h2-v1-1-final" not in index:
+    errors.append("Annual NLCD Phase H2 v1.1 final cache-busting token is missing from index.html.")
 if "wfigs-dashboard-v2-history-v1-3-conus-overview" not in index:
     errors.append("WFIGS Phase 4.3 CONUS-overview cache-busting token is missing from index.html.")
 if "wfigs-seasonal-trends-v1-1" not in index:
@@ -1126,7 +1290,7 @@ if errors:
 print(
     "Dashboard validation passed: "
     f"{len(ids)} registered layers; menu order, looping MRMS RALA/opacity/freshness, MRMS FLASH order, "
-    "antecedent/HSG/WFIGS order, NRCS HSG Phase H1 native30m v2.3 assets, MRMS/NLDAS/GLM mappings, compact legends, "
+    "antecedent/HSG+NLCD/WFIGS order, NRCS HSG Phase H1 and Annual NLCD Phase H2 static assets, MRMS/NLDAS/GLM mappings, compact legends, "
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
