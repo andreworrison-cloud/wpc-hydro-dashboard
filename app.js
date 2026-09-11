@@ -18,6 +18,12 @@ customStyle.innerHTML = `
         image-rendering: pixelated !important;
     }
 
+    /* Annual NLCD is published as fixed impervious-percentage display bins.
+       Keep the validated nearest-neighbor display derivative crisp. */
+    img.nlcd-impervious-raster {
+        image-rendering: pixelated !important;
+    }
+
     .glm-trend-card {
         margin: 8px 8px 10px;
         overflow: hidden;
@@ -2136,6 +2142,9 @@ const NLDAS_RSM_0_100_IMAGE_URL = 'static/nldas_rsm_0_100cm.png';
 const NRCS_HSG_IMAGE_URL = 'static/nrcs_hydrologic_soil_group.png';
 const NRCS_HSG_METADATA_URL = 'static/nrcs_hydrologic_soil_group_metadata.json';
 const NRCS_HSG_LAYER_NAME = 'NRCS Hydrologic Soil Group (A–D / Dual)';
+const NLCD_IMPERVIOUS_IMAGE_URL = 'static/usgs_nlcd_fractional_impervious_2025.png';
+const NLCD_IMPERVIOUS_METADATA_URL = 'static/usgs_nlcd_fractional_impervious_2025_metadata.json';
+const NLCD_IMPERVIOUS_LAYER_NAME = 'USGS Annual NLCD Fractional Impervious Surface (%)';
 const soilPlaceholderBounds = [[24.0, -125.0], [50.0, -66.0]];
 
 const nwmLayer = L.imageOverlay(
@@ -2170,6 +2179,17 @@ const nrcsHsgLayer = L.imageOverlay(
         opacity: 0,
         interactive: false,
         className: 'nrcs-hsg-raster'
+    }
+);
+
+const nlcdImperviousLayer = L.imageOverlay(
+    NLCD_IMPERVIOUS_IMAGE_URL,
+    soilPlaceholderBounds,
+    {
+        zIndex: 10,
+        opacity: 0,
+        interactive: false,
+        className: 'nlcd-impervious-raster'
     }
 );
 
@@ -3863,6 +3883,8 @@ let sportLayerReady = false;
 let nldasRsmReady = false;
 let nrcsHsgReady = false;
 let nrcsHsgMetadata = null;
+let nlcdImperviousReady = false;
+let nlcdImperviousMetadata = null;
 
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
@@ -3874,6 +3896,7 @@ let nwmValidTime = "Unknown";
 let sportValidTime = "Unknown";
 let nldasRsmValidTime = "Unknown";
 let nrcsHsgSourceVintage = "Unknown";
+let nlcdImperviousMapYear = "Unknown";
 
 function fetchRAPMetadata() {
     fetch('static/rap_metadata.json?t=' + new Date().getTime())
@@ -5984,6 +6007,127 @@ function formatNRCSHSGTimeBox(metadata = nrcsHsgMetadata) {
     `;
 }
 
+
+async function fetchNLCDImperviousMetadata() {
+    try {
+        const response = await fetch(
+            `${NLCD_IMPERVIOUS_METADATA_URL}?t=${Date.now()}`,
+            {cache: 'no-store'}
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        if (data.metadata_mode !== 'usgs_nlcd_fractional_impervious_h2_dashboard_v1_1_final') {
+            throw new Error(`Unexpected NLCD metadata mode: ${data.metadata_mode || 'missing'}`);
+        }
+        if (data.render_revision !== 'annual-nlcd-fctimp-2025-h2-v1-1-final') {
+            throw new Error(`Unexpected NLCD render revision: ${data.render_revision || 'missing'}`);
+        }
+        if (
+            data.source !== 'USGS Annual NLCD Collection 1.2' ||
+            data.source_product !== 'FctImp' ||
+            Number(data.source_map_year) !== 2025
+        ) {
+            throw new Error('Annual NLCD source/product/year contract changed unexpectedly');
+        }
+        if (
+            Number(data.source_native_resolution_m) !== 30 ||
+            Number(data.scientific_analysis_resolution_m) !== 1000 ||
+            String(data.scientific_analysis_crs || '').toUpperCase() !== 'EPSG:5070'
+        ) {
+            throw new Error('Annual NLCD native-30m / 1-km EPSG:5070 science contract changed');
+        }
+        if (
+            String(data.image_crs || '').toUpperCase() !== 'EPSG:3857' ||
+            data.display_resampling !== 'nearest-neighbor' ||
+            data.smoothing !== false
+        ) {
+            throw new Error('Annual NLCD dashboard display contract changed');
+        }
+        if (Number(data.display_min_valid_coverage_fraction) !== 0.25) {
+            throw new Error('Annual NLCD minimum valid-coverage display threshold changed');
+        }
+        if (
+            data.zero_percent_display !== 'transparent' ||
+            data.persistent_source_nodata_display !== 'transparent'
+        ) {
+            throw new Error('Annual NLCD transparent zero/NoData display contract changed');
+        }
+        if (data.final_coverage_qa !== 'nlcd_h2_v1_1_final_coverage_qa.json') {
+            throw new Error('Annual NLCD final QA provenance changed unexpectedly');
+        }
+
+        const expectedBins = [
+            [0, 5, '#ffffcc', '>0–5%'],
+            [5, 10, '#ffeda0', '5–10%'],
+            [10, 20, '#fed976', '10–20%'],
+            [20, 40, '#feb24c', '20–40%'],
+            [40, 60, '#fd8d3c', '40–60%'],
+            [60, 80, '#f03b20', '60–80%'],
+            [80, 100.0001, '#bd0026', '80–100%']
+        ];
+        const bins = data.display_bins || [];
+        if (
+            bins.length !== expectedBins.length ||
+            !expectedBins.every(([min, max, color, label], i) => (
+                Number(bins[i]?.min) === min &&
+                Number(bins[i]?.max) === max &&
+                String(bins[i]?.color || '').toLowerCase() === color &&
+                bins[i]?.label === label
+            ))
+        ) {
+            throw new Error('Annual NLCD display bins/colors changed unexpectedly');
+        }
+        if (!String(data.dynamic_model_use_note || '').includes('scientific GeoTIFFs')) {
+            throw new Error('Annual NLCD metadata is missing the science-vs-display safeguard');
+        }
+
+        const exactBounds = validateRasterBounds(
+            data.leaflet_bounds,
+            'USGS Annual NLCD Fractional Impervious Surface'
+        );
+        const staticVersion = [data.source_map_year, data.render_revision]
+            .filter(Boolean)
+            .join('-');
+
+        nlcdImperviousLayer.setBounds(exactBounds);
+        nlcdImperviousLayer.setUrl(
+            `${NLCD_IMPERVIOUS_IMAGE_URL}?v=${encodeURIComponent(staticVersion)}`
+        );
+        nlcdImperviousLayer.setOpacity(0.88);
+
+        nlcdImperviousMetadata = data;
+        nlcdImperviousMapYear = String(data.source_map_year || 'Unknown');
+        nlcdImperviousReady = true;
+
+        const timeBox = document.getElementById('nlcd-impervious-time-box');
+        if (timeBox && timeBox.style.display === 'block') {
+            timeBox.innerHTML = formatNLCDImperviousTimeBox(data);
+        }
+    } catch (error) {
+        nlcdImperviousReady = false;
+        nlcdImperviousLayer.setOpacity(0);
+        console.error('Annual NLCD impervious raster metadata update failed:', error);
+    }
+}
+
+function formatNLCDImperviousTimeBox(metadata = nlcdImperviousMetadata) {
+    const mapYear = metadata?.source_map_year || nlcdImperviousMapYear || 'Unknown';
+    const nativeResolution = Number(metadata?.source_native_resolution_m);
+    const analysisResolution = Number(metadata?.scientific_analysis_resolution_m);
+    const resolutionText = (
+        Number.isFinite(nativeResolution) && Number.isFinite(analysisResolution)
+            ? `${nativeResolution} m source → ${analysisResolution / 1000} km analysis`
+            : 'native-source / equal-area analysis'
+    );
+    return `
+        <strong>USGS Annual NLCD Impervious Surface</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">Collection 1.2 • ${mapYear}</span><br>
+        <span style="color:#d7edf8;">${resolutionText}</span><br>
+        <span style="color:#ffeb3b;">Static annual land-surface layer</span>
+    `;
+}
+
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
@@ -5996,6 +6140,7 @@ fetchNWMMetadata();
 fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
 fetchNRCSHSGMetadata();
+fetchNLCDImperviousMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
@@ -6192,6 +6337,7 @@ legendDockControl.onAdd = function () {
         'nldas-rsm-010-time-box',
         'nldas-rsm-0100-time-box',
         'nrcs-hsg-time-box',
+        'nlcd-impervious-time-box',
         'wfigs-current-time-box',
         'wfigs-ytd-time-box',
         'wfigs-history-time-box'
@@ -6580,6 +6726,33 @@ const nrcsHsgLegendHTML = `
     </div>
 `;
 
+const nlcdImperviousLegendHTML = `
+    <div style="background:white;padding:10px;border-radius:5px;color:black;font-family:sans-serif;min-width:270px;">
+        <div style="text-align:center;font-weight:800;font-size:13px;margin-bottom:2px;">USGS Annual NLCD Impervious Surface</div>
+        <div style="text-align:center;font-size:9px;margin-bottom:7px;color:#444;">2025 Fractional Impervious Surface • mean % per 1 km analysis cell</div>
+        ${[
+            ['#ffffcc', '>0–5%', 'Very low impervious fraction'],
+            ['#ffeda0', '5–10%', 'Low impervious fraction'],
+            ['#fed976', '10–20%', 'Modest impervious fraction'],
+            ['#feb24c', '20–40%', 'Moderate impervious fraction'],
+            ['#fd8d3c', '40–60%', 'High impervious fraction'],
+            ['#f03b20', '60–80%', 'Very high impervious fraction'],
+            ['#bd0026', '80–100%', 'Highly impervious surface']
+        ].map(([color, label, description]) => `
+            <div style="display:grid;grid-template-columns:18px 52px 1fr;gap:6px;align-items:center;margin:3px 0;font-size:9px;">
+                <span style="width:16px;height:13px;background:${color};border:1px solid #555;"></span>
+                <strong>${label}</strong>
+                <span>${description}</span>
+            </div>
+        `).join('')}
+        <div style="margin-top:7px;padding-top:6px;border-top:1px solid #bbb;font-size:8px;line-height:1.25;color:#555;">
+            USGS Annual NLCD Collection 1.2 (2025), native 30 m source aggregated to the retained 1 km equal-area Phase H2 analysis.
+            Display bins are visualization only. Zero percent and persistent source NoData are transparent.
+            Static land-surface context — not a rainfall threshold or dynamic runoff estimate.
+        </div>
+    </div>
+`;
+
 const GLM_FALLBACK_RENDERING = {
     5: {
         labels: ['1', '2–3', '4–7', '8–15', '16–31', '32–63', '64–127', '128–255', '≥256'],
@@ -6744,6 +6917,7 @@ function updateLegends() {
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)')) addLegendBlock(nldasRsm010LegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)')) addLegendBlock(nldasRsm0100LegendHTML);
     if (activeLayerNames.has(NRCS_HSG_LAYER_NAME)) addLegendBlock(nrcsHsgLegendHTML);
+    if (activeLayerNames.has(NLCD_IMPERVIOUS_LAYER_NAME)) addLegendBlock(nlcdImperviousLegendHTML);
     GLM_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.name))
         .forEach(config => addLegendBlock(glmLegendHTMLForConfig(config)));
@@ -6808,6 +6982,7 @@ map.on('overlayadd', function(eventLayer) {
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
     const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
+    const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         // Refresh bounds, valid times, and cache-busted RAP image URLs
@@ -6967,6 +7142,16 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
+    if (eventLayer.name === NLCD_IMPERVIOUS_LAYER_NAME) {
+        if (!nlcdImperviousReady) fetchNLCDImperviousMetadata();
+        if (nlcdImperviousTimeBox) {
+            nlcdImperviousTimeBox.innerHTML = nlcdImperviousReady
+                ? formatNLCDImperviousTimeBox(nlcdImperviousMetadata)
+                : `<strong>USGS Annual NLCD Impervious Surface</strong><br><span style="color:#ffeb3b;">Loading annual land-surface layer...</span>`;
+            nlcdImperviousTimeBox.style.display = 'block';
+        }
+    }
+
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
         let titleText = "";
         let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
@@ -7055,6 +7240,7 @@ map.on('overlayremove', function(eventLayer) {
     const nldasRsm010TimeBox = document.getElementById('nldas-rsm-010-time-box');
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
     const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
+    const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -7119,6 +7305,10 @@ map.on('overlayremove', function(eventLayer) {
     
     if (eventLayer.name === NRCS_HSG_LAYER_NAME) {
         if (nrcsHsgTimeBox) nrcsHsgTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === NLCD_IMPERVIOUS_LAYER_NAME) {
+        if (nlcdImperviousTimeBox) nlcdImperviousTimeBox.style.display = 'none';
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -7256,6 +7446,11 @@ const dashboardSections = [
              description: 'FY2026 USDA-NRCS gNATSGO HSG from native 30 m MUKEY geometry and map-unit dominant conditions, aggregated on the retained 1 km equal-area Phase H1 analysis; preserves all seven HSG classes.',
              layer: nrcsHsgLayer, kind: 'raster',
              keywords: 'USDA NRCS gNATSGO SSURGO hydrologic soil group HSG hydgrpdcd A B C D A/D B/D C/D infiltration runoff susceptibility soil type'}
+,
+            {id: 'nlcd-impervious', label: NLCD_IMPERVIOUS_LAYER_NAME,
+             description: '2025 USGS Annual NLCD Collection 1.2 Fractional Impervious Surface from native 30 m source, aggregated to the retained 1 km equal-area Phase H2 analysis; persistent source NoData is retained rather than inferred.',
+             layer: nlcdImperviousLayer, kind: 'raster',
+             keywords: 'USGS Annual NLCD fractional impervious surface imperviousness urban pavement rooftop roads developed land cover runoff sensitivity infiltration 2025 Collection 1.2 FctImp'}
         ]
     },
     {
