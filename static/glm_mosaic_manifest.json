@@ -2,7 +2,7 @@
   "metadata_mode": "glm_dashboard_v1",
   "product": "Incremental operational GOES GLM controlled CONUS mosaic package",
   "execution_mode": "operational_fast_path",
-  "window_end_utc": "2026-09-12T22:20:00Z",
+  "window_end_utc": "2026-09-12T22:30:00Z",
   "windows_minutes": [
     5,
     30,
@@ -23,8 +23,6 @@
   "incremental_cache": {
     "slot_minutes": 5,
     "retained_synchronized_slots": [
-      "2026-09-12T21:25:00Z",
-      "2026-09-12T21:30:00Z",
       "2026-09-12T21:35:00Z",
       "2026-09-12T21:40:00Z",
       "2026-09-12T21:45:00Z",
@@ -34,7 +32,9 @@
       "2026-09-12T22:05:00Z",
       "2026-09-12T22:10:00Z",
       "2026-09-12T22:15:00Z",
-      "2026-09-12T22:20:00Z"
+      "2026-09-12T22:20:00Z",
+      "2026-09-12T22:25:00Z",
+      "2026-09-12T22:30:00Z"
     ],
     "retained_slot_count": 12,
     "cache_hits_this_run": 0,
@@ -46,7 +46,7 @@
     "wms_endpoint": "https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi",
     "wms_layer": "nexrad-n0q-wmst",
     "frame_interval_minutes": 10,
-    "comparison_time_utc": "2026-09-12T22:20:00Z",
+    "comparison_time_utc": "2026-09-12T22:30:00Z",
     "artifact_debug_html": null
   },
   "mosaic_products": [
@@ -56,17 +56,17 @@
       "window_minutes": 5,
       "product_kind": "five-minute flash extent density",
       "display_label": "GOES GLM Controlled Mosaic \u2014 Latest 5-Minute FED",
-      "window_start_utc": "2026-09-12T22:15:00Z",
-      "window_end_utc": "2026-09-12T22:20:00Z",
-      "maximum_value": 91,
-      "nonzero_grid_cells": 6060,
+      "window_start_utc": "2026-09-12T22:25:00Z",
+      "window_end_utc": "2026-09-12T22:30:00Z",
+      "maximum_value": 77,
+      "nonzero_grid_cells": 6419,
       "display_footprint_radius_pixels": 2,
       "display_note": "Display-only maximum-value footprint expansion; underlying FED counts and ownership are unchanged.",
-      "flash_cell_contributions": 23678,
+      "flash_cell_contributions": 23232,
       "source_g18_owned_cells": 2091250,
       "source_g19_owned_cells": 4033750,
-      "source_g18_nonzero_cells": 1243,
-      "source_g19_nonzero_cells": 4817,
+      "source_g18_nonzero_cells": 1245,
+      "source_g19_nonzero_cells": 5174,
       "source_product": "GLM-L2-LCFA",
       "mosaic_method": {
         "name": "exclusive lower-view-angle source ownership",
@@ -85,8 +85,8 @@
           "satellite": "G18",
           "satellite_label": "GOES-18 (West)",
           "window_minutes": 5,
-          "window_start_utc": "2026-09-12T22:15:00Z",
-          "window_end_utc": "2026-09-12T22:20:00Z",
+          "window_start_utc": "2026-09-12T22:25:00Z",
+          "window_end_utc": "2026-09-12T22:30:00Z",
           "expected_slots": 1,
           "available_slots": 1,
           "slot_completeness_fraction": 1.0,
@@ -94,19 +94,19 @@
           "listed_files": 15,
           "processed_files": 15,
           "completeness_fraction": 1.0,
-          "quality_controlled_flash_records": 4652,
-          "events_mapped_to_good_flashes": 90073,
-          "events_in_domain": 45796,
-          "flash_cell_contributions": 12442,
-          "nonzero_grid_cells": 3757,
-          "maximum_value": 69
+          "quality_controlled_flash_records": 4701,
+          "events_mapped_to_good_flashes": 95111,
+          "events_in_domain": 46803,
+          "flash_cell_contributions": 12882,
+          "nonzero_grid_cells": 4045,
+          "maximum_value": 55
         },
         "G19": {
           "satellite": "G19",
           "satellite_label": "GOES-19 (East)",
           "window_minutes": 5,
-          "window_start_utc": "2026-09-12T22:15:00Z",
-          "window_end_utc": "2026-09-12T22:20:00Z",
+          "window_start_utc": "2026-09-12T22:25:00Z",
+          "window_end_utc": "2026-09-12T22:30:00Z",
           "expected_slots": 1,
           "available_slots": 1,
           "slot_completeness_fraction": 1.0,
@@ -114,12 +114,12 @@
           "listed_files": 15,
           "processed_files": 15,
           "completeness_fraction": 1.0,
-          "quality_controlled_flash_records": 10827,
-          "events_mapped_to_good_flashes": 398536,
-          "events_in_domain": 112104,
-          "flash_cell_contributions": 22610,
-          "nonzero_grid_cells": 5855,
-          "maximum_value": 91
+          "quality_controlled_flash_records": 10747,
+          "events_mapped_to_good_flashes": 411198,
+          "events_in_domain": 110401,
+          "flash_cell_contributions": 22102,
+          "nonzero_grid_cells": 6242,
+          "maximum_value": 77
         }
       },
       "incremental_cache": {
@@ -133,12 +133,12 @@
         "seam_longitude": -106.1,
         "band_half_width_degrees": 5.0,
         "band_grid_cells": 875000,
-        "either_satellite_nonzero_cells": 3584,
-        "both_satellites_nonzero_cells": 78,
-        "g18_nonzero_cells": 1840,
-        "g19_nonzero_cells": 1822,
-        "selected_nonzero_cells": 1954,
-        "mean_g19_minus_g18_where_both_nonzero": 0.6538461538461539,
+        "either_satellite_nonzero_cells": 3702,
+        "both_satellites_nonzero_cells": 79,
+        "g18_nonzero_cells": 1873,
+        "g19_nonzero_cells": 1908,
+        "selected_nonzero_cells": 1986,
+        "mean_g19_minus_g18_where_both_nonzero": 0.5569620253164557,
         "median_g19_minus_g18_where_both_nonzero": 0.0
       },
       "units": "flashes per 0.02-degree grid cell per five minutes",
@@ -266,28 +266,28 @@
       "nonzero_percentiles": {
         "p50": 2.0,
         "p75": 4.0,
-        "p90": 9.0,
-        "p95": 14.0,
-        "p99": 33.0,
-        "p99_5": 46.0,
-        "p99_9": 76.94100000000071
+        "p90": 8.0,
+        "p95": 12.099999999999454,
+        "p99": 28.0,
+        "p99_5": 35.909999999999854,
+        "p99_9": 55.582000000000335
       },
       "render_bin_counts": {
-        "1": 2725,
-        "2\u20133": 1667,
-        "4\u20137": 938,
-        "8\u201315": 478,
-        "16\u201331": 183,
-        "32\u201363": 57,
-        "64\u2013127": 12,
+        "1": 2922,
+        "2\u20133": 1772,
+        "4\u20137": 1003,
+        "8\u201315": 506,
+        "16\u201331": 166,
+        "32\u201363": 47,
+        "64\u2013127": 3,
         "128\u2013255": 0,
         "\u2265256": 0
       },
-      "generated_time_utc": "2026-09-12T22:27:39Z",
+      "generated_time_utc": "2026-09-12T22:37:54Z",
       "convective_trend": {
         "metadata_mode": "glm_convective_trend_v1",
         "product": "GOES GLM controlled-mosaic convective trend diagnostic",
-        "window_end_utc": "2026-09-12T22:20:00Z",
+        "window_end_utc": "2026-09-12T22:30:00Z",
         "history_minutes": 60,
         "slot_minutes": 5,
         "metric": "five-minute controlled-mosaic flash-extent contributions",
@@ -325,20 +325,6 @@
             "bounds": null,
             "definition": "Union of the seven authoritative fixed WPC UFVS rectangular domains",
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 18349,
-                "active_grid_cells": 4003,
-                "maximum_cell_value": 108
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 17300,
-                "active_grid_cells": 3850,
-                "maximum_cell_value": 135
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -408,22 +394,36 @@
                 "flash_extent_contributions": 17924,
                 "active_grid_cells": 4331,
                 "maximum_cell_value": 91
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 17274,
+                "active_grid_cells": 4214,
+                "maximum_cell_value": 100
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 17126,
+                "active_grid_cells": 4410,
+                "maximum_cell_value": 77
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 17924,
-            "latest_active_grid_cells": 4331,
-            "latest_maximum_cell_value": 91,
-            "peak_value_last_60min": 18349,
-            "peak_time_utc": "2026-09-12T21:25:00Z",
+            "latest_value": 17126,
+            "latest_active_grid_cells": 4410,
+            "latest_maximum_cell_value": 77,
+            "peak_value_last_60min": 17924,
+            "peak_time_utc": "2026-09-12T22:20:00Z",
             "classification": "steady",
             "classification_label": "Steady",
-            "recent_15min_average": 17349.3,
-            "prior_15min_average": 16043.0,
-            "recent_15min_active_cell_average": 4297.0,
-            "prior_15min_active_cell_average": 3867.0,
-            "symmetric_change_percent": 7.8
+            "recent_15min_average": 17441.3,
+            "prior_15min_average": 16816.7,
+            "recent_15min_active_cell_average": 4318.3,
+            "prior_15min_active_cell_average": 4165.3,
+            "symmetric_change_percent": 3.6
           },
           "west-coast": {
             "id": "west-coast",
@@ -435,20 +435,6 @@
               "north": 49.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 0,
-                "active_grid_cells": 0,
-                "maximum_cell_value": 0
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 0,
-                "active_grid_cells": 0,
-                "maximum_cell_value": 0
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -518,6 +504,20 @@
                 "flash_extent_contributions": 0,
                 "active_grid_cells": 0,
                 "maximum_cell_value": 0
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 0,
+                "active_grid_cells": 0,
+                "maximum_cell_value": 0
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 0,
+                "active_grid_cells": 0,
+                "maximum_cell_value": 0
               }
             ],
             "available_slots": 12,
@@ -526,7 +526,7 @@
             "latest_active_grid_cells": 0,
             "latest_maximum_cell_value": 0,
             "peak_value_last_60min": 0,
-            "peak_time_utc": "2026-09-12T21:25:00Z",
+            "peak_time_utc": "2026-09-12T21:35:00Z",
             "classification": "low_activity",
             "classification_label": "Low Activity",
             "recent_15min_average": 0.0,
@@ -545,20 +545,6 @@
               "north": 42.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 2858,
-                "active_grid_cells": 959,
-                "maximum_cell_value": 30
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 3337,
-                "active_grid_cells": 1047,
-                "maximum_cell_value": 25
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -628,22 +614,36 @@
                 "flash_extent_contributions": 4378,
                 "active_grid_cells": 1257,
                 "maximum_cell_value": 44
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 4314,
+                "active_grid_cells": 1169,
+                "maximum_cell_value": 53
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 4416,
+                "active_grid_cells": 1156,
+                "maximum_cell_value": 55
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 4378,
-            "latest_active_grid_cells": 1257,
-            "latest_maximum_cell_value": 44,
-            "peak_value_last_60min": 4378,
-            "peak_time_utc": "2026-09-12T22:20:00Z",
+            "latest_value": 4416,
+            "latest_active_grid_cells": 1156,
+            "latest_maximum_cell_value": 55,
+            "peak_value_last_60min": 4416,
+            "peak_time_utc": "2026-09-12T22:30:00Z",
             "classification": "steady",
             "classification_label": "Steady",
-            "recent_15min_average": 4143.3,
-            "prior_15min_average": 3784.7,
-            "recent_15min_active_cell_average": 1217.0,
-            "prior_15min_active_cell_average": 1088.3,
-            "symmetric_change_percent": 9.0
+            "recent_15min_average": 4369.3,
+            "prior_15min_average": 4073.3,
+            "recent_15min_active_cell_average": 1194.0,
+            "prior_15min_active_cell_average": 1170.7,
+            "symmetric_change_percent": 7.0
           },
           "interior-mountain-west": {
             "id": "interior-mountain-west",
@@ -655,20 +655,6 @@
               "north": 49.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 0,
-                "active_grid_cells": 0,
-                "maximum_cell_value": 0
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 0,
-                "active_grid_cells": 0,
-                "maximum_cell_value": 0
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -738,13 +724,27 @@
                 "flash_extent_contributions": 1,
                 "active_grid_cells": 1,
                 "maximum_cell_value": 1
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 0,
+                "active_grid_cells": 0,
+                "maximum_cell_value": 0
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 0,
+                "active_grid_cells": 0,
+                "maximum_cell_value": 0
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 1,
-            "latest_active_grid_cells": 1,
-            "latest_maximum_cell_value": 1,
+            "latest_value": 0,
+            "latest_active_grid_cells": 0,
+            "latest_maximum_cell_value": 0,
             "peak_value_last_60min": 1,
             "peak_time_utc": "2026-09-12T22:20:00Z",
             "classification": "low_activity",
@@ -765,20 +765,6 @@
               "north": 49.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 738,
-                "active_grid_cells": 215,
-                "maximum_cell_value": 38
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 639,
-                "active_grid_cells": 203,
-                "maximum_cell_value": 19
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -848,22 +834,36 @@
                 "flash_extent_contributions": 441,
                 "active_grid_cells": 160,
                 "maximum_cell_value": 15
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 596,
+                "active_grid_cells": 237,
+                "maximum_cell_value": 19
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 676,
+                "active_grid_cells": 245,
+                "maximum_cell_value": 19
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 441,
-            "latest_active_grid_cells": 160,
-            "latest_maximum_cell_value": 15,
-            "peak_value_last_60min": 738,
-            "peak_time_utc": "2026-09-12T21:25:00Z",
+            "latest_value": 676,
+            "latest_active_grid_cells": 245,
+            "latest_maximum_cell_value": 19,
+            "peak_value_last_60min": 676,
+            "peak_time_utc": "2026-09-12T22:30:00Z",
             "classification": "steady",
             "classification_label": "Steady",
-            "recent_15min_average": 502.0,
-            "prior_15min_average": 473.0,
-            "recent_15min_active_cell_average": 189.7,
-            "prior_15min_active_cell_average": 189.3,
-            "symmetric_change_percent": 5.9
+            "recent_15min_average": 571.0,
+            "prior_15min_average": 507.0,
+            "recent_15min_active_cell_average": 214.0,
+            "prior_15min_active_cell_average": 196.0,
+            "symmetric_change_percent": 11.9
           },
           "southern-plains": {
             "id": "southern-plains",
@@ -875,20 +875,6 @@
               "north": 38.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 4507,
-                "active_grid_cells": 998,
-                "maximum_cell_value": 90
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 4451,
-                "active_grid_cells": 907,
-                "maximum_cell_value": 90
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -958,22 +944,36 @@
                 "flash_extent_contributions": 3543,
                 "active_grid_cells": 833,
                 "maximum_cell_value": 91
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 3352,
+                "active_grid_cells": 825,
+                "maximum_cell_value": 71
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 3453,
+                "active_grid_cells": 908,
+                "maximum_cell_value": 70
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 3543,
-            "latest_active_grid_cells": 833,
-            "latest_maximum_cell_value": 91,
+            "latest_value": 3453,
+            "latest_active_grid_cells": 908,
+            "latest_maximum_cell_value": 70,
             "peak_value_last_60min": 4957,
             "peak_time_utc": "2026-09-12T21:40:00Z",
             "classification": "steady",
             "classification_label": "Steady",
-            "recent_15min_average": 3527.3,
-            "prior_15min_average": 3647.7,
-            "recent_15min_active_cell_average": 832.0,
-            "prior_15min_active_cell_average": 849.7,
-            "symmetric_change_percent": -3.4
+            "recent_15min_average": 3449.3,
+            "prior_15min_average": 3534.7,
+            "recent_15min_active_cell_average": 855.3,
+            "prior_15min_active_cell_average": 847.3,
+            "symmetric_change_percent": -2.4
           },
           "southeast": {
             "id": "southeast",
@@ -985,20 +985,6 @@
               "north": 38.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 8952,
-                "active_grid_cells": 1459,
-                "maximum_cell_value": 108
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 7593,
-                "active_grid_cells": 1343,
-                "maximum_cell_value": 135
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -1068,22 +1054,36 @@
                 "flash_extent_contributions": 8829,
                 "active_grid_cells": 1811,
                 "maximum_cell_value": 83
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 8391,
+                "active_grid_cells": 1748,
+                "maximum_cell_value": 100
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 7901,
+                "active_grid_cells": 1794,
+                "maximum_cell_value": 77
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 8829,
-            "latest_active_grid_cells": 1811,
-            "latest_maximum_cell_value": 83,
-            "peak_value_last_60min": 8952,
-            "peak_time_utc": "2026-09-12T21:25:00Z",
+            "latest_value": 7901,
+            "latest_active_grid_cells": 1794,
+            "latest_maximum_cell_value": 77,
+            "peak_value_last_60min": 8829,
+            "peak_time_utc": "2026-09-12T22:20:00Z",
             "classification": "steady",
             "classification_label": "Steady",
-            "recent_15min_average": 8443.7,
-            "prior_15min_average": 7357.0,
-            "recent_15min_active_cell_average": 1742.0,
-            "prior_15min_active_cell_average": 1443.7,
-            "symmetric_change_percent": 13.8
+            "recent_15min_average": 8373.7,
+            "prior_15min_average": 7954.7,
+            "recent_15min_active_cell_average": 1784.3,
+            "prior_15min_active_cell_average": 1618.3,
+            "symmetric_change_percent": 5.1
           },
           "northeast": {
             "id": "northeast",
@@ -1095,20 +1095,6 @@
               "north": 49.0
             },
             "series": [
-              {
-                "slot_end_utc": "2026-09-12T21:25:00Z",
-                "available": true,
-                "flash_extent_contributions": 1294,
-                "active_grid_cells": 372,
-                "maximum_cell_value": 86
-              },
-              {
-                "slot_end_utc": "2026-09-12T21:30:00Z",
-                "available": true,
-                "flash_extent_contributions": 1280,
-                "active_grid_cells": 350,
-                "maximum_cell_value": 110
-              },
               {
                 "slot_end_utc": "2026-09-12T21:35:00Z",
                 "available": true,
@@ -1178,25 +1164,39 @@
                 "flash_extent_contributions": 732,
                 "active_grid_cells": 269,
                 "maximum_cell_value": 29
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:25:00Z",
+                "available": true,
+                "flash_extent_contributions": 621,
+                "active_grid_cells": 235,
+                "maximum_cell_value": 21
+              },
+              {
+                "slot_end_utc": "2026-09-12T22:30:00Z",
+                "available": true,
+                "flash_extent_contributions": 680,
+                "active_grid_cells": 307,
+                "maximum_cell_value": 17
               }
             ],
             "available_slots": 12,
             "expected_slots": 12,
-            "latest_value": 732,
-            "latest_active_grid_cells": 269,
-            "latest_maximum_cell_value": 29,
-            "peak_value_last_60min": 1294,
-            "peak_time_utc": "2026-09-12T21:25:00Z",
+            "latest_value": 680,
+            "latest_active_grid_cells": 307,
+            "latest_maximum_cell_value": 17,
+            "peak_value_last_60min": 1075,
+            "peak_time_utc": "2026-09-12T21:35:00Z",
             "classification": "steady",
             "classification_label": "Steady",
-            "recent_15min_average": 732.7,
-            "prior_15min_average": 780.7,
-            "recent_15min_active_cell_average": 316.0,
-            "prior_15min_active_cell_average": 296.0,
-            "symmetric_change_percent": -6.3
+            "recent_15min_average": 677.7,
+            "prior_15min_average": 747.0,
+            "recent_15min_active_cell_average": 270.3,
+            "prior_15min_active_cell_average": 333.0,
+            "symmetric_change_percent": -9.7
           }
         },
-        "generated_time_utc": "2026-09-12T22:27:39Z"
+        "generated_time_utc": "2026-09-12T22:37:53Z"
       }
     },
     {
@@ -1205,17 +1205,17 @@
       "window_minutes": 30,
       "product_kind": "rolling 30-minute flash extent accumulation",
       "display_label": "GOES GLM Controlled Mosaic \u2014 Rolling 30-Minute Accumulation",
-      "window_start_utc": "2026-09-12T21:50:00Z",
-      "window_end_utc": "2026-09-12T22:20:00Z",
-      "maximum_value": 577,
-      "nonzero_grid_cells": 13065,
+      "window_start_utc": "2026-09-12T22:00:00Z",
+      "window_end_utc": "2026-09-12T22:30:00Z",
+      "maximum_value": 510,
+      "nonzero_grid_cells": 13465,
       "display_footprint_radius_pixels": 2,
       "display_note": "Display-only maximum-value footprint expansion; underlying FED counts and ownership are unchanged.",
-      "flash_cell_contributions": 137009,
+      "flash_cell_contributions": 138300,
       "source_g18_owned_cells": 2091250,
       "source_g19_owned_cells": 4033750,
-      "source_g18_nonzero_cells": 2455,
-      "source_g19_nonzero_cells": 10610,
+      "source_g18_nonzero_cells": 2480,
+      "source_g19_nonzero_cells": 10985,
       "source_product": "GLM-L2-LCFA",
       "mosaic_method": {
         "name": "exclusive lower-view-angle source ownership",
@@ -1234,8 +1234,8 @@
           "satellite": "G18",
           "satellite_label": "GOES-18 (West)",
           "window_minutes": 30,
-          "window_start_utc": "2026-09-12T21:50:00Z",
-          "window_end_utc": "2026-09-12T22:20:00Z",
+          "window_start_utc": "2026-09-12T22:00:00Z",
+          "window_end_utc": "2026-09-12T22:30:00Z",
           "expected_slots": 6,
           "available_slots": 6,
           "slot_completeness_fraction": 1.0,
@@ -1243,19 +1243,19 @@
           "listed_files": 90,
           "processed_files": 90,
           "completeness_fraction": 1.0,
-          "quality_controlled_flash_records": 26504,
-          "events_mapped_to_good_flashes": 495747,
-          "events_in_domain": 259361,
-          "flash_cell_contributions": 70536,
-          "nonzero_grid_cells": 8612,
-          "maximum_value": 377
+          "quality_controlled_flash_records": 27309,
+          "events_mapped_to_good_flashes": 527961,
+          "events_in_domain": 270228,
+          "flash_cell_contributions": 73230,
+          "nonzero_grid_cells": 8550,
+          "maximum_value": 306
         },
         "G19": {
           "satellite": "G19",
           "satellite_label": "GOES-19 (East)",
           "window_minutes": 30,
-          "window_start_utc": "2026-09-12T21:50:00Z",
-          "window_end_utc": "2026-09-12T22:20:00Z",
+          "window_start_utc": "2026-09-12T22:00:00Z",
+          "window_end_utc": "2026-09-12T22:30:00Z",
           "expected_slots": 6,
           "available_slots": 6,
           "slot_completeness_fraction": 1.0,
@@ -1263,12 +1263,12 @@
           "listed_files": 90,
           "processed_files": 90,
           "completeness_fraction": 1.0,
-          "quality_controlled_flash_records": 65905,
-          "events_mapped_to_good_flashes": 2229706,
-          "events_in_domain": 640702,
-          "flash_cell_contributions": 131179,
-          "nonzero_grid_cells": 12760,
-          "maximum_value": 577
+          "quality_controlled_flash_records": 65469,
+          "events_mapped_to_good_flashes": 2352047,
+          "events_in_domain": 650753,
+          "flash_cell_contributions": 132266,
+          "nonzero_grid_cells": 13203,
+          "maximum_value": 510
         }
       },
       "incremental_cache": {
@@ -1282,12 +1282,12 @@
         "seam_longitude": -106.1,
         "band_half_width_degrees": 5.0,
         "band_grid_cells": 875000,
-        "either_satellite_nonzero_cells": 7670,
-        "both_satellites_nonzero_cells": 191,
-        "g18_nonzero_cells": 3983,
-        "g19_nonzero_cells": 3878,
-        "selected_nonzero_cells": 4034,
-        "mean_g19_minus_g18_where_both_nonzero": 1.4136125654450262,
+        "either_satellite_nonzero_cells": 7705,
+        "both_satellites_nonzero_cells": 188,
+        "g18_nonzero_cells": 3939,
+        "g19_nonzero_cells": 3954,
+        "selected_nonzero_cells": 4072,
+        "mean_g19_minus_g18_where_both_nonzero": 1.5372340425531914,
         "median_g19_minus_g18_where_both_nonzero": 0.0
       },
       "units": "flash extent contributions per 0.02-degree grid cell per 30 minutes",
@@ -1423,25 +1423,25 @@
       "nonzero_percentiles": {
         "p50": 3.0,
         "p75": 9.0,
-        "p90": 23.0,
-        "p95": 42.0,
-        "p99": 118.0,
-        "p99_5": 181.6800000000003,
-        "p99_9": 339.0
+        "p90": 24.0,
+        "p95": 41.0,
+        "p99": 111.36000000000058,
+        "p99_5": 157.0,
+        "p99_9": 294.288000000015
       },
       "render_bin_counts": {
-        "1": 4019,
-        "2\u20133": 2978,
-        "4\u20137": 2421,
-        "8\u201315": 1705,
-        "16\u201331": 990,
-        "32\u201363": 593,
-        "64\u2013127": 244,
-        "128\u2013255": 78,
-        "256\u2013511": 35,
-        "\u2265512": 2
+        "1": 4138,
+        "2\u20133": 3082,
+        "4\u20137": 2413,
+        "8\u201315": 1743,
+        "16\u201331": 1110,
+        "32\u201363": 616,
+        "64\u2013127": 264,
+        "128\u2013255": 76,
+        "256\u2013511": 23,
+        "\u2265512": 0
       },
-      "generated_time_utc": "2026-09-12T22:27:40Z"
+      "generated_time_utc": "2026-09-12T22:37:54Z"
     },
     {
       "metadata_mode": "glm_dashboard_v1",
@@ -1449,17 +1449,17 @@
       "window_minutes": 60,
       "product_kind": "rolling 60-minute flash extent accumulation",
       "display_label": "GOES GLM Controlled Mosaic \u2014 Rolling 60-Minute Accumulation",
-      "window_start_utc": "2026-09-12T21:20:00Z",
-      "window_end_utc": "2026-09-12T22:20:00Z",
-      "maximum_value": 876,
-      "nonzero_grid_cells": 18098,
+      "window_start_utc": "2026-09-12T21:30:00Z",
+      "window_end_utc": "2026-09-12T22:30:00Z",
+      "maximum_value": 888,
+      "nonzero_grid_cells": 18394,
       "display_footprint_radius_pixels": 2,
       "display_note": "Display-only maximum-value footprint expansion; underlying FED counts and ownership are unchanged.",
-      "flash_cell_contributions": 273741,
+      "flash_cell_contributions": 273114,
       "source_g18_owned_cells": 2091250,
       "source_g19_owned_cells": 4033750,
-      "source_g18_nonzero_cells": 3346,
-      "source_g19_nonzero_cells": 14752,
+      "source_g18_nonzero_cells": 3332,
+      "source_g19_nonzero_cells": 15062,
       "source_product": "GLM-L2-LCFA",
       "mosaic_method": {
         "name": "exclusive lower-view-angle source ownership",
@@ -1478,8 +1478,8 @@
           "satellite": "G18",
           "satellite_label": "GOES-18 (West)",
           "window_minutes": 60,
-          "window_start_utc": "2026-09-12T21:20:00Z",
-          "window_end_utc": "2026-09-12T22:20:00Z",
+          "window_start_utc": "2026-09-12T21:30:00Z",
+          "window_end_utc": "2026-09-12T22:30:00Z",
           "expected_slots": 12,
           "available_slots": 12,
           "slot_completeness_fraction": 1.0,
@@ -1487,19 +1487,19 @@
           "listed_files": 180,
           "processed_files": 180,
           "completeness_fraction": 1.0,
-          "quality_controlled_flash_records": 50276,
-          "events_mapped_to_good_flashes": 906134,
-          "events_in_domain": 494089,
-          "flash_cell_contributions": 134254,
-          "nonzero_grid_cells": 11677,
-          "maximum_value": 530
+          "quality_controlled_flash_records": 51724,
+          "events_mapped_to_good_flashes": 962310,
+          "events_in_domain": 509336,
+          "flash_cell_contributions": 138480,
+          "nonzero_grid_cells": 11826,
+          "maximum_value": 520
         },
         "G19": {
           "satellite": "G19",
           "satellite_label": "GOES-19 (East)",
           "window_minutes": 60,
-          "window_start_utc": "2026-09-12T21:20:00Z",
-          "window_end_utc": "2026-09-12T22:20:00Z",
+          "window_start_utc": "2026-09-12T21:30:00Z",
+          "window_end_utc": "2026-09-12T22:30:00Z",
           "expected_slots": 12,
           "available_slots": 12,
           "slot_completeness_fraction": 1.0,
@@ -1507,12 +1507,12 @@
           "listed_files": 179,
           "processed_files": 179,
           "completeness_fraction": 0.9944444444444445,
-          "quality_controlled_flash_records": 127475,
-          "events_mapped_to_good_flashes": 4026703,
-          "events_in_domain": 1299180,
-          "flash_cell_contributions": 264135,
-          "nonzero_grid_cells": 17717,
-          "maximum_value": 876
+          "quality_controlled_flash_records": 127613,
+          "events_mapped_to_good_flashes": 4255169,
+          "events_in_domain": 1297791,
+          "flash_cell_contributions": 262751,
+          "nonzero_grid_cells": 18044,
+          "maximum_value": 888
         }
       },
       "incremental_cache": {
@@ -1526,12 +1526,12 @@
         "seam_longitude": -106.1,
         "band_half_width_degrees": 5.0,
         "band_grid_cells": 875000,
-        "either_satellite_nonzero_cells": 10688,
-        "both_satellites_nonzero_cells": 303,
-        "g18_nonzero_cells": 5524,
-        "g19_nonzero_cells": 5467,
-        "selected_nonzero_cells": 5641,
-        "mean_g19_minus_g18_where_both_nonzero": 0.07260726072607261,
+        "either_satellite_nonzero_cells": 10558,
+        "both_satellites_nonzero_cells": 284,
+        "g18_nonzero_cells": 5432,
+        "g19_nonzero_cells": 5410,
+        "selected_nonzero_cells": 5557,
+        "mean_g19_minus_g18_where_both_nonzero": 1.1971830985915493,
         "median_g19_minus_g18_where_both_nonzero": 1.0
       },
       "units": "flash extent contributions per 0.02-degree grid cell per 60 minutes",
@@ -1668,30 +1668,30 @@
         "p50": 4.0,
         "p75": 12.0,
         "p90": 35.0,
-        "p95": 67.0,
-        "p99": 182.0,
-        "p99_5": 261.54499999999825,
-        "p99_9": 490.0
+        "p95": 62.0,
+        "p99": 172.0,
+        "p99_5": 253.10499999999956,
+        "p99_9": 507.2840000000433
       },
       "render_bin_counts": {
-        "1": 5050,
-        "2\u20133": 3821,
-        "4\u20137": 3101,
-        "8\u201315": 2439,
-        "16\u201331": 1672,
-        "32\u201363": 1065,
-        "64\u2013127": 608,
-        "128\u2013255": 247,
-        "256\u2013511": 78,
-        "\u2265512": 17
+        "1": 5031,
+        "2\u20133": 3937,
+        "4\u20137": 3133,
+        "8\u201315": 2505,
+        "16\u201331": 1737,
+        "32\u201363": 1153,
+        "64\u2013127": 586,
+        "128\u2013255": 220,
+        "256\u2013511": 73,
+        "\u2265512": 19
       },
-      "generated_time_utc": "2026-09-12T22:27:40Z"
+      "generated_time_utc": "2026-09-12T22:37:54Z"
     }
   ],
   "convective_trend_map": {
     "metadata_json": "glm_convective_trend_15min_metadata.json",
     "display_label": "GOES GLM Controlled Mosaic \u2014 Convective Trend (15 min)",
-    "window_end_utc": "2026-09-12T22:20:00Z"
+    "window_end_utc": "2026-09-12T22:30:00Z"
   },
   "satellite_reference_products": [],
   "source_ownership": {
@@ -1711,12 +1711,12 @@
   "publish_debug_layers": false,
   "artifact_only_diagnostics": [],
   "timing_seconds": {
-    "resolve_target": 0.33,
-    "cache_update": 10.996,
-    "aggregate_windows": 0.074,
-    "convective_trends": 0.044,
-    "render_primary_mosaics": 3.586,
-    "total_before_manifest": 14.991
+    "resolve_target": 0.613,
+    "cache_update": 16.1,
+    "aggregate_windows": 0.086,
+    "convective_trends": 0.035,
+    "render_primary_mosaics": 3.142,
+    "total_before_manifest": 19.944
   },
-  "generated_time_utc": "2026-09-12T22:27:42Z"
+  "generated_time_utc": "2026-09-12T22:37:56Z"
 }
