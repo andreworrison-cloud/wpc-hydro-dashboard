@@ -7181,8 +7181,6 @@ map.on('overlayadd', function(eventLayer) {
     const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
     const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
     const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
-    const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
-    const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         // Refresh bounds, valid times, and cache-busted RAP image URLs
@@ -7461,6 +7459,8 @@ map.on('overlayremove', function(eventLayer) {
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
     const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
     const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
+    const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
+    const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
