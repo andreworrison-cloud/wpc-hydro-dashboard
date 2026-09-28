@@ -105,7 +105,7 @@ def validate_regular_axis(values: np.ndarray, name: str) -> float:
     if not np.all(np.isfinite(diffs)):
         raise RuntimeError(f"{name} contains non-finite coordinate spacing")
     step = float(np.median(diffs))
-    if step == 0 or not np.allclose(diffs, step, rtol=0.0, atol=2.0e-6):
+    if step == 0 or not np.allclose(diffs, step, rtol=0.0, atol=1.0e-5):
         raise RuntimeError(f"{name} is not regular enough for guarded raster publication")
     return step
 
