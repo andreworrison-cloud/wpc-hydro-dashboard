@@ -1,0 +1,43 @@
+name: Diagnose NLDAS-3 static terrain slope
+
+on:
+  push:
+    branches:
+      - feature/nldas3-static-slope-diagnostic
+    paths:
+      - tools/probe_nldas3_slope.py
+      - .github/workflows/probe_nldas3_slope.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install diagnostic dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3" xarray h5netcdf h5py s3fs
+
+      - name: Inspect NLDAS-3 / MERIT CONUS slope distribution
+        run: |
+          python tools/probe_nldas3_slope.py
+
+      - name: Upload slope diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: nldas3-slope-diagnostic
+          path: diagnostics/nldas3_slope_diagnostic.json
+          if-no-files-found: error
+          retention-days: 14

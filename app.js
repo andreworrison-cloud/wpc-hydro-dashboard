@@ -31,6 +31,12 @@ customStyle.innerHTML = `
         image-rendering: pixelated !important;
     }
 
+    /* NLDAS-3 / MERIT terrain slope is published as descriptive categorical
+       percent-slope bins. Preserve the validated nearest-neighbor rendering. */
+    img.nldas3-slope-raster {
+        image-rendering: pixelated !important;
+    }
+
     .glm-trend-card {
         margin: 8px 8px 10px;
         overflow: hidden;
@@ -2157,6 +2163,9 @@ const NLDAS3_LANDCOVER_IMAGE_URL = 'static/nldas3_landcover.png';
 const NLDAS3_STATIC_METADATA_URL = 'static/nldas3_static_metadata.json';
 const NLDAS3_SOIL_LAYER_NAME = 'NASA NLDAS-3 Soil Texture (Static)';
 const NLDAS3_LANDCOVER_LAYER_NAME = 'NASA NLDAS-3 Land Use / Vegetation (Static)';
+const NLDAS3_SLOPE_IMAGE_URL = 'static/nldas3_slope_percent.png';
+const NLDAS3_SLOPE_METADATA_URL = 'static/nldas3_slope_metadata.json';
+const NLDAS3_SLOPE_LAYER_NAME = 'NASA NLDAS-3 / MERIT Terrain Slope (Static)';
 const soilPlaceholderBounds = [[24.0, -125.0], [50.0, -66.0]];
 
 const nwmLayer = L.imageOverlay(
@@ -2224,6 +2233,17 @@ const nldas3LandcoverLayer = L.imageOverlay(
         opacity: 0,
         interactive: false,
         className: 'nldas3-landcover-raster'
+    }
+);
+
+const nldas3SlopeLayer = L.imageOverlay(
+    NLDAS3_SLOPE_IMAGE_URL,
+    soilPlaceholderBounds,
+    {
+        zIndex: 10,
+        opacity: 0,
+        interactive: false,
+        className: 'nldas3-slope-raster'
     }
 );
 
@@ -3926,6 +3946,8 @@ let nlcdImperviousReady = false;
 let nlcdImperviousMetadata = null;
 let nldas3StaticReady = false;
 let nldas3StaticMetadata = null;
+let nldas3SlopeReady = false;
+let nldas3SlopeMetadata = null;
 
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
@@ -6320,6 +6342,112 @@ async function fetchNLDAS3StaticMetadata() {
     }
 }
 
+function formatNLDAS3SlopeTimeBox(metadata = nldas3SlopeMetadata) {
+    const sourceHistory = String(metadata?.source_history || '');
+    const sourceDateMatch = sourceHistory.match(/(\d{4}-\d{2}-\d{2})/);
+    const sourceDate = sourceDateMatch ? sourceDateMatch[1] : 'source build date unavailable';
+    const dx = Number(metadata?.source_grid?.dx_deg);
+    const resolutionText = Number.isFinite(dx)
+        ? `native ${dx.toFixed(2)}° grid (~1 km)`
+        : 'native ~1 km grid';
+    return `
+        <strong>NASA NLDAS-3 / MERIT Terrain Slope</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">Percent slope • descriptive terrain context</span><br>
+        <span style="color:#d7edf8;">${resolutionText}</span><br>
+        <span style="color:#ffeb3b;">Static parameter • source build ${sourceDate}</span><br>
+        <span style="color:#f2c879;">Not a runoff-risk or flash-flood-risk classification</span>
+    `;
+}
+
+function buildNLDAS3SlopeLegendHTML(metadata = nldas3SlopeMetadata) {
+    const bins = Array.isArray(metadata?.display?.bins) ? metadata.display.bins : [];
+    const rows = bins.length
+        ? bins.map(item => `
+            <div style="display:grid;grid-template-columns:16px 1fr;gap:5px;align-items:center;font-size:9px;line-height:1.15;">
+                <span style="width:14px;height:11px;background:${item.color};border:1px solid #555;"></span>
+                <span>${item.label}</span>
+            </div>
+        `).join('')
+        : '<div style="font-size:9px;color:#666;">Loading validated NLDAS-3 slope metadata...</div>';
+
+    return `
+        <div style="background:white;padding:10px;border-radius:5px;color:black;font-family:sans-serif;min-width:220px;max-width:320px;">
+            <div style="text-align:center;font-weight:800;font-size:13px;margin-bottom:2px;">NLDAS-3 / MERIT Terrain Slope</div>
+            <div style="text-align:center;font-size:9px;margin-bottom:7px;color:#444;">Percent slope • static ~1 km context</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;">${rows}</div>
+            <div style="margin-top:7px;padding-top:6px;border-top:1px solid #bbb;font-size:8px;line-height:1.25;color:#555;">
+                Descriptive terrain ranges only—not runoff-risk classes, infiltration rates, or flash-flood thresholds.
+                Missing/water cells are transparent. Colors are a WPC dashboard visualization palette.
+            </div>
+        </div>
+    `;
+}
+
+async function fetchNLDAS3SlopeMetadata() {
+    try {
+        const response = await fetch(
+            `${NLDAS3_SLOPE_METADATA_URL}?t=${Date.now()}`,
+            {cache: 'no-store'}
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        if (data.metadata_mode !== 'nldas3_static_slope_dashboard_v1') {
+            throw new Error(`Unexpected NLDAS-3 slope metadata mode: ${data.metadata_mode || 'missing'}`);
+        }
+        if (data.render_revision !== 'nldas3-merit-slope-phase1b-v1') {
+            throw new Error(`Unexpected NLDAS-3 slope render revision: ${data.render_revision || 'missing'}`);
+        }
+        if (data.source_variable !== 'SLOPE' || data.source_standard_name !== "MERIT '1K' slope") {
+            throw new Error('NLDAS-3 slope source-variable contract changed');
+        }
+        if (String(data.image_crs || '').toUpperCase() !== 'EPSG:3857') {
+            throw new Error(`NLDAS-3 slope expected EPSG:3857 display image, found ${data.image_crs || 'missing CRS'}`);
+        }
+        if (
+            data.display?.categorical_descriptive_bins !== true ||
+            data.display?.display_resampling !== 'nearest-neighbor' ||
+            data.display?.smoothing !== false ||
+            data.display?.transparent_missing_water !== true
+        ) {
+            throw new Error('NLDAS-3 slope display metadata violates the descriptive nearest-neighbor contract');
+        }
+
+        const expectedLabels = ['0–1%', '1–2%', '2–5%', '5–10%', '10–20%', '20–30%', '30–45%', '45–60%', '≥60%'];
+        const labels = (data.display?.bins || []).map(item => item.label);
+        if (JSON.stringify(labels) !== JSON.stringify(expectedLabels)) {
+            throw new Error('NLDAS-3 slope display-bin contract changed');
+        }
+        const safeguards = (data.science_safeguards || []).join(' ');
+        if (
+            !safeguards.includes('not runoff-risk classes') ||
+            !safeguards.includes('display derivative only') ||
+            !safeguards.includes('No infiltration or flash-flood threshold')
+        ) {
+            throw new Error('NLDAS-3 slope science safeguards are missing or changed');
+        }
+
+        const exactBounds = validateRasterBounds(data.bounds, 'NASA NLDAS-3 / MERIT terrain slope');
+        const staticVersion = [data.render_revision, data.generated_utc].filter(Boolean).join('-');
+        nldas3SlopeLayer.setBounds(exactBounds);
+        nldas3SlopeLayer.setUrl(`${NLDAS3_SLOPE_IMAGE_URL}?v=${encodeURIComponent(staticVersion)}`);
+        nldas3SlopeLayer.setOpacity(0.82);
+
+        nldas3SlopeMetadata = data;
+        nldas3SlopeReady = true;
+
+        const timeBox = document.getElementById('nldas3-slope-time-box');
+        if (timeBox && timeBox.style.display === 'block') {
+            timeBox.innerHTML = formatNLDAS3SlopeTimeBox(data);
+        }
+        updateLegends();
+    } catch (error) {
+        nldas3SlopeReady = false;
+        nldas3SlopeLayer.setOpacity(0);
+        console.error('NLDAS-3 slope raster metadata update failed:', error);
+    }
+}
+
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
@@ -6334,6 +6462,7 @@ fetchNLDASRSMMetadata();
 fetchNRCSHSGMetadata();
 fetchNLCDImperviousMetadata();
 fetchNLDAS3StaticMetadata();
+fetchNLDAS3SlopeMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
@@ -6533,6 +6662,7 @@ legendDockControl.onAdd = function () {
         'nlcd-impervious-time-box',
         'nldas3-soil-time-box',
         'nldas3-landcover-time-box',
+        'nldas3-slope-time-box',
         'wfigs-current-time-box',
         'wfigs-ytd-time-box',
         'wfigs-history-time-box'
@@ -7119,6 +7249,7 @@ function updateLegends() {
     if (activeLayerNames.has(NRCS_HSG_LAYER_NAME)) addLegendBlock(nrcsHsgLegendHTML);
     if (activeLayerNames.has(NLDAS3_SOIL_LAYER_NAME)) addLegendBlock(buildNLDAS3CategoricalLegendHTML('soil_texture'));
     if (activeLayerNames.has(NLDAS3_LANDCOVER_LAYER_NAME)) addLegendBlock(buildNLDAS3CategoricalLegendHTML('landcover'));
+    if (activeLayerNames.has(NLDAS3_SLOPE_LAYER_NAME)) addLegendBlock(buildNLDAS3SlopeLegendHTML());
     if (activeLayerNames.has(NLCD_IMPERVIOUS_LAYER_NAME)) addLegendBlock(nlcdImperviousLegendHTML);
     GLM_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.name))
@@ -7187,6 +7318,7 @@ map.on('overlayadd', function(eventLayer) {
     const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
     const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
     const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
+    const nldas3SlopeTimeBox = document.getElementById('nldas3-slope-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         // Refresh bounds, valid times, and cache-busted RAP image URLs
@@ -7376,6 +7508,16 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
+    if (eventLayer.name === NLDAS3_SLOPE_LAYER_NAME) {
+        if (!nldas3SlopeReady) fetchNLDAS3SlopeMetadata();
+        if (nldas3SlopeTimeBox) {
+            nldas3SlopeTimeBox.innerHTML = nldas3SlopeReady
+                ? formatNLDAS3SlopeTimeBox(nldas3SlopeMetadata)
+                : `<strong>NASA NLDAS-3 / MERIT Terrain Slope</strong><br><span style="color:#ffeb3b;">Loading validated static layer...</span>`;
+            nldas3SlopeTimeBox.style.display = 'block';
+        }
+    }
+
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
         let titleText = "";
         let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
@@ -7467,6 +7609,7 @@ map.on('overlayremove', function(eventLayer) {
     const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
     const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
     const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
+    const nldas3SlopeTimeBox = document.getElementById('nldas3-slope-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -7543,6 +7686,10 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === NLDAS3_LANDCOVER_LAYER_NAME) {
         if (nldas3LandcoverTimeBox) nldas3LandcoverTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === NLDAS3_SLOPE_LAYER_NAME) {
+        if (nldas3SlopeTimeBox) nldas3SlopeTimeBox.style.display = 'none';
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -7690,6 +7837,11 @@ const dashboardSections = [
              description: 'NASA NLDAS-3 static ~1 km IGBP/NCEP-modified land-use and vegetation classification used by the Noah-MP/LIS land-surface framework. Water/open-water classes remain transparent.',
              layer: nldas3LandcoverLayer, kind: 'raster',
              keywords: 'NASA NLDAS-3 land cover land use vegetation IGBP NCEP Noah-MP LIS open water static hydrology'}
+,
+            {id: 'nldas3-slope', label: NLDAS3_SLOPE_LAYER_NAME,
+             description: 'NASA NLDAS-3 / MERIT static ~1 km terrain slope expressed as percent slope. Display bins are descriptive terrain ranges only; they are not runoff-risk classes, infiltration rates, or flash-flood thresholds.',
+             layer: nldas3SlopeLayer, kind: 'raster',
+             keywords: 'NASA NLDAS-3 MERIT terrain slope percent slope topography physiography runoff sensitivity static hydrology'}
 ,
             {id: 'nlcd-impervious', label: NLCD_IMPERVIOUS_LAYER_NAME,
              description: '2025 USGS Annual NLCD Collection 1.2 Fractional Impervious Surface from native 30 m source, aggregated to the retained 1 km equal-area Phase H2 analysis; 0% valid land cells are shown in neutral gray while source NoData/insufficient coverage remains transparent.',
