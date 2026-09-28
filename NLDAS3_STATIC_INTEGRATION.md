@@ -71,29 +71,14 @@ SoilTemp, WaterTableD, TWS, and routing outputs when NASA releases them publicly
 
 ## Implementation status
 
-- Feature branch: `feature/nldas3-static-land-surface`
-- Added `tools/probe_nldas3_static.py` to inspect the live NASA NetCDF schemas
-  without assuming variable names or category definitions.
-- Added `.github/workflows/probe_nldas3_static.yml` to run the source inventory.
-- Next gate: inspect the generated inventory and source attributes/class metadata.
-- After that gate: build retained CONUS scientific rasters, dashboard display
-  derivatives, metadata JSON, Leaflet overlays, legends, and layer registration.
+- Current integration branch: `feature/nldas3-static-land-surface-current`, rebuilt from the current dashboard `main` rather than the earlier diverged prototype branch.
+- Live NASA source probe completed successfully against both public static NetCDF files.
+- `tools/build_nldas3_static.py` reproducibly builds the CONUS soil-texture and land-use/vegetation display derivatives directly from NASA S3.
+- `static/nldas3_soil_texture.png`, `static/nldas3_landcover.png`, and `static/nldas3_static_metadata.json` are generated and published on the feature branch only.
+- `app.js` registers both products under **Land-Surface Runoff Sensitivity**, with categorical legends, static-product time/source boxes, metadata fail-closed checks, and no 15-minute dynamic refresh.
+- `tools/validate_dashboard.py` enforces the NLDAS-3 source-variable, category-code, bounds, image-dimension, nearest-neighbor/no-smoothing, display-vs-science, and layer-order contracts.
+- Dashboard validation, NLDAS-3 build, and guarded feature-branch publication are passing.
+- The larger Noah-MP/HyMAP static file also contains MERIT ~1-km elevation and slope, monthly greenness climatology, drainage area/basin structure, river geometry/roughness, flow-direction fields, and runoff/baseflow timing parameters.
+- **Next static-display candidate:** MERIT/NLDAS-3 terrain slope. HYMAP basin IDs and routing coefficients remain research/model inputs until their semantics and units are sufficiently documented for a forecaster-facing display.
+- Future full NLDAS-3 Noah-MP rollout remains reserved for dynamic fields such as SoilMoist, Qs, Qsb, SoilTemp, WaterTableD, TWS, and routing outputs when NASA releases them publicly.
 
-## Live-source validation findings (2026-09-28)
-
-The first two guarded GitHub Actions probes reached both public NASA S3 objects successfully.
-The dominant source is a 6500 x 11700 regular 0.01-degree grid with 1-D latitude/longitude
-coordinates. The live source variable names are `Landcover_inst` and `Soiltype_inst`.
-
-Observed sampled values are integer-like even though both arrays are stored as float32.
-The soil sample conforms to the documented STATSGO index and includes water as code 14.
-The land-cover sample includes code 21 in addition to the standard IGBP/NCEP classes.
-LISF documentation identifies the 21st surface type as the added open-water surface type;
-class 21 must therefore remain water/transparent in the dashboard rather than being
-silently remapped to a terrestrial class.
-
-The HyMAP/Noah-MP static file exposes 42 data variables, including LANDMASK, LANDCOVER,
-TEXTURE, ELEVATION, SLOPE, ASPECT, monthly GREENNESS, and multiple HYMAP routing fields
-such as river geometry, drainage area, basin IDs, flow-direction components, and routing
-time-delay parameters. These routing fields remain research-only until their semantics,
-encodings, and forecaster value are validated individually.
