@@ -3,7 +3,7 @@ name: Publish NLDAS-3 static assets to feature branch
 on:
   push:
     branches:
-      - feature/nldas3-static-land-surface
+      - feature/nldas3-static-land-surface-current
     paths:
       - tools/build_nldas3_static.py
       - .github/workflows/publish_nldas3_static_feature.yml
@@ -14,14 +14,14 @@ permissions:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/feature/nldas3-static-land-surface'
+    if: github.ref == 'refs/heads/feature/nldas3-static-land-surface-current'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Check out feature branch
         uses: actions/checkout@v4
         with:
-          ref: feature/nldas3-static-land-surface
+          ref: feature/nldas3-static-land-surface-current
           fetch-depth: 1
 
       - name: Set up Python
@@ -62,4 +62,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Publish validated NLDAS-3 static dashboard assets"
-          git push origin HEAD:feature/nldas3-static-land-surface
+          git push origin HEAD:feature/nldas3-static-land-surface-current
