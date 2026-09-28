@@ -394,6 +394,11 @@ def main() -> int:
         "soil_texture": {
             "source_variable": "Soiltype_inst",
             "classification": "STATSGO 16-class texture index",
+            "classification_reference": "https://ldas.gsfc.nasa.gov/nldas/soils",
+            "interpretation_note": (
+                "Categorical soil texture only. Classes are not an ordinal runoff-risk scale "
+                "and must not be converted directly to infiltration rate or FFG."
+            ),
             "water_code": 14,
             "water_display": "transparent",
             "image": "nldas3_soil_texture.png",
@@ -402,12 +407,20 @@ def main() -> int:
         "landcover": {
             "source_variable": "Landcover_inst",
             "classification": "IGBP/NCEP-modified 20-class land cover + LIS open-water surface type",
+            "classification_reference": "https://ldas.gsfc.nasa.gov/wldas/parameters",
+            "interpretation_note": (
+                "Static land-use/vegetation context used by the LIS/Noah-MP framework. "
+                "It is not current vegetation condition or burn severity."
+            ),
             "water_codes": [17, 21],
             "water_display": "transparent",
             "image": "nldas3_landcover.png",
             "classes": class_metadata(LANDCOVER_CLASSES, LANDCOVER_COLORS, land_counts),
         },
-        "palette_note": "Colors are WPC dashboard visualization palettes, not official NASA colors.",
+        "palette_note": (
+            "Colors are non-ordinal WPC dashboard visualization palettes, not official NASA "
+            "colors and not a runoff-risk ranking."
+        ),
     }
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
