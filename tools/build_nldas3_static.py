@@ -97,29 +97,47 @@ def rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def validate_coordinate_axis(
+def fit_coordinate_axis(
     values: np.ndarray,
     name: str,
     expected_first: float,
     expected_step: float,
-) -> None:
+) -> tuple[float, float, float, float]:
     values = np.asarray(values, dtype=np.float64)
     if values.ndim != 1 or values.size < 2:
         raise RuntimeError(f"{name} must be a 1-D coordinate")
+    if not np.all(np.isfinite(values)):
+        raise RuntimeError(f"{name} contains non-finite values")
     if not np.isfinite(expected_first) or not np.isfinite(expected_step) or expected_step <= 0:
         raise RuntimeError(f"{name}: invalid NASA grid geometry metadata")
 
-    expected = expected_first + np.arange(values.size, dtype=np.float64) * expected_step
-    residual = np.abs(values - expected)
-    # NASA stores coordinate vectors as float32. At CONUS longitudes this can
-    # quantize individual coordinate values by several microdegrees even though
-    # the defining grid metadata is exactly 0.01 degrees.
-    max_residual = float(np.nanmax(residual))
-    if not np.all(np.isfinite(values)) or max_residual > 2.5e-5:
+    idx = np.arange(values.size, dtype=np.float64)
+    fitted_step, fitted_first = np.polyfit(idx, values, 1)
+    fitted = fitted_first + idx * fitted_step
+    max_fit_residual = float(np.max(np.abs(values - fitted)))
+    origin_offset = float(fitted_first - expected_first)
+
+    # Float32 coordinate centers can differ by several microdegrees from the
+    # nominal metadata reconstruction.  A least-squares regular-grid fit must,
+    # however, remain extremely close to NASA's declared 0.01-degree spacing
+    # and within 1e-4 degree of the declared source-grid origin.
+    if abs(fitted_step - expected_step) > 5.0e-7:
         raise RuntimeError(
-            f"{name} coordinates disagree with NASA source geometry: "
-            f"max residual={max_residual:.10f} degrees"
+            f"{name} fitted spacing disagrees with NASA DX/DY: "
+            f"fit={fitted_step:.10f}, expected={expected_step:.10f}"
         )
+    if abs(origin_offset) > 1.0e-4:
+        raise RuntimeError(
+            f"{name} fitted origin disagrees with NASA grid metadata: "
+            f"offset={origin_offset:.10f} degrees"
+        )
+    if max_fit_residual > 2.5e-5:
+        raise RuntimeError(
+            f"{name} coordinate vector is not adequately regular: "
+            f"max fit residual={max_fit_residual:.10f} degrees"
+        )
+
+    return float(fitted_first), float(fitted_step), max_fit_residual, origin_offset
 
 
 def subset_slices(lat: np.ndarray, lon: np.ndarray, extent) -> tuple[slice, slice]:
@@ -159,26 +177,40 @@ def source_transform(
     expected_dy: float,
     expected_dx: float,
 ):
-    first_lat = southwest_lat + y_start_index * expected_dy
-    first_lon = southwest_lon + x_start_index * expected_dx
-    validate_coordinate_axis(lat, "latitude", first_lat, expected_dy)
-    validate_coordinate_axis(lon, "longitude", first_lon, expected_dx)
+    expected_first_lat = southwest_lat + y_start_index * expected_dy
+    expected_first_lon = southwest_lon + x_start_index * expected_dx
+
+    first_lat, lat_step, lat_fit_residual, lat_origin_offset = fit_coordinate_axis(
+        lat, "latitude", expected_first_lat, expected_dy
+    )
+    first_lon, lon_step, lon_fit_residual, lon_origin_offset = fit_coordinate_axis(
+        lon, "longitude", expected_first_lon, expected_dx
+    )
 
     south_center = first_lat
     west_center = first_lon
-    north_center = first_lat + (lat.size - 1) * expected_dy
-    east_center = first_lon + (lon.size - 1) * expected_dx
+    north_center = first_lat + (lat.size - 1) * lat_step
+    east_center = first_lon + (lon.size - 1) * lon_step
 
-    west = west_center - expected_dx / 2.0
-    east = east_center + expected_dx / 2.0
-    south = south_center - expected_dy / 2.0
-    north = north_center + expected_dy / 2.0
+    west = west_center - lon_step / 2.0
+    east = east_center + lon_step / 2.0
+    south = south_center - lat_step / 2.0
+    north = north_center + lat_step / 2.0
     transform = from_bounds(west, south, east, north, lon.size, lat.size)
+
+    diagnostics = {
+        "lat_fit_step_deg": lat_step,
+        "lon_fit_step_deg": lon_step,
+        "lat_max_fit_residual_deg": lat_fit_residual,
+        "lon_max_fit_residual_deg": lon_fit_residual,
+        "lat_origin_offset_from_metadata_deg": lat_origin_offset,
+        "lon_origin_offset_from_metadata_deg": lon_origin_offset,
+    }
 
     # NLDAS-3 latitude increases northward in array order; rasterio expects
     # row 0 at the north edge, so the categorical arrays are flipped on Y
     # immediately before reprojection.
-    return transform, True, (west, south, east, north)
+    return transform, True, (west, south, east, north), diagnostics
 
 
 def target_grid(extent, width: int):
@@ -304,7 +336,7 @@ def main() -> int:
     land_valid = validate_categories(land, set(LANDCOVER_CLASSES), "NLDAS-3 land cover")
     soil_valid = validate_categories(soil, set(SOIL_CLASSES), "NLDAS-3 soil texture")
 
-    transform, flip_y, source_bounds = source_transform(
+    transform, flip_y, source_bounds, grid_diagnostics = source_transform(
         lat,
         lon,
         y_start_index=int(ys.start),
@@ -345,6 +377,7 @@ def main() -> int:
             "native_dx_deg": float(source_dx),
             "native_dy_deg": float(source_dy),
             "subset_source_bounds": list(source_bounds),
+            "coordinate_fit_diagnostics": grid_diagnostics,
         },
         "domain": "CONUS dashboard extent",
         "bounds": [[south, west], [north, east]],
