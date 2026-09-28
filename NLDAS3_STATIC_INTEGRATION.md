@@ -78,3 +78,22 @@ SoilTemp, WaterTableD, TWS, and routing outputs when NASA releases them publicly
 - Next gate: inspect the generated inventory and source attributes/class metadata.
 - After that gate: build retained CONUS scientific rasters, dashboard display
   derivatives, metadata JSON, Leaflet overlays, legends, and layer registration.
+
+## Live-source validation findings (2026-09-28)
+
+The first two guarded GitHub Actions probes reached both public NASA S3 objects successfully.
+The dominant source is a 6500 x 11700 regular 0.01-degree grid with 1-D latitude/longitude
+coordinates. The live source variable names are `Landcover_inst` and `Soiltype_inst`.
+
+Observed sampled values are integer-like even though both arrays are stored as float32.
+The soil sample conforms to the documented STATSGO index and includes water as code 14.
+The land-cover sample includes code 21 in addition to the standard IGBP/NCEP classes.
+LISF documentation identifies the 21st surface type as the added open-water surface type;
+class 21 must therefore remain water/transparent in the dashboard rather than being
+silently remapped to a terrestrial class.
+
+The HyMAP/Noah-MP static file exposes 42 data variables, including LANDMASK, LANDCOVER,
+TEXTURE, ELEVATION, SLOPE, ASPECT, monthly GREENNESS, and multiple HYMAP routing fields
+such as river geometry, drainage area, basin IDs, flow-direction components, and routing
+time-delay parameters. These routing fields remain research-only until their semantics,
+encodings, and forecaster value are validated individually.
