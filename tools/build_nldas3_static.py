@@ -97,16 +97,27 @@ def rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def validate_regular_axis(values: np.ndarray, name: str) -> float:
+def validate_regular_axis(
+    values: np.ndarray,
+    name: str,
+    expected_step: float,
+) -> float:
     values = np.asarray(values, dtype=np.float64)
     if values.ndim != 1 or values.size < 2:
         raise RuntimeError(f"{name} must be a 1-D regular coordinate")
     diffs = np.diff(values)
     if not np.all(np.isfinite(diffs)):
         raise RuntimeError(f"{name} contains non-finite coordinate spacing")
+    if not np.isfinite(expected_step) or expected_step <= 0:
+        raise RuntimeError(f"{name}: missing/invalid NASA grid spacing attribute")
     step = float(np.median(diffs))
-    if step == 0 or not np.allclose(diffs, step, rtol=0.0, atol=1.0e-5):
-        raise RuntimeError(f"{name} is not regular enough for guarded raster publication")
+    # Coordinates are stored as float32. Validate against NASA's stated DX/DY,
+    # allowing only the expected representation jitter at large coordinate values.
+    if not np.allclose(diffs, expected_step, rtol=0.0, atol=1.5e-5):
+        raise RuntimeError(
+            f"{name} spacing departs from NASA grid attribute: "
+            f"median={step:.10f}, expected={expected_step:.10f}"
+        )
     return step
 
 
@@ -137,9 +148,14 @@ def validate_categories(values: np.ndarray, allowed: set[int], product: str) -> 
     return valid
 
 
-def source_transform(lat: np.ndarray, lon: np.ndarray):
-    lat_step = validate_regular_axis(lat, "latitude")
-    lon_step = validate_regular_axis(lon, "longitude")
+def source_transform(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    expected_dy: float,
+    expected_dx: float,
+):
+    lat_step = validate_regular_axis(lat, "latitude", expected_dy)
+    lon_step = validate_regular_axis(lon, "longitude", expected_dx)
     if lon_step <= 0:
         raise RuntimeError("Expected NLDAS-3 longitude to increase eastward")
 
@@ -268,12 +284,16 @@ def main() -> int:
         land = np.asarray(ds["Landcover_inst"].isel(north_south=ys, east_west=xs).load().values)
         soil = np.asarray(ds["Soiltype_inst"].isel(north_south=ys, east_west=xs).load().values)
         source_history = str(ds.attrs.get("history", "Unknown"))
+        source_dx = float(ds.attrs.get("DX", float("nan")))
+        source_dy = float(ds.attrs.get("DY", float("nan")))
         ds.close()
 
     land_valid = validate_categories(land, set(LANDCOVER_CLASSES), "NLDAS-3 land cover")
     soil_valid = validate_categories(soil, set(SOIL_CLASSES), "NLDAS-3 soil texture")
 
-    transform, flip_y, source_bounds = source_transform(lat, lon)
+    transform, flip_y, source_bounds = source_transform(
+        lat, lon, expected_dy=source_dy, expected_dx=source_dx
+    )
     land_png = reproject_codes(
         land, land_valid, transform, flip_y, args.extent, args.width, {17, 21}
     )
