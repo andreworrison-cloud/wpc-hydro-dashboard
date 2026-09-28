@@ -72,6 +72,7 @@ LANDCOVER_CLASSES = {
     18: "Wooded Tundra",
     19: "Mixed Tundra",
     20: "Bare Ground Tundra",
+    21: "Open Water (LIS template surface)",
 }
 
 # Dashboard visualization palettes only; not claimed to be official NASA colors.
@@ -87,6 +88,7 @@ LANDCOVER_COLORS = {
     9: "#fbff13", 10: "#b6ff05", 11: "#27ff87", 12: "#c24f44",
     13: "#a5a5a5", 14: "#ff6d4c", 15: "#69fff8", 16: "#f9ffa4",
     17: "#000000", 18: "#6b7d2a", 19: "#8f9a4d", 20: "#c2b280",
+    21: "#000000",
 }
 
 
@@ -273,7 +275,7 @@ def main() -> int:
 
     transform, flip_y, source_bounds = source_transform(lat, lon)
     land_png = reproject_codes(
-        land, land_valid, transform, flip_y, args.extent, args.width, {17}
+        land, land_valid, transform, flip_y, args.extent, args.width, {17, 21}
     )
     soil_png = reproject_codes(
         soil, soil_valid, transform, flip_y, args.extent, args.width, {14}
@@ -324,8 +326,8 @@ def main() -> int:
         },
         "landcover": {
             "source_variable": "Landcover_inst",
-            "classification": "IGBP/NCEP-modified 20-class land cover",
-            "water_code": 17,
+            "classification": "IGBP/NCEP-modified 20-class land cover + LIS open-water surface type",
+            "water_codes": [17, 21],
             "water_display": "transparent",
             "image": "nldas3_landcover.png",
             "classes": class_metadata(LANDCOVER_CLASSES, LANDCOVER_COLORS, land_counts),
