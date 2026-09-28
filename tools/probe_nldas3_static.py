@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Probe NASA NLDAS-3 static NetCDF files without assuming variable names.
+"""Probe NASA NLDAS-3 static NetCDF files without assuming category values.
 
-This diagnostic is intentionally read-only.  It records dimensions, variables,
-attributes, and a light strided sample of integer-like 2-D fields so the
-dashboard implementation can map categorical codes only after inspecting the
-actual source metadata.
+This diagnostic is intentionally read-only. It records dimensions, variables,
+attributes, coordinate ranges, and light strided samples of selected numeric
+fields. Category mappings are accepted only after the live values are checked
+against the documented NASA/LIS classification schemes.
 """
 
 from __future__ import annotations
@@ -30,9 +30,19 @@ SOURCES = {
     ),
 }
 
+SAMPLED_FIELDS = {
+    "Landcover_inst",
+    "Soiltype_inst",
+    "DOMAINMASK",
+    "LANDMASK",
+    "HYMAP_basin",
+    "HYMAP_basin_mask",
+    "HYMAP_river_flow_type",
+}
+
 
 def clean(value: Any) -> Any:
-    if isinstance(value, (np.generic,)):
+    if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, np.ndarray):
         if value.size <= 64:
@@ -55,27 +65,51 @@ def attrs_dict(attrs: dict[str, Any]) -> dict[str, Any]:
     return {str(k): clean(v) for k, v in attrs.items()}
 
 
-def sample_integer_field(da: xr.DataArray) -> dict[str, Any] | None:
-    if da.ndim < 2 or da.dtype.kind not in "iub":
-        return None
+def strided_sample(da: xr.DataArray, target_per_dim: int = 96) -> np.ndarray:
     indexers = {}
     for dim, size in da.sizes.items():
-        step = max(1, int(size) // 80)
+        step = max(1, int(size) // target_per_dim)
         indexers[dim] = slice(None, None, step)
-    sampled = np.asarray(da.isel(indexers).load().values)
-    if sampled.size == 0:
+    return np.asarray(da.isel(indexers).load().values)
+
+
+def summarize_numeric_sample(da: xr.DataArray) -> dict[str, Any] | None:
+    if da.ndim == 0 or da.dtype.kind not in "iufb":
         return None
+    sampled = strided_sample(da)
     sampled = sampled[np.isfinite(sampled)]
     if sampled.size == 0:
         return {"sample_count": 0, "unique_values": []}
+
     unique = np.unique(sampled)
-    return {
+    summary: dict[str, Any] = {
         "sample_count": int(sampled.size),
-        "sample_min": clean(unique.min()),
-        "sample_max": clean(unique.max()),
+        "sample_min": clean(sampled.min()),
+        "sample_max": clean(sampled.max()),
+        "unique_count": int(unique.size),
         "unique_values": [clean(v) for v in unique[:128]],
         "unique_values_truncated": bool(unique.size > 128),
     }
+
+    if da.dtype.kind == "f":
+        rounded = np.rint(sampled)
+        summary["all_sampled_values_integer_like"] = bool(
+            np.allclose(sampled, rounded, rtol=0.0, atol=1.0e-6)
+        )
+    return summary
+
+
+def coordinate_summary(da: xr.DataArray) -> dict[str, Any]:
+    item = {
+        "dims": list(da.dims),
+        "shape": list(da.shape),
+        "dtype": str(da.dtype),
+        "attributes": attrs_dict(dict(da.attrs)),
+    }
+    sampled = summarize_numeric_sample(da)
+    if sampled is not None:
+        item["sample"] = sampled
+    return item
 
 
 def inventory_one(s3: s3fs.S3FileSystem, name: str, key: str) -> dict[str, Any]:
@@ -96,13 +130,10 @@ def inventory_one(s3: s3fs.S3FileSystem, name: str, key: str) -> dict[str, Any]:
             "variables": {},
         }
         for cname in ds.coords:
-            da = ds[cname]
-            out["coordinates"][cname] = {
-                "dims": list(da.dims),
-                "shape": list(da.shape),
-                "dtype": str(da.dtype),
-                "attributes": attrs_dict(dict(da.attrs)),
-            }
+            out["coordinates"][cname] = coordinate_summary(ds[cname])
+
+        # Some LIS files expose lat/lon as ordinary data variables rather than
+        # xarray coordinates, so those are sampled explicitly too.
         for vname in ds.data_vars:
             da = ds[vname]
             item: dict[str, Any] = {
@@ -111,15 +142,26 @@ def inventory_one(s3: s3fs.S3FileSystem, name: str, key: str) -> dict[str, Any]:
                 "dtype": str(da.dtype),
                 "attributes": attrs_dict(dict(da.attrs)),
             }
-            sampled = sample_integer_field(da)
-            if sampled is not None:
-                item["integer_sample"] = sampled
+            if vname in SAMPLED_FIELDS or vname.lower() in {"lat", "lon"}:
+                sampled = summarize_numeric_sample(da)
+                if sampled is not None:
+                    item["sample"] = sampled
             out["variables"][vname] = item
         ds.close()
+
     print(
         f"{name}: {len(out['variables'])} data variables; dims={out['dimensions']}",
         flush=True,
     )
+    for vname in ("Landcover_inst", "Soiltype_inst", "LANDMASK", "HYMAP_basin"):
+        sample = out["variables"].get(vname, {}).get("sample")
+        if sample:
+            print(
+                f"  {vname}: min={sample.get('sample_min')} "
+                f"max={sample.get('sample_max')} "
+                f"unique={sample.get('unique_count')}",
+                flush=True,
+            )
     return out
 
 
