@@ -1,7 +1,7 @@
 {
   "metadata_mode": "nldas3_static_dashboard_v1",
   "render_revision": "nldas3-static-phase1-v1",
-  "generated_utc": "2026-09-28T12:53:52Z",
+  "generated_utc": "2026-09-28T13:17:32Z",
   "source": "s3://nasa-waterinsight/NLDAS3/static/NLDAS-3_dominant-soil-vegetation.nc",
   "source_history": "created on date: 2025-10-27T11:58:26.887",
   "source_grid": {
@@ -42,6 +42,8 @@
   "soil_texture": {
     "source_variable": "Soiltype_inst",
     "classification": "STATSGO 16-class texture index",
+    "classification_reference": "https://ldas.gsfc.nasa.gov/nldas/soils",
+    "interpretation_note": "Categorical soil texture only. Classes are not an ordinal runoff-risk scale and must not be converted directly to infiltration rate or FFG.",
     "water_code": 14,
     "water_display": "transparent",
     "image": "nldas3_soil_texture.png",
@@ -163,6 +165,8 @@
   "landcover": {
     "source_variable": "Landcover_inst",
     "classification": "IGBP/NCEP-modified 20-class land cover + LIS open-water surface type",
+    "classification_reference": "https://ldas.gsfc.nasa.gov/wldas/parameters",
+    "interpretation_note": "Static land-use/vegetation context used by the LIS/Noah-MP framework. It is not current vegetation condition or burn severity.",
     "water_codes": [
       17,
       21
@@ -319,5 +323,5 @@
       }
     ]
   },
-  "palette_note": "Colors are WPC dashboard visualization palettes, not official NASA colors."
+  "palette_note": "Colors are non-ordinal WPC dashboard visualization palettes, not official NASA colors and not a runoff-risk ranking."
 }
