@@ -131,10 +131,12 @@ def fit_coordinate_axis(
             f"{name} fitted origin disagrees with NASA grid metadata: "
             f"offset={origin_offset:.10f} degrees"
         )
-    if max_fit_residual > 2.5e-5:
+    residual_limit = 0.005 * expected_step  # 0.5% of one native grid cell
+    if max_fit_residual > residual_limit:
         raise RuntimeError(
             f"{name} coordinate vector is not adequately regular: "
-            f"max fit residual={max_fit_residual:.10f} degrees"
+            f"max fit residual={max_fit_residual:.10f} degrees; "
+            f"limit={residual_limit:.10f}"
         )
 
     return float(fitted_first), float(fitted_step), max_fit_residual, origin_offset
