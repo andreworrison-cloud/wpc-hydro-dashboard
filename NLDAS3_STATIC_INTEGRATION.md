@@ -71,14 +71,12 @@ SoilTemp, WaterTableD, TWS, and routing outputs when NASA releases them publicly
 
 ## Implementation status
 
-- Current integration branch: `feature/nldas3-static-land-surface-current`, rebuilt from the current dashboard `main` rather than the earlier diverged prototype branch.
-- Live NASA source probe completed successfully against both public static NetCDF files.
+- Operational on `main`: NLDAS-3 Soil Texture, NLDAS-3 Land Use / Vegetation, and NLDAS-3 / MERIT Terrain Slope.
+- These products are static land-surface context. They have **no recurring GitHub schedule** and are excluded from the dashboard's 15-minute dynamic refresh loop.
+- Retained GitHub Actions are manual maintenance tools only (`workflow_dispatch`) for source probing and reproducible static-asset rebuilding.
+- The superseded feature-branch publishing workflow has been removed.
 - `tools/build_nldas3_static.py` reproducibly builds the CONUS soil-texture and land-use/vegetation display derivatives directly from NASA S3.
-- `static/nldas3_soil_texture.png`, `static/nldas3_landcover.png`, and `static/nldas3_static_metadata.json` are generated and published on the feature branch only.
-- `app.js` registers both products under **Land-Surface Runoff Sensitivity**, with categorical legends, static-product time/source boxes, metadata fail-closed checks, and no 15-minute dynamic refresh.
-- `tools/validate_dashboard.py` enforces the NLDAS-3 source-variable, category-code, bounds, image-dimension, nearest-neighbor/no-smoothing, display-vs-science, and layer-order contracts.
-- Dashboard validation, NLDAS-3 build, and guarded feature-branch publication are passing.
-- The larger Noah-MP/HyMAP static file also contains MERIT ~1-km elevation and slope, monthly greenness climatology, drainage area/basin structure, river geometry/roughness, flow-direction fields, and runoff/baseflow timing parameters.
-- **Next static-display candidate:** MERIT/NLDAS-3 terrain slope. HYMAP basin IDs and routing coefficients remain research/model inputs until their semantics and units are sufficiently documented for a forecaster-facing display.
+- `tools/build_nldas3_slope.py` reproducibly builds the descriptive CONUS percent-slope display derivative from the NLDAS-3 / MERIT `SLOPE` field.
+- `tools/validate_dashboard.py` enforces source-variable, category/bin, bounds, image-dimension, nearest-neighbor/no-smoothing, display-vs-science, layer-order, and static-refresh safeguards.
+- HYMAP basin IDs and routing coefficients remain research/model inputs until their semantics and units are sufficiently documented for a forecaster-facing display.
 - Future full NLDAS-3 Noah-MP rollout remains reserved for dynamic fields such as SoilMoist, Qs, Qsb, SoilTemp, WaterTableD, TWS, and routing outputs when NASA releases them publicly.
-
