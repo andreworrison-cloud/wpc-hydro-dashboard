@@ -1,0 +1,65 @@
+name: Publish NLDAS-3 static assets to feature branch
+
+on:
+  push:
+    branches:
+      - feature/nldas3-static-land-surface
+    paths:
+      - tools/build_nldas3_static.py
+      - .github/workflows/publish_nldas3_static_feature.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/feature/nldas3-static-land-surface'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/nldas3-static-land-surface
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3" xarray h5netcdf h5py s3fs rasterio pillow
+
+      - name: Build validated dashboard assets
+        run: |
+          python tools/build_nldas3_static.py --output-dir static
+
+      - name: Verify publication scope
+        run: |
+          test -s static/nldas3_soil_texture.png
+          test -s static/nldas3_landcover.png
+          test -s static/nldas3_static_metadata.json
+          git status --short
+          changed="$(git status --short | awk '{print $2}')"
+          unexpected="$(printf '%s\n' "$changed" | grep -vE '^static/nldas3_(soil_texture\.png|landcover\.png|static_metadata\.json)$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected generated paths:"
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Commit static assets to feature branch
+        run: |
+          git add static/nldas3_soil_texture.png static/nldas3_landcover.png static/nldas3_static_metadata.json
+          if git diff --cached --quiet; then
+            echo "NLDAS-3 static assets are already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Publish validated NLDAS-3 static dashboard assets"
+          git push origin HEAD:feature/nldas3-static-land-surface
