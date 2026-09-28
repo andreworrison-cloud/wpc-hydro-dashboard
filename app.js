@@ -24,6 +24,13 @@ customStyle.innerHTML = `
         image-rendering: pixelated !important;
     }
 
+    /* NLDAS-3 soil texture and land-cover are categorical native-grid classes.
+       Preserve nearest-neighbor class boundaries in the browser. */
+    img.nldas3-soil-texture-raster,
+    img.nldas3-landcover-raster {
+        image-rendering: pixelated !important;
+    }
+
     .glm-trend-card {
         margin: 8px 8px 10px;
         overflow: hidden;
