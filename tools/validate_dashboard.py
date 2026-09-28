@@ -25,6 +25,9 @@ nldas3_static_generator = (ROOT / "tools" / "build_nldas3_static.py").read_text(
 nldas3_static_metadata_path = ROOT / "static" / "nldas3_static_metadata.json"
 nldas3_soil_image_path = ROOT / "static" / "nldas3_soil_texture.png"
 nldas3_landcover_image_path = ROOT / "static" / "nldas3_landcover.png"
+nldas3_slope_generator = (ROOT / "tools" / "build_nldas3_slope.py").read_text(encoding="utf-8")
+nldas3_slope_metadata_path = ROOT / "static" / "nldas3_slope_metadata.json"
+nldas3_slope_image_path = ROOT / "static" / "nldas3_slope_percent.png"
 mrms_rala_generator = (ROOT / "fetch_mrms_rala.py").read_text(encoding="utf-8")
 mrms_rala_loop_generator = (ROOT / "fetch_mrms_rala_loop.py").read_text(encoding="utf-8")
 mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").read_text(encoding="utf-8")
@@ -33,7 +36,7 @@ errors = []
 
 # Current registry total includes all existing dashboard data/config entries,
 # basemaps, and the two validated NASA NLDAS-3 static land-surface layers.
-EXPECTED_LAYER_COUNT = 144
+EXPECTED_LAYER_COUNT = 145
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -91,6 +94,7 @@ required_labels = [
     "NRCS Hydrologic Soil Group (A–D / Dual)",
     "NASA NLDAS-3 Soil Texture (Static)",
     "NASA NLDAS-3 Land Use / Vegetation (Static)",
+    "NASA NLDAS-3 / MERIT Terrain Slope (Static)",
     "USGS Annual NLCD Fractional Impervious Surface (%)",
     "NIFC/WFIGS Current Wildfire Perimeters",
     "NIFC/WFIGS Historical Wildfire Perimeters",
@@ -479,6 +483,140 @@ if nldas3_refresh_start >= 0 and nldas3_refresh_end > nldas3_refresh_start:
         errors.append("Static NLDAS-3 layers were incorrectly added to the 15-minute dynamic refresh loop.")
 
 
+# NASA NLDAS-3 / MERIT static terrain-slope integration.
+# Percent-slope bins are descriptive terrain ranges only and must never be
+# interpreted as runoff-risk or flash-flood-risk classes.
+required_nldas3_slope_app_fragments = [
+    "NASA NLDAS-3 / MERIT Terrain Slope (Static)",
+    "{id: 'nldas3-slope', label: NLDAS3_SLOPE_LAYER_NAME",
+    "static/nldas3_slope_percent.png",
+    "static/nldas3_slope_metadata.json",
+    "nldas3-slope-raster",
+    "img.nldas3-slope-raster",
+    "fetchNLDAS3SlopeMetadata",
+    "nldas3-slope-time-box",
+    "buildNLDAS3SlopeLegendHTML",
+    "nldas3_static_slope_dashboard_v1",
+    "nldas3-merit-slope-phase1b-v1",
+    "data.source_variable !== 'SLOPE'",
+    "data.source_standard_name !== \"MERIT '1K' slope\"",
+    "data.display?.categorical_descriptive_bins !== true",
+    "data.display?.display_resampling !== 'nearest-neighbor'",
+    "data.display?.smoothing !== false",
+    "data.display?.transparent_missing_water !== true",
+    "not runoff-risk classes",
+    "No infiltration or flash-flood threshold",
+]
+for fragment in required_nldas3_slope_app_fragments:
+    if fragment not in app:
+        errors.append(f"Missing NLDAS-3 slope app contract fragment: {fragment}")
+
+required_nldas3_slope_generator_fragments = [
+    'SOURCE_KEY = "nasa-waterinsight/NLDAS3/static/lis_input.nldas3.noahmp401.1km.hymap.nc"',
+    'VARIABLE = "SLOPE"',
+    'TARGET_CRS = "EPSG:3857"',
+    'DEFAULT_WIDTH = 9000',
+    'SLOPE_BINS = [',
+    'standard_name", "")) != "MERIT \'1K\' slope"',
+    'Resampling.nearest',
+    '"metadata_mode": "nldas3_static_slope_dashboard_v1"',
+    '"render_revision": "nldas3-merit-slope-phase1b-v1"',
+    '"categorical_descriptive_bins": True',
+    '"display_resampling": "nearest-neighbor"',
+    '"smoothing": False',
+    '"transparent_missing_water": True',
+    '"Percent-slope bins are descriptive terrain ranges, not runoff-risk classes."',
+    '"The browser PNG is a display derivative only."',
+    '"No infiltration or flash-flood threshold is inferred from slope alone."',
+]
+for fragment in required_nldas3_slope_generator_fragments:
+    if fragment not in nldas3_slope_generator:
+        errors.append(f"Missing NLDAS-3 slope generator contract fragment: {fragment}")
+
+if not nldas3_slope_metadata_path.exists():
+    errors.append("Missing static/nldas3_slope_metadata.json")
+else:
+    try:
+        slope_meta = json.loads(nldas3_slope_metadata_path.read_text(encoding="utf-8"))
+        if slope_meta.get("metadata_mode") != "nldas3_static_slope_dashboard_v1":
+            errors.append("Committed NLDAS-3 slope metadata_mode changed unexpectedly.")
+        if slope_meta.get("render_revision") != "nldas3-merit-slope-phase1b-v1":
+            errors.append("Committed NLDAS-3 slope render revision changed unexpectedly.")
+        if slope_meta.get("source_variable") != "SLOPE":
+            errors.append("Committed NLDAS-3 slope source variable is not SLOPE.")
+        if slope_meta.get("source_standard_name") != "MERIT '1K' slope":
+            errors.append("Committed NLDAS-3 slope standard_name changed unexpectedly.")
+        if str(slope_meta.get("source_units_attribute", "")) != "-":
+            errors.append("Committed NLDAS-3 slope source-units attribute changed unexpectedly.")
+        if str(slope_meta.get("image_crs", "")).upper() != "EPSG:3857":
+            errors.append("Committed NLDAS-3 slope display image is not EPSG:3857.")
+        if slope_meta.get("bounds") != [[23.0, -125.0], [50.5, -66.5]]:
+            errors.append("Committed NLDAS-3 slope CONUS display bounds changed unexpectedly.")
+        if int(slope_meta.get("image_width", -1)) != 9000 or int(slope_meta.get("image_height", -1)) != 5392:
+            errors.append("Committed NLDAS-3 slope display dimensions are not 9000x5392.")
+
+        display = slope_meta.get("display") or {}
+        if display.get("categorical_descriptive_bins") is not True:
+            errors.append("Committed NLDAS-3 slope display is not identified as descriptive categorical bins.")
+        if display.get("display_resampling") != "nearest-neighbor" or display.get("smoothing") is not False:
+            errors.append("Committed NLDAS-3 slope display violates the nearest-neighbor/no-smoothing contract.")
+        if display.get("transparent_missing_water") is not True:
+            errors.append("Committed NLDAS-3 slope missing/water cells must remain transparent.")
+        expected_labels = ["0–1%", "1–2%", "2–5%", "5–10%", "10–20%", "20–30%", "30–45%", "45–60%", "≥60%"]
+        actual_labels = [item.get("label") for item in display.get("bins", [])]
+        if actual_labels != expected_labels:
+            errors.append("Committed NLDAS-3 slope descriptive bins changed unexpectedly.")
+        display_fractions = [float(item.get("display_fraction", 0.0)) for item in display.get("bins", [])]
+        if display_fractions and abs(sum(display_fractions) - 1.0) > 1e-6:
+            errors.append("Committed NLDAS-3 slope display-bin fractions do not sum to 1.")
+
+        stats = slope_meta.get("source_stats") or {}
+        if not (
+            0.0 <= float(stats.get("median_percent", -1.0)) < 5.0
+            and 5.0 < float(stats.get("p90_percent", -1.0)) < 15.0
+            and 15.0 < float(stats.get("p99_percent", -1.0)) < 35.0
+            and 60.0 < float(stats.get("max_percent", -1.0)) < 90.0
+        ):
+            errors.append("Committed NLDAS-3 slope source statistics are outside the validated CONUS range.")
+
+        safeguards = " ".join(slope_meta.get("science_safeguards") or [])
+        if (
+            "not runoff-risk classes" not in safeguards
+            or "display derivative only" not in safeguards
+            or "No infiltration or flash-flood threshold" not in safeguards
+        ):
+            errors.append("Committed NLDAS-3 slope metadata lost its science safeguards.")
+    except Exception as exc:
+        errors.append(f"Could not validate committed NLDAS-3 slope metadata: {exc}")
+
+if not nldas3_slope_image_path.exists():
+    errors.append("Missing static/nldas3_slope_percent.png")
+else:
+    try:
+        with nldas3_slope_image_path.open("rb") as fh:
+            signature = fh.read(8)
+            if signature != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("bad PNG signature")
+            length = struct.unpack(">I", fh.read(4))[0]
+            chunk_type = fh.read(4)
+            if length != 13 or chunk_type != b"IHDR":
+                raise ValueError("missing PNG IHDR")
+            width, height = struct.unpack(">II", fh.read(8))
+        if (width, height) != (9000, 5392):
+            errors.append(
+                f"Committed NLDAS-3 slope PNG dimensions are {width}x{height}, expected 9000x5392."
+            )
+    except Exception as exc:
+        errors.append(f"Could not validate committed NLDAS-3 slope PNG: {exc}")
+
+slope_initial_fetch = app.find("fetchNLDAS3SlopeMetadata();")
+slope_refresh_start = app.find("setInterval(() => {", slope_initial_fetch)
+slope_refresh_end = app.find("}, 15 * 60 * 1000);", slope_refresh_start)
+if slope_refresh_start >= 0 and slope_refresh_end > slope_refresh_start:
+    if "fetchNLDAS3SlopeMetadata();" in app[slope_refresh_start:slope_refresh_end]:
+        errors.append("Static NLDAS-3 slope layer was incorrectly added to the 15-minute dynamic refresh loop.")
+
+
 # Phase H2 — USGS Annual NLCD fractional imperviousness.
 # This is the second static Land-Surface Runoff Sensitivity layer. HSG remains
 # first; Annual NLCD follows immediately beneath it. Both remain separate from
@@ -521,21 +659,23 @@ if land_surface_start >= 0 and wildfire_start > land_surface_start:
     hsg_layer_pos = land_surface_block.find("{id: 'nrcs-hsg'")
     nldas3_soil_pos = land_surface_block.find("{id: 'nldas3-soil-texture'")
     nldas3_landcover_pos = land_surface_block.find("{id: 'nldas3-landcover'")
+    nldas3_slope_pos = land_surface_block.find("{id: 'nldas3-slope'")
     nlcd_layer_pos = land_surface_block.find("{id: 'nlcd-impervious'")
     land_surface_positions = [
         hsg_layer_pos,
         nldas3_soil_pos,
         nldas3_landcover_pos,
+        nldas3_slope_pos,
         nlcd_layer_pos,
     ]
     if any(position < 0 for position in land_surface_positions):
         errors.append(
-            "Land-Surface Runoff Sensitivity is missing HSG, NLDAS-3 soil/land-cover, or NLCD."
+            "Land-Surface Runoff Sensitivity is missing HSG, NLDAS-3 soil/land-cover/slope, or NLCD."
         )
     elif land_surface_positions != sorted(land_surface_positions):
         errors.append(
             "Land-Surface Runoff Sensitivity order must be HSG -> NLDAS-3 Soil -> "
-            "NLDAS-3 Land Use/Vegetation -> Annual NLCD."
+            "NLDAS-3 Land Use/Vegetation -> NLDAS-3 Slope -> Annual NLCD."
         )
 
 required_nlcd_generator_fragments = [
