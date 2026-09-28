@@ -97,28 +97,29 @@ def rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def validate_regular_axis(
+def validate_coordinate_axis(
     values: np.ndarray,
     name: str,
+    expected_first: float,
     expected_step: float,
-) -> float:
+) -> None:
     values = np.asarray(values, dtype=np.float64)
     if values.ndim != 1 or values.size < 2:
-        raise RuntimeError(f"{name} must be a 1-D regular coordinate")
-    diffs = np.diff(values)
-    if not np.all(np.isfinite(diffs)):
-        raise RuntimeError(f"{name} contains non-finite coordinate spacing")
-    if not np.isfinite(expected_step) or expected_step <= 0:
-        raise RuntimeError(f"{name}: missing/invalid NASA grid spacing attribute")
-    step = float(np.median(diffs))
-    # Coordinates are stored as float32. Validate against NASA's stated DX/DY,
-    # allowing only the expected representation jitter at large coordinate values.
-    if not np.allclose(diffs, expected_step, rtol=0.0, atol=1.5e-5):
+        raise RuntimeError(f"{name} must be a 1-D coordinate")
+    if not np.isfinite(expected_first) or not np.isfinite(expected_step) or expected_step <= 0:
+        raise RuntimeError(f"{name}: invalid NASA grid geometry metadata")
+
+    expected = expected_first + np.arange(values.size, dtype=np.float64) * expected_step
+    residual = np.abs(values - expected)
+    # NASA stores coordinate vectors as float32. At CONUS longitudes this can
+    # quantize individual coordinate values by several microdegrees even though
+    # the defining grid metadata is exactly 0.01 degrees.
+    max_residual = float(np.nanmax(residual))
+    if not np.all(np.isfinite(values)) or max_residual > 2.5e-5:
         raise RuntimeError(
-            f"{name} spacing departs from NASA grid attribute: "
-            f"median={step:.10f}, expected={expected_step:.10f}"
+            f"{name} coordinates disagree with NASA source geometry: "
+            f"max residual={max_residual:.10f} degrees"
         )
-    return step
 
 
 def subset_slices(lat: np.ndarray, lon: np.ndarray, extent) -> tuple[slice, slice]:
@@ -151,23 +152,33 @@ def validate_categories(values: np.ndarray, allowed: set[int], product: str) -> 
 def source_transform(
     lat: np.ndarray,
     lon: np.ndarray,
+    y_start_index: int,
+    x_start_index: int,
+    southwest_lat: float,
+    southwest_lon: float,
     expected_dy: float,
     expected_dx: float,
 ):
-    lat_step = validate_regular_axis(lat, "latitude", expected_dy)
-    lon_step = validate_regular_axis(lon, "longitude", expected_dx)
-    if lon_step <= 0:
-        raise RuntimeError("Expected NLDAS-3 longitude to increase eastward")
+    first_lat = southwest_lat + y_start_index * expected_dy
+    first_lon = southwest_lon + x_start_index * expected_dx
+    validate_coordinate_axis(lat, "latitude", first_lat, expected_dy)
+    validate_coordinate_axis(lon, "longitude", first_lon, expected_dx)
 
-    data_flip = lat_step > 0
-    lat_north = float(lat[-1] if data_flip else lat[0])
-    lat_south = float(lat[0] if data_flip else lat[-1])
-    west = float(lon[0] - lon_step / 2.0)
-    east = float(lon[-1] + lon_step / 2.0)
-    south = float(lat_south - abs(lat_step) / 2.0)
-    north = float(lat_north + abs(lat_step) / 2.0)
+    south_center = first_lat
+    west_center = first_lon
+    north_center = first_lat + (lat.size - 1) * expected_dy
+    east_center = first_lon + (lon.size - 1) * expected_dx
+
+    west = west_center - expected_dx / 2.0
+    east = east_center + expected_dx / 2.0
+    south = south_center - expected_dy / 2.0
+    north = north_center + expected_dy / 2.0
     transform = from_bounds(west, south, east, north, lon.size, lat.size)
-    return transform, data_flip, (west, south, east, north)
+
+    # NLDAS-3 latitude increases northward in array order; rasterio expects
+    # row 0 at the north edge, so the categorical arrays are flipped on Y
+    # immediately before reprojection.
+    return transform, True, (west, south, east, north)
 
 
 def target_grid(extent, width: int):
@@ -286,13 +297,22 @@ def main() -> int:
         source_history = str(ds.attrs.get("history", "Unknown"))
         source_dx = float(ds.attrs.get("DX", float("nan")))
         source_dy = float(ds.attrs.get("DY", float("nan")))
+        southwest_lat = float(ds.attrs.get("SOUTH_WEST_CORNER_LAT", float("nan")))
+        southwest_lon = float(ds.attrs.get("SOUTH_WEST_CORNER_LON", float("nan")))
         ds.close()
 
     land_valid = validate_categories(land, set(LANDCOVER_CLASSES), "NLDAS-3 land cover")
     soil_valid = validate_categories(soil, set(SOIL_CLASSES), "NLDAS-3 soil texture")
 
     transform, flip_y, source_bounds = source_transform(
-        lat, lon, expected_dy=source_dy, expected_dx=source_dx
+        lat,
+        lon,
+        y_start_index=int(ys.start),
+        x_start_index=int(xs.start),
+        southwest_lat=southwest_lat,
+        southwest_lon=southwest_lon,
+        expected_dy=source_dy,
+        expected_dx=source_dx,
     )
     land_png = reproject_codes(
         land, land_valid, transform, flip_y, args.extent, args.width, {17, 21}
@@ -322,8 +342,8 @@ def main() -> int:
         "source_history": source_history,
         "source_grid": {
             "projection": "equidistant cylindrical / latitude-longitude",
-            "native_dx_deg": float(abs(np.median(np.diff(lon)))),
-            "native_dy_deg": float(abs(np.median(np.diff(lat)))),
+            "native_dx_deg": float(source_dx),
+            "native_dy_deg": float(source_dy),
             "subset_source_bounds": list(source_bounds),
         },
         "domain": "CONUS dashboard extent",
