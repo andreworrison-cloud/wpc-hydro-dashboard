@@ -1,0 +1,43 @@
+name: Build NLDAS-3 static dashboard derivatives
+
+on:
+  push:
+    branches:
+      - feature/nldas3-static-land-surface-current
+    paths:
+      - tools/build_nldas3_static.py
+      - .github/workflows/build_nldas3_static.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3" xarray h5netcdf h5py s3fs rasterio pillow
+
+      - name: Build guarded CONUS display derivatives
+        run: |
+          python tools/build_nldas3_static.py --output-dir nldas3_build
+
+      - name: Upload NLDAS-3 build products
+        uses: actions/upload-artifact@v4
+        with:
+          name: nldas3-static-dashboard-build
+          path: nldas3_build/
+          if-no-files-found: error
+          retention-days: 14

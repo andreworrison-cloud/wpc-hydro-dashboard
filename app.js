@@ -24,6 +24,13 @@ customStyle.innerHTML = `
         image-rendering: pixelated !important;
     }
 
+    /* NLDAS-3 soil texture and land-cover are categorical native-grid classes.
+       Preserve nearest-neighbor class boundaries in the browser. */
+    img.nldas3-soil-texture-raster,
+    img.nldas3-landcover-raster {
+        image-rendering: pixelated !important;
+    }
+
     .glm-trend-card {
         margin: 8px 8px 10px;
         overflow: hidden;
@@ -2145,6 +2152,11 @@ const NRCS_HSG_LAYER_NAME = 'NRCS Hydrologic Soil Group (A–D / Dual)';
 const NLCD_IMPERVIOUS_IMAGE_URL = 'static/usgs_nlcd_fractional_impervious_2025.png';
 const NLCD_IMPERVIOUS_METADATA_URL = 'static/usgs_nlcd_fractional_impervious_2025_metadata.json';
 const NLCD_IMPERVIOUS_LAYER_NAME = 'USGS Annual NLCD Fractional Impervious Surface (%)';
+const NLDAS3_SOIL_IMAGE_URL = 'static/nldas3_soil_texture.png';
+const NLDAS3_LANDCOVER_IMAGE_URL = 'static/nldas3_landcover.png';
+const NLDAS3_STATIC_METADATA_URL = 'static/nldas3_static_metadata.json';
+const NLDAS3_SOIL_LAYER_NAME = 'NASA NLDAS-3 Soil Texture (Static)';
+const NLDAS3_LANDCOVER_LAYER_NAME = 'NASA NLDAS-3 Land Use / Vegetation (Static)';
 const soilPlaceholderBounds = [[24.0, -125.0], [50.0, -66.0]];
 
 const nwmLayer = L.imageOverlay(
@@ -2192,6 +2204,33 @@ const nlcdImperviousLayer = L.imageOverlay(
         className: 'nlcd-impervious-raster'
     }
 );
+
+const nldas3SoilLayer = L.imageOverlay(
+    NLDAS3_SOIL_IMAGE_URL,
+    soilPlaceholderBounds,
+    {
+        zIndex: 10,
+        opacity: 0,
+        interactive: false,
+        className: 'nldas3-soil-texture-raster'
+    }
+);
+
+const nldas3LandcoverLayer = L.imageOverlay(
+    NLDAS3_LANDCOVER_IMAGE_URL,
+    soilPlaceholderBounds,
+    {
+        zIndex: 10,
+        opacity: 0,
+        interactive: false,
+        className: 'nldas3-landcover-raster'
+    }
+);
+
+// --- NASA NLDAS-3 STATIC LAND-SURFACE CONTEXT ---
+// Categorical display derivatives of the public ~1-km static parameter grid.
+// They are hydrologic context only: not soil moisture, infiltration rate,
+// runoff, or FFG. Never use these browser PNGs as scientific-model inputs.
 
 // --- NIFC/WFIGS WILDFIRE / BURN-SCAR CONTEXT ---
 // WFIGS supplies mapped wildfire perimeter extent. These polygons do NOT
@@ -3885,6 +3924,8 @@ let nrcsHsgReady = false;
 let nrcsHsgMetadata = null;
 let nlcdImperviousReady = false;
 let nlcdImperviousMetadata = null;
+let nldas3StaticReady = false;
+let nldas3StaticMetadata = null;
 
 
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
@@ -6133,6 +6174,152 @@ function formatNLCDImperviousTimeBox(metadata = nlcdImperviousMetadata) {
     `;
 }
 
+function formatNLDAS3StaticTimeBox(productKey) {
+    const isSoil = productKey === 'soil_texture';
+    const product = nldas3StaticMetadata?.[productKey];
+    const title = isSoil ? 'NASA NLDAS-3 Soil Texture' : 'NASA NLDAS-3 Land Use / Vegetation';
+    const classification = product?.classification || 'Static categorical land-surface classification';
+    const sourceHistory = String(nldas3StaticMetadata?.source_history || '');
+    const sourceDateMatch = sourceHistory.match(/(\d{4}-\d{2}-\d{2})/);
+    const sourceDate = sourceDateMatch ? sourceDateMatch[1] : 'source build date unavailable';
+    const dx = Number(nldas3StaticMetadata?.source_grid?.native_dx_deg);
+    const resolutionText = Number.isFinite(dx)
+        ? `native ${dx.toFixed(2)}° grid (~1 km)`
+        : 'native ~1 km grid';
+
+    return `
+        <strong>${title}</strong><br>
+        <span style="color:#4fc3f7;font-weight:bold;">${classification}</span><br>
+        <span style="color:#d7edf8;">${resolutionText}</span><br>
+        <span style="color:#ffeb3b;">Static land-surface parameter • source build ${sourceDate}</span>
+    `;
+}
+
+function buildNLDAS3CategoricalLegendHTML(productKey) {
+    const isSoil = productKey === 'soil_texture';
+    const product = nldas3StaticMetadata?.[productKey];
+    const title = isSoil ? 'NASA NLDAS-3 Soil Texture' : 'NASA NLDAS-3 Land Use / Vegetation';
+    const subtitle = isSoil
+        ? 'STATSGO texture classification • static ~1 km context'
+        : 'IGBP/NCEP-modified surface classification • static ~1 km context';
+    const transparentCodes = new Set(
+        isSoil
+            ? [Number(product?.water_code ?? 14)]
+            : (product?.water_codes || [17, 21]).map(Number)
+    );
+    const classes = Array.isArray(product?.classes)
+        ? product.classes.filter(item =>
+            Number(item.display_pixel_count || 0) > 0 &&
+            !transparentCodes.has(Number(item.code))
+        )
+        : [];
+
+    const rows = classes.length
+        ? classes.map(item => `
+            <div style="display:grid;grid-template-columns:16px 1fr;gap:5px;align-items:center;font-size:8.5px;line-height:1.15;">
+                <span style="width:14px;height:11px;background:${item.color};border:1px solid #555;"></span>
+                <span><strong>${item.code}</strong> — ${item.label}</span>
+            </div>
+        `).join('')
+        : '<div style="font-size:9px;color:#666;">Loading validated NLDAS-3 class metadata...</div>';
+
+    const waterNote = isSoil
+        ? 'Water (soil class 14) is transparent.'
+        : 'Ocean/open-water surface classes are transparent.';
+
+    return `
+        <div style="background:white;padding:10px;border-radius:5px;color:black;font-family:sans-serif;min-width:300px;max-width:390px;">
+            <div style="text-align:center;font-weight:800;font-size:13px;margin-bottom:2px;">${title}</div>
+            <div style="text-align:center;font-size:9px;margin-bottom:7px;color:#444;">${subtitle}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;">
+                ${rows}
+            </div>
+            <div style="margin-top:7px;padding-top:6px;border-top:1px solid #bbb;font-size:8px;line-height:1.25;color:#555;">
+                ${waterNote} Colors are WPC dashboard visualization colors, not an official NASA palette.
+                Static land-surface context only—not real-time soil moisture, an infiltration rate, or a flash-flood threshold.
+            </div>
+        </div>
+    `;
+}
+
+async function fetchNLDAS3StaticMetadata() {
+    try {
+        const response = await fetch(
+            `${NLDAS3_STATIC_METADATA_URL}?t=${Date.now()}`,
+            {cache: 'no-store'}
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        if (data.metadata_mode !== 'nldas3_static_dashboard_v1') {
+            throw new Error(`Unexpected NLDAS-3 metadata mode: ${data.metadata_mode || 'missing'}`);
+        }
+        if (data.render_revision !== 'nldas3-static-phase1-v1') {
+            throw new Error(`Unexpected NLDAS-3 render revision: ${data.render_revision || 'missing'}`);
+        }
+        if (String(data.image_crs || '').toUpperCase() !== 'EPSG:3857') {
+            throw new Error(`NLDAS-3 expected EPSG:3857 display image, found ${data.image_crs || 'missing CRS'}`);
+        }
+        if (data.categorical !== true || data.smoothing !== false || data.display_resampling !== 'nearest-neighbor') {
+            throw new Error('NLDAS-3 display metadata violates the categorical no-smoothing contract');
+        }
+
+        const soil = data.soil_texture;
+        const land = data.landcover;
+        if (!soil || !land) throw new Error('NLDAS-3 metadata missing soil_texture or landcover product');
+        if (soil.source_variable !== 'Soiltype_inst' || land.source_variable !== 'Landcover_inst') {
+            throw new Error('NLDAS-3 source-variable contract changed');
+        }
+        if (Number(soil.water_code) !== 14) {
+            throw new Error('NLDAS-3 STATSGO water-code contract changed');
+        }
+        const landWaterCodes = (land.water_codes || []).map(Number);
+        if (landWaterCodes.length !== 2 || landWaterCodes[0] !== 17 || landWaterCodes[1] !== 21) {
+            throw new Error('NLDAS-3 land-cover water-code contract changed');
+        }
+
+        const soilCodes = (soil.classes || []).map(item => Number(item.code));
+        const landCodes = (land.classes || []).map(item => Number(item.code));
+        const expectedSoilCodes = Array.from({length: 16}, (_, i) => i + 1);
+        const expectedLandCodes = Array.from({length: 21}, (_, i) => i + 1);
+        if (JSON.stringify(soilCodes) !== JSON.stringify(expectedSoilCodes)) {
+            throw new Error('NLDAS-3 soil class-code sequence changed');
+        }
+        if (JSON.stringify(landCodes) !== JSON.stringify(expectedLandCodes)) {
+            throw new Error('NLDAS-3 land-cover class-code sequence changed');
+        }
+
+        const exactBounds = validateRasterBounds(data.bounds, 'NASA NLDAS-3 static land surface');
+        const staticVersion = [data.render_revision, data.generated_utc].filter(Boolean).join('-');
+
+        nldas3SoilLayer.setBounds(exactBounds);
+        nldas3SoilLayer.setUrl(`${NLDAS3_SOIL_IMAGE_URL}?v=${encodeURIComponent(staticVersion)}`);
+        nldas3SoilLayer.setOpacity(0.86);
+
+        nldas3LandcoverLayer.setBounds(exactBounds);
+        nldas3LandcoverLayer.setUrl(`${NLDAS3_LANDCOVER_IMAGE_URL}?v=${encodeURIComponent(staticVersion)}`);
+        nldas3LandcoverLayer.setOpacity(0.82);
+
+        nldas3StaticMetadata = data;
+        nldas3StaticReady = true;
+
+        const soilTimeBox = document.getElementById('nldas3-soil-time-box');
+        if (soilTimeBox && soilTimeBox.style.display === 'block') {
+            soilTimeBox.innerHTML = formatNLDAS3StaticTimeBox('soil_texture');
+        }
+        const landTimeBox = document.getElementById('nldas3-landcover-time-box');
+        if (landTimeBox && landTimeBox.style.display === 'block') {
+            landTimeBox.innerHTML = formatNLDAS3StaticTimeBox('landcover');
+        }
+        updateLegends();
+    } catch (error) {
+        nldas3StaticReady = false;
+        nldas3SoilLayer.setOpacity(0);
+        nldas3LandcoverLayer.setOpacity(0);
+        console.error('NLDAS-3 static raster metadata update failed:', error);
+    }
+}
+
 // Initial fetch on load
 fetchRAPMetadata();
 fetchCAMMetadata();
@@ -6146,6 +6333,7 @@ fetchSPoRTMetadata();
 fetchNLDASRSMMetadata();
 fetchNRCSHSGMetadata();
 fetchNLCDImperviousMetadata();
+fetchNLDAS3StaticMetadata();
 
 // Auto-Refresh generated PNGs every 15 minutes
 setInterval(() => {
@@ -6343,6 +6531,8 @@ legendDockControl.onAdd = function () {
         'nldas-rsm-0100-time-box',
         'nrcs-hsg-time-box',
         'nlcd-impervious-time-box',
+        'nldas3-soil-time-box',
+        'nldas3-landcover-time-box',
         'wfigs-current-time-box',
         'wfigs-ytd-time-box',
         'wfigs-history-time-box'
@@ -6927,6 +7117,8 @@ function updateLegends() {
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)')) addLegendBlock(nldasRsm010LegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)')) addLegendBlock(nldasRsm0100LegendHTML);
     if (activeLayerNames.has(NRCS_HSG_LAYER_NAME)) addLegendBlock(nrcsHsgLegendHTML);
+    if (activeLayerNames.has(NLDAS3_SOIL_LAYER_NAME)) addLegendBlock(buildNLDAS3CategoricalLegendHTML('soil_texture'));
+    if (activeLayerNames.has(NLDAS3_LANDCOVER_LAYER_NAME)) addLegendBlock(buildNLDAS3CategoricalLegendHTML('landcover'));
     if (activeLayerNames.has(NLCD_IMPERVIOUS_LAYER_NAME)) addLegendBlock(nlcdImperviousLegendHTML);
     GLM_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.name))
@@ -6993,6 +7185,8 @@ map.on('overlayadd', function(eventLayer) {
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
     const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
     const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
+    const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
+    const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
 
     if (rapLegendMapping[eventLayer.name]) {
         // Refresh bounds, valid times, and cache-busted RAP image URLs
@@ -7162,6 +7356,26 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
+    if (eventLayer.name === NLDAS3_SOIL_LAYER_NAME) {
+        if (!nldas3StaticReady) fetchNLDAS3StaticMetadata();
+        if (nldas3SoilTimeBox) {
+            nldas3SoilTimeBox.innerHTML = nldas3StaticReady
+                ? formatNLDAS3StaticTimeBox('soil_texture')
+                : `<strong>NASA NLDAS-3 Soil Texture</strong><br><span style="color:#ffeb3b;">Loading validated static layer...</span>`;
+            nldas3SoilTimeBox.style.display = 'block';
+        }
+    }
+
+    if (eventLayer.name === NLDAS3_LANDCOVER_LAYER_NAME) {
+        if (!nldas3StaticReady) fetchNLDAS3StaticMetadata();
+        if (nldas3LandcoverTimeBox) {
+            nldas3LandcoverTimeBox.innerHTML = nldas3StaticReady
+                ? formatNLDAS3StaticTimeBox('landcover')
+                : `<strong>NASA NLDAS-3 Land Use / Vegetation</strong><br><span style="color:#ffeb3b;">Loading validated static layer...</span>`;
+            nldas3LandcoverTimeBox.style.display = 'block';
+        }
+    }
+
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
         let titleText = "";
         let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
@@ -7251,6 +7465,8 @@ map.on('overlayremove', function(eventLayer) {
     const nldasRsm0100TimeBox = document.getElementById('nldas-rsm-0100-time-box');
     const nrcsHsgTimeBox = document.getElementById('nrcs-hsg-time-box');
     const nlcdImperviousTimeBox = document.getElementById('nlcd-impervious-time-box');
+    const nldas3SoilTimeBox = document.getElementById('nldas3-soil-time-box');
+    const nldas3LandcoverTimeBox = document.getElementById('nldas3-landcover-time-box');
     
     if (rapLegendMapping[eventLayer.name]) {
         const hasRAP = Array.from(activeLayerNames).some(name => rapLegendMapping[name]);
@@ -7319,6 +7535,14 @@ map.on('overlayremove', function(eventLayer) {
 
     if (eventLayer.name === NLCD_IMPERVIOUS_LAYER_NAME) {
         if (nlcdImperviousTimeBox) nlcdImperviousTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === NLDAS3_SOIL_LAYER_NAME) {
+        if (nldas3SoilTimeBox) nldas3SoilTimeBox.style.display = 'none';
+    }
+
+    if (eventLayer.name === NLDAS3_LANDCOVER_LAYER_NAME) {
+        if (nldas3LandcoverTimeBox) nldas3LandcoverTimeBox.style.display = 'none';
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
@@ -7456,6 +7680,16 @@ const dashboardSections = [
              description: 'FY2026 USDA-NRCS gNATSGO HSG from native 30 m MUKEY geometry and map-unit dominant conditions, aggregated on the retained 1 km equal-area Phase H1 analysis; preserves all seven HSG classes.',
              layer: nrcsHsgLayer, kind: 'raster',
              keywords: 'USDA NRCS gNATSGO SSURGO hydrologic soil group HSG hydgrpdcd A B C D A/D B/D C/D infiltration runoff susceptibility soil type'}
+,
+            {id: 'nldas3-soil-texture', label: NLDAS3_SOIL_LAYER_NAME,
+             description: 'NASA NLDAS-3 static ~1 km STATSGO soil-texture classification. Provides land-surface hydrologic context; it is not Hydrologic Soil Group, a direct infiltration rate, dynamic soil moisture, or FFG.',
+             layer: nldas3SoilLayer, kind: 'raster',
+             keywords: 'NASA NLDAS-3 soil texture STATSGO Noah-MP land surface infiltration runoff static hydrology'}
+,
+            {id: 'nldas3-landcover', label: NLDAS3_LANDCOVER_LAYER_NAME,
+             description: 'NASA NLDAS-3 static ~1 km IGBP/NCEP-modified land-use and vegetation classification used by the Noah-MP/LIS land-surface framework. Water/open-water classes remain transparent.',
+             layer: nldas3LandcoverLayer, kind: 'raster',
+             keywords: 'NASA NLDAS-3 land cover land use vegetation IGBP NCEP Noah-MP LIS open water static hydrology'}
 ,
             {id: 'nlcd-impervious', label: NLCD_IMPERVIOUS_LAYER_NAME,
              description: '2025 USGS Annual NLCD Collection 1.2 Fractional Impervious Surface from native 30 m source, aggregated to the retained 1 km equal-area Phase H2 analysis; 0% valid land cells are shown in neutral gray while source NoData/insufficient coverage remains transparent.',

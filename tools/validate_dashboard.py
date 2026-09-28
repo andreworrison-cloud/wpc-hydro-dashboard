@@ -21,16 +21,19 @@ nrcs_hsg_image_path = ROOT / "static" / "nrcs_hydrologic_soil_group.png"
 nlcd_impervious_generator = (ROOT / "fetch_nlcd_impervious.py").read_text(encoding="utf-8")
 nlcd_impervious_metadata_path = ROOT / "static" / "usgs_nlcd_fractional_impervious_2025_metadata.json"
 nlcd_impervious_image_path = ROOT / "static" / "usgs_nlcd_fractional_impervious_2025.png"
+nldas3_static_generator = (ROOT / "tools" / "build_nldas3_static.py").read_text(encoding="utf-8")
+nldas3_static_metadata_path = ROOT / "static" / "nldas3_static_metadata.json"
+nldas3_soil_image_path = ROOT / "static" / "nldas3_soil_texture.png"
+nldas3_landcover_image_path = ROOT / "static" / "nldas3_landcover.png"
 mrms_rala_generator = (ROOT / "fetch_mrms_rala.py").read_text(encoding="utf-8")
 mrms_rala_loop_generator = (ROOT / "fetch_mrms_rala_loop.py").read_text(encoding="utf-8")
 mrms_rala_workflow = (ROOT / ".github" / "workflows" / "update_mrms_rala.yml").read_text(encoding="utf-8")
 
 errors = []
 
-# Current registry total: 126 dashboard data/config entries + 15 basemap entries.
-# Phase H1 adds one NRCS Hydrologic Soil Group layer while every prior
-# meteorological/hydrological layer and basemap remains present.
-EXPECTED_LAYER_COUNT = 142
+# Current registry total includes all existing dashboard data/config entries,
+# basemaps, and the two validated NASA NLDAS-3 static land-surface layers.
+EXPECTED_LAYER_COUNT = 144
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -86,6 +89,8 @@ required_labels = [
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
     "NASA SPoRT-LIS VSM Percentile (0–100 cm)",
     "NRCS Hydrologic Soil Group (A–D / Dual)",
+    "NASA NLDAS-3 Soil Texture (Static)",
+    "NASA NLDAS-3 Land Use / Vegetation (Static)",
     "USGS Annual NLCD Fractional Impervious Surface (%)",
     "NIFC/WFIGS Current Wildfire Perimeters",
     "NIFC/WFIGS Historical Wildfire Perimeters",
@@ -351,6 +356,129 @@ if refresh_loop_start >= 0 and refresh_loop_end > refresh_loop_start:
         errors.append("Static NRCS HSG layer was incorrectly added to the 15-minute dynamic refresh loop.")
 
 
+# NASA NLDAS-3 static land-surface integration.
+# Browser rasters are categorical display derivatives only. They remain separate
+# from dynamic soil moisture and are never scientific inputs to future FFG work.
+required_nldas3_app_fragments = [
+    "NASA NLDAS-3 Soil Texture (Static)",
+    "NASA NLDAS-3 Land Use / Vegetation (Static)",
+    "{id: 'nldas3-soil-texture', label: NLDAS3_SOIL_LAYER_NAME",
+    "{id: 'nldas3-landcover', label: NLDAS3_LANDCOVER_LAYER_NAME",
+    "static/nldas3_soil_texture.png",
+    "static/nldas3_landcover.png",
+    "static/nldas3_static_metadata.json",
+    "nldas3-soil-texture-raster",
+    "nldas3-landcover-raster",
+    "img.nldas3-soil-texture-raster",
+    "img.nldas3-landcover-raster",
+    "image-rendering: pixelated !important",
+    "fetchNLDAS3StaticMetadata",
+    "nldas3-soil-time-box",
+    "nldas3-landcover-time-box",
+    "buildNLDAS3CategoricalLegendHTML",
+    "nldas3_static_dashboard_v1",
+    "nldas3-static-phase1-v1",
+    "soil.source_variable !== 'Soiltype_inst'",
+    "land.source_variable !== 'Landcover_inst'",
+    "Number(soil.water_code) !== 14",
+    "landWaterCodes[0] !== 17 || landWaterCodes[1] !== 21",
+    "data.categorical !== true",
+    "data.smoothing !== false",
+    "data.display_resampling !== 'nearest-neighbor'",
+]
+for fragment in required_nldas3_app_fragments:
+    if fragment not in app:
+        errors.append(f"Missing NLDAS-3 static app contract fragment: {fragment}")
+
+required_nldas3_generator_fragments = [
+    'SOURCE_KEY = "nasa-waterinsight/NLDAS3/static/NLDAS-3_dominant-soil-vegetation.nc"',
+    'TARGET_CRS = "EPSG:3857"',
+    'DEFAULT_WIDTH = 9000',
+    'SOIL_CLASSES = {',
+    'LANDCOVER_CLASSES = {',
+    '21: "Open Water (LIS template surface)"',
+    'validate_categories',
+    'fit_coordinate_axis',
+    'Resampling.nearest',
+    '"metadata_mode": "nldas3_static_dashboard_v1"',
+    '"render_revision": "nldas3-static-phase1-v1"',
+    '"scientific_use_note"',
+    '"water_code": 14',
+    '"water_codes": [17, 21]',
+]
+for fragment in required_nldas3_generator_fragments:
+    if fragment not in nldas3_static_generator:
+        errors.append(f"Missing NLDAS-3 static generator contract fragment: {fragment}")
+
+if not nldas3_static_metadata_path.exists():
+    errors.append("Missing static/nldas3_static_metadata.json")
+else:
+    try:
+        nldas3_meta = json.loads(nldas3_static_metadata_path.read_text(encoding="utf-8"))
+        if nldas3_meta.get("metadata_mode") != "nldas3_static_dashboard_v1":
+            errors.append("Committed NLDAS-3 metadata_mode changed unexpectedly.")
+        if nldas3_meta.get("render_revision") != "nldas3-static-phase1-v1":
+            errors.append("Committed NLDAS-3 render revision changed unexpectedly.")
+        if str(nldas3_meta.get("image_crs", "")).upper() != "EPSG:3857":
+            errors.append("Committed NLDAS-3 display images are not EPSG:3857.")
+        if nldas3_meta.get("categorical") is not True or nldas3_meta.get("smoothing") is not False:
+            errors.append("Committed NLDAS-3 metadata violates the categorical/no-smoothing contract.")
+        if nldas3_meta.get("display_resampling") != "nearest-neighbor":
+            errors.append("Committed NLDAS-3 display is not nearest-neighbor categorical rendering.")
+        if nldas3_meta.get("bounds") != [[23.0, -125.0], [50.5, -66.5]]:
+            errors.append("Committed NLDAS-3 CONUS display bounds changed unexpectedly.")
+
+        soil_meta = nldas3_meta.get("soil_texture") or {}
+        land_meta = nldas3_meta.get("landcover") or {}
+        if soil_meta.get("source_variable") != "Soiltype_inst":
+            errors.append("Committed NLDAS-3 soil source variable is not Soiltype_inst.")
+        if land_meta.get("source_variable") != "Landcover_inst":
+            errors.append("Committed NLDAS-3 land-cover source variable is not Landcover_inst.")
+        if int(soil_meta.get("water_code", -1)) != 14:
+            errors.append("Committed NLDAS-3 soil water code is not 14.")
+        if [int(v) for v in land_meta.get("water_codes", [])] != [17, 21]:
+            errors.append("Committed NLDAS-3 land-cover water codes are not [17, 21].")
+        if [int(item.get("code")) for item in soil_meta.get("classes", [])] != list(range(1, 17)):
+            errors.append("Committed NLDAS-3 soil class sequence is not 1-16.")
+        if [int(item.get("code")) for item in land_meta.get("classes", [])] != list(range(1, 22)):
+            errors.append("Committed NLDAS-3 land-cover class sequence is not 1-21.")
+        if "display derivatives only" not in str(nldas3_meta.get("scientific_use_note", "")):
+            errors.append("Committed NLDAS-3 metadata lost the display-vs-science safeguard.")
+    except Exception as exc:
+        errors.append(f"Could not validate committed NLDAS-3 metadata: {exc}")
+
+for image_path, expected_name in [
+    (nldas3_soil_image_path, "NLDAS-3 soil-texture"),
+    (nldas3_landcover_image_path, "NLDAS-3 land-cover"),
+]:
+    if not image_path.exists():
+        errors.append(f"Missing {image_path.relative_to(ROOT)}")
+        continue
+    try:
+        with image_path.open("rb") as fh:
+            signature = fh.read(8)
+            if signature != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("bad PNG signature")
+            length = struct.unpack(">I", fh.read(4))[0]
+            chunk_type = fh.read(4)
+            if length != 13 or chunk_type != b"IHDR":
+                raise ValueError("missing PNG IHDR")
+            width, height = struct.unpack(">II", fh.read(8))
+        if (width, height) != (9000, 5392):
+            errors.append(
+                f"Committed {expected_name} PNG dimensions are {width}x{height}, expected 9000x5392."
+            )
+    except Exception as exc:
+        errors.append(f"Could not validate committed {expected_name} PNG: {exc}")
+
+nldas3_initial_fetch = app.find("fetchNLDAS3StaticMetadata();")
+nldas3_refresh_start = app.find("setInterval(() => {", nldas3_initial_fetch)
+nldas3_refresh_end = app.find("}, 15 * 60 * 1000);", nldas3_refresh_start)
+if nldas3_refresh_start >= 0 and nldas3_refresh_end > nldas3_refresh_start:
+    if "fetchNLDAS3StaticMetadata();" in app[nldas3_refresh_start:nldas3_refresh_end]:
+        errors.append("Static NLDAS-3 layers were incorrectly added to the 15-minute dynamic refresh loop.")
+
+
 # Phase H2 — USGS Annual NLCD fractional imperviousness.
 # This is the second static Land-Surface Runoff Sensitivity layer. HSG remains
 # first; Annual NLCD follows immediately beneath it. Both remain separate from
@@ -391,10 +519,23 @@ wildfire_start = app.find("title: 'Wildfire / Burn Scar Context'")
 if land_surface_start >= 0 and wildfire_start > land_surface_start:
     land_surface_block = app[land_surface_start:wildfire_start]
     hsg_layer_pos = land_surface_block.find("{id: 'nrcs-hsg'")
+    nldas3_soil_pos = land_surface_block.find("{id: 'nldas3-soil-texture'")
+    nldas3_landcover_pos = land_surface_block.find("{id: 'nldas3-landcover'")
     nlcd_layer_pos = land_surface_block.find("{id: 'nlcd-impervious'")
-    if not (hsg_layer_pos >= 0 and nlcd_layer_pos > hsg_layer_pos):
+    land_surface_positions = [
+        hsg_layer_pos,
+        nldas3_soil_pos,
+        nldas3_landcover_pos,
+        nlcd_layer_pos,
+    ]
+    if any(position < 0 for position in land_surface_positions):
         errors.append(
-            "Land-Surface Runoff Sensitivity must list NRCS HSG first and Annual NLCD imperviousness second."
+            "Land-Surface Runoff Sensitivity is missing HSG, NLDAS-3 soil/land-cover, or NLCD."
+        )
+    elif land_surface_positions != sorted(land_surface_positions):
+        errors.append(
+            "Land-Surface Runoff Sensitivity order must be HSG -> NLDAS-3 Soil -> "
+            "NLDAS-3 Land Use/Vegetation -> Annual NLCD."
         )
 
 required_nlcd_generator_fragments = [
