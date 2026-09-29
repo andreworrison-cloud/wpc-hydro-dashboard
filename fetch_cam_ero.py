@@ -162,7 +162,7 @@ class EROCamEngine:
         return None
 
 
-    def _get_latest_cycle(self, model):
+    def _get_latest_cycle(self, model, target_ero_start=None):
         now = datetime.now(timezone.utc)
         curr_cycle = now.replace(
             hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0
@@ -172,6 +172,15 @@ class EROCamEngine:
             dt = curr_cycle - timedelta(hours=6 * i)
             cycle = dt.hour
             d_str = dt.strftime("%Y%m%d")
+
+            candidate_ero_start = dt.replace(
+                hour=12, minute=0, second=0, microsecond=0
+            )
+            if (
+                target_ero_start is not None
+                and candidate_ero_start != target_ero_start
+            ):
+                continue
 
             fxx_range = self._get_fxx_range_for_ero(cycle)
             if not fxx_range:
@@ -712,14 +721,29 @@ class EROCamEngine:
         print("Starting ERO Super-Ensemble Data Generation...")
 
         h_date, h_cyc, h_fxx_range, h_dt = self._get_latest_cycle("HREF")
-        r_date, r_cyc, r_fxx_range, r_dt = self._get_latest_cycle("REFS")
+        if not h_date:
+            print("ERO cycle discovery summary -> HREF: MISSING")
+            return {"error": "Missing HREF run for ERO Window."}
 
-        if not h_date or not r_date:
+        base_12z = h_dt.replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
+        r_date, r_cyc, r_fxx_range, r_dt = self._get_latest_cycle(
+            "REFS", target_ero_start=base_12z
+        )
+
+        if not r_date:
             print(
-                f"ERO cycle discovery summary -> HREF: {h_date or 'MISSING'} | "
-                f"REFS: {r_date or 'MISSING'}"
+                f"ERO cycle discovery summary -> HREF: {h_date} "
+                f"{h_cyc:02d}Z | REFS: MISSING for "
+                f"{base_12z:%Y-%m-%d} 12Z ERO window"
             )
-            return {"error": "Missing Core Ensemble Runs for ERO Window."}
+            return {
+                "error": (
+                    "No complete REFS run is available for the current "
+                    "12Z-to-12Z ERO window."
+                )
+            }
 
         print(
             f"Locked Models for ERO -> HREF: {h_cyc:02d}Z | "
@@ -730,7 +754,6 @@ class EROCamEngine:
             f"{self.refs_cycle_source or 'unknown'}"
         )
 
-        base_12z = h_dt.replace(hour=12, minute=0, second=0, microsecond=0)
         start_ero = base_12z
         end_ero = start_ero + timedelta(hours=24)
         ero_valid_str = (
