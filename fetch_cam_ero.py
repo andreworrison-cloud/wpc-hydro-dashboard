@@ -66,7 +66,7 @@ class EROCamEngine:
 
 
 
-    def _probe_grib(self, source, grib_url, timeout=10):
+    def _probe_grib(self, source, grib_url, timeout=10, verbose=True):
         """Probe only the first byte of a GRIB2 object."""
         try:
             r = requests.get(
@@ -79,14 +79,79 @@ class EROCamEngine:
                 allow_redirects=True,
                 stream=True,
             )
-            print(f"GRIB probe [{r.status_code}] {source}: {grib_url}")
-            return r.status_code in (200, 206)
+            status = r.status_code
+            r.close()
+            if verbose:
+                print(f"GRIB probe [{status}] {source}: {grib_url}")
+            return status in (200, 206)
         except requests.RequestException as e:
-            print(f"GRIB probe [ERROR] {source}: {grib_url} ({type(e).__name__})")
+            if verbose:
+                print(f"GRIB probe [ERROR] {source}: {grib_url} ({type(e).__name__})")
             return False
 
     def _refs_candidates(self, d_str, cycle, product, fxx):
         return self._refs_product_urls(d_str, cycle, product, fxx)
+
+    def _refs_cycle_complete(self, d_str, cycle, fxx_range):
+        """
+        Require full hourly REFS PROB and FFRI file coverage for the ERO window.
+
+        REFS is a pre-implementation feed and can expose the last forecast hour
+        before all intervening files are present. Accepting a cycle solely from
+        the terminal PROB file can therefore create an artificially low temporal
+        maximum. A forecast hour counts as available if any configured source
+        has the corresponding full GRIB2 object.
+        """
+        expected = list(fxx_range)
+        missing_by_product = {}
+
+        for product in ("prob", "ffri"):
+            missing = []
+            for fxx in expected:
+                available = False
+                for source, url in self._refs_candidates(
+                    d_str, cycle, product, fxx
+                ):
+                    if self._probe_grib(
+                        source, url, timeout=6, verbose=False
+                    ):
+                        available = True
+                        break
+                if not available:
+                    missing.append(fxx)
+            missing_by_product[product] = missing
+
+        total = len(expected)
+        prob_ok = total - len(missing_by_product["prob"])
+        ffri_ok = total - len(missing_by_product["ffri"])
+
+        if missing_by_product["prob"] or missing_by_product["ffri"]:
+            print(
+                f"REFS ERO completeness check failed for {d_str} "
+                f"{cycle:02d}Z: PROB {prob_ok}/{total}, "
+                f"FFRI {ffri_ok}/{total}."
+            )
+            if missing_by_product["prob"]:
+                print(
+                    "  Missing REFS PROB hours: "
+                    + ", ".join(
+                        f"f{h:02d}" for h in missing_by_product["prob"]
+                    )
+                )
+            if missing_by_product["ffri"]:
+                print(
+                    "  Missing REFS FFRI hours: "
+                    + ", ".join(
+                        f"f{h:02d}" for h in missing_by_product["ffri"]
+                    )
+                )
+            return False
+
+        print(
+            f"REFS ERO completeness check passed for {d_str} "
+            f"{cycle:02d}Z: PROB {total}/{total}, FFRI {total}/{total}."
+        )
+        return True
 
     def _get_fxx_range_for_ero(self, cycle):
         """Matches the user's logic to perfectly bound the 12Z-12Z ERO period."""
@@ -97,7 +162,7 @@ class EROCamEngine:
         return None
 
 
-    def _get_latest_cycle(self, model):
+    def _get_latest_cycle(self, model, target_ero_start=None):
         now = datetime.now(timezone.utc)
         curr_cycle = now.replace(
             hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0
@@ -107,6 +172,15 @@ class EROCamEngine:
             dt = curr_cycle - timedelta(hours=6 * i)
             cycle = dt.hour
             d_str = dt.strftime("%Y%m%d")
+
+            candidate_ero_start = dt.replace(
+                hour=12, minute=0, second=0, microsecond=0
+            )
+            if (
+                target_ero_start is not None
+                and candidate_ero_start != target_ero_start
+            ):
+                continue
 
             fxx_range = self._get_fxx_range_for_ero(cycle)
             if not fxx_range:
@@ -126,16 +200,32 @@ class EROCamEngine:
                     )
                     return d_str, cycle, fxx_range, dt
             else:
+                terminal_source = None
                 for source, prob_url in self._refs_candidates(
                     d_str, cycle, "prob", max_fxx
                 ):
                     if self._probe_grib(source, prob_url):
-                        self.refs_cycle_source = source
+                        terminal_source = source
+                        break
+
+                if terminal_source is not None:
+                    if not self._refs_cycle_complete(
+                        d_str, cycle, fxx_range
+                    ):
                         print(
-                            f"REFS ERO candidate accepted: {d_str} {cycle:02d}Z "
-                            f"via {source} (direct PROB GRIB f{max_fxx:02d})"
+                            f"REFS ERO candidate rejected: {d_str} "
+                            f"{cycle:02d}Z is not complete across the "
+                            "required ERO hours."
                         )
-                        return d_str, cycle, fxx_range, dt
+                        continue
+
+                    self.refs_cycle_source = terminal_source
+                    print(
+                        f"REFS ERO candidate accepted: {d_str} {cycle:02d}Z "
+                        f"via {terminal_source} after full-window "
+                        f"PROB/FFRI completeness validation."
+                    )
+                    return d_str, cycle, fxx_range, dt
 
         print(f"ERROR: No usable {model} ERO cycle found in the last 48 hours.")
         return None, None, None, None
@@ -631,14 +721,29 @@ class EROCamEngine:
         print("Starting ERO Super-Ensemble Data Generation...")
 
         h_date, h_cyc, h_fxx_range, h_dt = self._get_latest_cycle("HREF")
-        r_date, r_cyc, r_fxx_range, r_dt = self._get_latest_cycle("REFS")
+        if not h_date:
+            print("ERO cycle discovery summary -> HREF: MISSING")
+            return {"error": "Missing HREF run for ERO Window."}
 
-        if not h_date or not r_date:
+        base_12z = h_dt.replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
+        r_date, r_cyc, r_fxx_range, r_dt = self._get_latest_cycle(
+            "REFS", target_ero_start=base_12z
+        )
+
+        if not r_date:
             print(
-                f"ERO cycle discovery summary -> HREF: {h_date or 'MISSING'} | "
-                f"REFS: {r_date or 'MISSING'}"
+                f"ERO cycle discovery summary -> HREF: {h_date} "
+                f"{h_cyc:02d}Z | REFS: MISSING for "
+                f"{base_12z:%Y-%m-%d} 12Z ERO window"
             )
-            return {"error": "Missing Core Ensemble Runs for ERO Window."}
+            return {
+                "error": (
+                    "No complete REFS run is available for the current "
+                    "12Z-to-12Z ERO window."
+                )
+            }
 
         print(
             f"Locked Models for ERO -> HREF: {h_cyc:02d}Z | "
@@ -649,7 +754,6 @@ class EROCamEngine:
             f"{self.refs_cycle_source or 'unknown'}"
         )
 
-        base_12z = h_dt.replace(hour=12, minute=0, second=0, microsecond=0)
         start_ero = base_12z
         end_ero = start_ero + timedelta(hours=24)
         ero_valid_str = (
@@ -666,8 +770,14 @@ class EROCamEngine:
         }
         coords = {"HREF": [None, None], "REFS": [None, None]}
 
-        shared_fxx_range = sorted(list(set(h_fxx_range) & set(r_fxx_range)))
-        window_start = shared_fxx_range[0] - 1
+        # HREF and REFS can legitimately resolve to different cycles when
+        # the newest REFS feed is still incomplete. Their forecast-hour
+        # numbers must therefore be handled independently rather than
+        # intersected numerically.
+        h_fxx_list = list(h_fxx_range)
+        r_fxx_list = list(r_fxx_range)
+        h_window_start = h_fxx_list[0] - 1
+        r_window_start = r_fxx_list[0] - 1
 
         # ---------------- HREF ----------------
         h_base = (
@@ -676,7 +786,7 @@ class EROCamEngine:
         )
         href_tasks = []
 
-        for fxx in shared_fxx_range:
+        for fxx in h_fxx_list:
             for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
                 href_tasks.append(
                     (
@@ -690,7 +800,7 @@ class EROCamEngine:
                 )
 
             for d in self.ffg_durations:
-                if fxx - d >= window_start:
+                if fxx - d >= h_window_start:
                     href_tasks.append(
                         (
                             f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2",
@@ -705,7 +815,7 @@ class EROCamEngine:
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             list(executor.map(self._fetch_grib, href_tasks))
 
-        for fxx in shared_fxx_range:
+        for fxx in h_fxx_list:
             for t_in in self.qpf_thresh_in:
                 file = self.grib_dir / f"H_Q_{t_in}_{fxx}.grib2"
                 if file.exists():
@@ -726,7 +836,7 @@ class EROCamEngine:
                         pass
 
             for d in self.ffg_durations:
-                if fxx - d >= window_start:
+                if fxx - d >= h_window_start:
                     file = self.grib_dir / f"H_F_{d}_{fxx}.grib2"
                     if file.exists():
                         (
@@ -749,7 +859,7 @@ class EROCamEngine:
         refs_hours_used = []
         refs_ffri_hours_used = []
 
-        for fxx in shared_fxx_range:
+        for fxx in r_fxx_list:
             full_prob, source = self._download_refs_full(
                 r_date, r_cyc, "prob", fxx
             )
@@ -778,7 +888,7 @@ class EROCamEngine:
                     except Exception:
                         pass
 
-            if any(fxx - d >= window_start for d in self.ffg_durations):
+            if any(fxx - d >= r_window_start for d in self.ffg_durations):
                 full_ffri, _ = self._download_refs_full(
                     r_date, r_cyc, "ffri", fxx
                 )
@@ -789,7 +899,7 @@ class EROCamEngine:
                         )
                         found_ffg = False
                         for d in self.ffg_durations:
-                            if fxx - d >= window_start:
+                            if fxx - d >= r_window_start:
                                 arr = ffg_fields.get(d)
                                 if arr is not None:
                                     data_store["FFG_MAX"]["REFS"] = self._merge_max(
@@ -826,6 +936,34 @@ class EROCamEngine:
                 "REFS FFRI unavailable/no usable fields; "
                 "ERO FFG guidance will use HREF-only for this run."
             )
+
+        # Fail closed if the feed changes between the preflight probes and the
+        # actual downloads/decodes. A partial temporal maximum must never be
+        # published as if it represented the full selected REFS ERO window.
+        expected_refs_hours = set(r_fxx_list)
+        missing_qpf_hours = sorted(
+            expected_refs_hours - set(refs_hours_used)
+        )
+        missing_ffri_hours = sorted(
+            expected_refs_hours - set(refs_ffri_hours_used)
+        )
+
+        if missing_qpf_hours:
+            print(
+                "WARNING: REFS QPF became incomplete during processing; "
+                "suppressing partial REFS QPF maxima. Missing: "
+                + ", ".join(f"f{h:02d}" for h in missing_qpf_hours)
+            )
+            for t_in in self.qpf_thresh_in:
+                data_store["QPF"][t_in]["REFS"] = None
+
+        if missing_ffri_hours:
+            print(
+                "WARNING: REFS FFRI became incomplete during processing; "
+                "suppressing partial REFS FFG maximum. Missing: "
+                + ", ".join(f"f{h:02d}" for h in missing_ffri_hours)
+            )
+            data_store["FFG_MAX"]["REFS"] = None
 
         dashboard_payload = {
             "metadata": {
