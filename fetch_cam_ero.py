@@ -865,7 +865,7 @@ class EROCamEngine:
                     except Exception:
                         pass
 
-            if any(fxx - d >= window_start for d in self.ffg_durations):
+            if any(fxx - d >= r_window_start for d in self.ffg_durations):
                 full_ffri, _ = self._download_refs_full(
                     r_date, r_cyc, "ffri", fxx
                 )
