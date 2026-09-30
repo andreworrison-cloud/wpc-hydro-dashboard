@@ -1,0 +1,117 @@
+name: LightningCast Source Probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/lightningcast_source_probe.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Probe RealEarth LightningCast products
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          BASE = "https://realearth.ssec.wisc.edu"
+          PRODUCTS = [
+              "PLTGGOESEastRadC",
+              "PLTGGOESWestRadC",
+              "PLTG-abi-mrms-GOESEastRadC",
+              "PLTG-abi-mrms-GOESWestRadC",
+              "PLTG-10fl-60min-GOESEastRadC",
+              "GOESEastGLMFEDRadC",
+          ]
+
+          def get_json(url):
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": "WPC-Hydrometeorological-Dashboard-LightningCast-Probe/1.0",
+                      "Accept": "application/json,*/*;q=0.5",
+                      "Cache-Control": "no-cache",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  body = r.read(20_000_000)
+                  return json.loads(body), {
+                      "http_status": r.status,
+                      "date": r.headers.get("Date"),
+                      "last_modified": r.headers.get("Last-Modified"),
+                      "content_type": r.headers.get("Content-Type"),
+                      "bytes": len(body),
+                  }
+
+          def parse_time(v):
+              for fmt in ("%Y%m%d.%H%M%S", "%Y%m%d_%H%M%S"):
+                  try:
+                      return datetime.strptime(v, fmt).replace(tzinfo=timezone.utc)
+                  except Exception:
+                      pass
+              return None
+
+          now = datetime.now(timezone.utc)
+          out = {"probed_at_utc": now.isoformat(), "products": {}}
+          for product in PRODUCTS:
+              item = {}
+              try:
+                  latest_url = BASE + "/api/latest?" + urllib.parse.urlencode({"products": product})
+                  latest, latest_headers = get_json(latest_url)
+                  raw_time = latest.get(product) if isinstance(latest, dict) else None
+                  item["latest_raw"] = latest
+                  item["latest_headers"] = latest_headers
+                  item["latest_value"] = raw_time
+                  dt = parse_time(str(raw_time)) if raw_time else None
+                  item["latest_utc"] = dt.isoformat() if dt else None
+                  item["age_minutes"] = round((now-dt).total_seconds()/60, 2) if dt else None
+
+                  if dt:
+                      exact = f"{product}_{dt:%Y%m%d_%H%M%S}"
+                      shapes_url = BASE + "/api/shapes?" + urllib.parse.urlencode({"products": exact})
+                      shapes, shape_headers = get_json(shapes_url)
+                      feats = shapes.get("features", []) if isinstance(shapes, dict) else []
+                      item["shapes_headers"] = shape_headers
+                      item["shape_type"] = shapes.get("type") if isinstance(shapes, dict) else None
+                      item["feature_count"] = len(feats)
+                      item["sample_features"] = [
+                          {
+                              "id": f.get("id"),
+                              "geometry_type": (f.get("geometry") or {}).get("type") if isinstance(f, dict) else None,
+                              "properties": f.get("properties") if isinstance(f, dict) else None,
+                          }
+                          for f in feats[:5]
+                      ]
+              except Exception as exc:
+                  item["error"] = repr(exc)
+              out["products"][product] = item
+
+          Path("lightningcast_source_probe.json").write_text(json.dumps(out, indent=2, default=str)+"\n")
+          print(json.dumps(out, indent=2, default=str))
+          PY
+
+      - name: Commit probe result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lightningcast_source_probe.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "LightningCast source probe"
+          git pull --rebase origin main
+          git push origin HEAD:main
