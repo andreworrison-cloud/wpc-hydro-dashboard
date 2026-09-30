@@ -446,6 +446,7 @@ def parse_realearth_geojson(
     invalid_coordinate_lines = 0
     invalid_examples: list[str] = []
     unclassified_features = 0
+    unclassified_contour_features = 0
     unsupported_geometry = Counter()
     property_key_counter: Counter = Counter()
     sample_properties: dict[str, object] | None = None
@@ -460,19 +461,27 @@ def parse_realearth_geojson(
         if sample_properties is None and properties:
             sample_properties = dict(list(properties.items())[:12])
 
-        threshold, color = realearth_threshold_from_properties(
-            properties, feature.get("id")
-        )
-        if threshold is None:
-            unclassified_features += 1
-            continue
-
         geometry = feature.get("geometry")
         geometry_type = (
             str(geometry.get("type") or "unknown")
             if isinstance(geometry, dict)
             else "missing"
         )
+        threshold, color = realearth_threshold_from_properties(
+            properties, feature.get("id")
+        )
+        if threshold is None:
+            unclassified_features += 1
+            if geometry_type in {
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon",
+                "GeometryCollection",
+            }:
+                unclassified_contour_features += 1
+            continue
+
         lines = realearth_geometry_lines(geometry)
         if not lines:
             unsupported_geometry[geometry_type] += 1
@@ -514,13 +523,19 @@ def parse_realearth_geojson(
                 if color is not None:
                     threshold_colors[threshold].add(color)
 
+    keys = [key for key, _ in property_key_counter.most_common(20)]
     if features and not contours:
-        keys = [key for key, _ in property_key_counter.most_common(20)]
         raise RuntimeError(
             f"RealEarth {product_id} returned {len(features)} feature(s) but no "
             "LightningCast contours could be classified; "
             f"property_keys={keys}; sample_properties={sample_properties}; "
             f"unsupported_geometry={dict(unsupported_geometry)}"
+        )
+    if unclassified_contour_features:
+        raise RuntimeError(
+            f"RealEarth {product_id} contained {unclassified_contour_features} "
+            "unclassified line/polygon feature(s); refusing a partial LightningCast field; "
+            f"property_keys={keys}; sample_properties={sample_properties}"
         )
 
     warnings: list[str] = []
