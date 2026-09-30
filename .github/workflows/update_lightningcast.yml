@@ -129,16 +129,30 @@ jobs:
           from pathlib import Path
           new = json.loads(Path('lightningcast_output/lightningcast_conus_probability_60min_metadata.json').read_text())
           old_path = Path('static/lightningcast_conus_probability_60min_metadata.json')
-          old_scan = None
+          old = {}
           if old_path.exists():
               try:
-                  old_scan = json.loads(old_path.read_text()).get('scan_time_utc')
+                  old = json.loads(old_path.read_text())
               except Exception:
-                  old_scan = None
+                  old = {}
+
           new_scan = new.get('scan_time_utc')
+          old_scan = old.get('scan_time_utc')
+          new_sources = new.get('source_scan_times_utc') or {}
+          old_sources = old.get('source_scan_times_utc') or {}
+
+          # v1g publishes whenever either satellite source frame changes. For the
+          # legacy v1f metadata already on main, fall back to the composite scan.
+          if old_sources:
+              publish = new_sources != old_sources
+          else:
+              publish = new_scan != old_scan
+
           print(f'new_scan={new_scan}')
           print(f'old_scan={old_scan or "none"}')
-          print(f'publish={str(new_scan != old_scan).lower()}')
+          print(f'new_east={new_sources.get("GOES-East") or "none"}')
+          print(f'new_west={new_sources.get("GOES-West") or "none"}')
+          print(f'publish={str(publish).lower()}')
           PY
 
       - name: Publish LightningCast files
