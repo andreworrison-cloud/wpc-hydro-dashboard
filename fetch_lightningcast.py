@@ -2,7 +2,11 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-placefile loops, selects the newest clean scan common to both feeds within the freshness window, groups nested LightningCast contours into coherent storm objects, applies the established v1E East/West ownership logic, and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus metadata and a compact manifest.
+placefile loops, selects the newest clean near-time frame pair within strict freshness and
+cross-satellite offset windows, groups nested LightningCast contours into coherent storm
+objects, applies the established v1E East/West ownership logic, and renders the native
+LightningCast probability contours to a transparent Web-Mercator PNG plus metadata and a
+compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
 """
