@@ -322,18 +322,18 @@ def realearth_threshold_from_properties(
     properties: dict[str, object],
     feature_id: object = None,
 ) -> tuple[int | None, tuple[int, int, int] | None]:
-    color: tuple[int, int, int] | None = None
+    candidate_colors: list[tuple[int, int, int]] = []
     for key in ("COLOR", "BCOLOR", "stroke", "fill", "color", "bcolor"):
         if key in properties:
             candidate = parse_rgb_value(properties.get(key))
-            if candidate is not None:
-                color = candidate
-                break
+            if candidate is not None and candidate not in candidate_colors:
+                candidate_colors.append(candidate)
 
-    if color is not None:
+    for candidate in candidate_colors:
         for threshold, expected_rgb in THRESHOLD_RGB_SOURCE.items():
-            if color == expected_rgb:
-                return threshold, color
+            if candidate == expected_rgb:
+                return threshold, candidate
+    color = candidate_colors[0] if candidate_colors else None
 
     descriptive_keys = (
         "INFO",
