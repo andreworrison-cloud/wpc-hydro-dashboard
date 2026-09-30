@@ -2,11 +2,12 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-placefile loops, selects the newest clean near-time frame pair within strict freshness and
-cross-satellite offset windows, groups nested LightningCast contours into coherent storm
-objects, applies the established v1E East/West ownership logic, and renders the native
-LightningCast probability contours to a transparent Web-Mercator PNG plus metadata and a
-compact manifest.
+vectors from the current SSEC RealEarth GeoJSON feed, with the legacy CIMSS GRLevelX
+placefiles retained as a fail-closed fallback. It selects the newest clean near-time frame
+pair within strict freshness and cross-satellite offset windows, groups nested LightningCast
+contours into coherent storm objects, applies the established v1E East/West ownership logic,
+and renders the native LightningCast probability contours to a transparent Web-Mercator PNG
+plus metadata and a compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
 """
@@ -23,6 +24,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -34,6 +36,9 @@ from PIL import Image, ImageDraw
 UTC = timezone.utc
 DEFAULT_EAST_URL = "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-East_CONUS_LOOP"
 DEFAULT_WEST_URL = "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-West_CONUS_LOOP"
+DEFAULT_REALEARTH_BASE_URL = "https://realearth.ssec.wisc.edu"
+DEFAULT_EAST_REALEARTH_PRODUCT = "PLTGGOESEastRadC"
+DEFAULT_WEST_REALEARTH_PRODUCT = "PLTGGOESWestRadC"
 
 THRESHOLDS = (10, 30, 50, 70, 90)
 THRESHOLD_RGBA = {
@@ -189,14 +194,20 @@ def parse_scan_time(date_text: str, minute_text: str) -> datetime:
     return datetime.strptime(f"{date_text} {minute_text}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
 
 
-def fetch_text(url: str, timeout_seconds: int, retries: int, maximum_bytes: int) -> tuple[str, dict[str, object]]:
+def fetch_text(
+    url: str,
+    timeout_seconds: int,
+    retries: int,
+    maximum_bytes: int,
+    accept: str = "text/plain,*/*;q=0.5",
+) -> tuple[str, dict[str, object]]:
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         request = urllib.request.Request(
             url,
             headers={
                 "User-Agent": USER_AGENT,
-                "Accept": "text/plain,*/*;q=0.5",
+                "Accept": accept,
                 "Cache-Control": "no-cache",
             },
         )
@@ -226,6 +237,406 @@ def fetch_text(url: str, timeout_seconds: int, retries: int, maximum_bytes: int)
             if attempt < retries:
                 time.sleep(min(2 ** (attempt - 1), 8))
     raise RuntimeError(f"failed to fetch {url} after {retries} attempts: {last_error}")
+
+
+
+def fetch_json(
+    url: str,
+    timeout_seconds: int,
+    retries: int,
+    maximum_bytes: int,
+) -> tuple[object, dict[str, object]]:
+    text, meta = fetch_text(
+        url,
+        timeout_seconds,
+        retries,
+        maximum_bytes,
+        accept="application/json,*/*;q=0.5",
+    )
+    try:
+        return json.loads(text), meta
+    except json.JSONDecodeError as exc:
+        sample = text[:240].replace("\n", " ")
+        raise RuntimeError(f"invalid JSON from {url}: {exc}; sample={sample!r}") from exc
+
+
+def parse_realearth_time_value(value: object) -> datetime:
+    text = str(value or "").strip()
+    for fmt in (
+        "%Y%m%d.%H%M%S",
+        "%Y%m%d_%H%M%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    ):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    raise RuntimeError(f"unrecognized RealEarth time value {text!r}")
+
+
+def parse_realearth_latest(payload: object, product_id: str) -> datetime:
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"RealEarth latest reply is not an object for {product_id}")
+    value = payload.get(product_id)
+    if value is None and len(payload) == 1:
+        value = next(iter(payload.values()))
+    if value is None:
+        raise RuntimeError(
+            f"RealEarth latest reply did not contain {product_id}; keys={sorted(payload)[:10]}"
+        )
+    return parse_realearth_time_value(value)
+
+
+def parse_rgb_value(value: object) -> tuple[int, int, int] | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        try:
+            rgb = tuple(int(round(float(value[i]))) for i in range(3))
+        except (TypeError, ValueError):
+            return None
+        return rgb if all(0 <= item <= 255 for item in rgb) else None
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    match = re.fullmatch(r"#([0-9a-fA-F]{6})", text)
+    if match:
+        token = match.group(1)
+        return tuple(int(token[i : i + 2], 16) for i in (0, 2, 4))
+
+    if text.lower().startswith(("rgb(", "rgba(")):
+        numbers = re.findall(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", text)
+        if len(numbers) >= 3:
+            rgb = tuple(int(round(float(numbers[i]))) for i in range(3))
+            return rgb if all(0 <= item <= 255 for item in rgb) else None
+
+    if re.fullmatch(r"\s*\d{1,3}(?:\s*[, ]\s*\d{1,3}){2,3}\s*", text):
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", text)]
+        rgb = tuple(numbers[:3])
+        return rgb if all(0 <= item <= 255 for item in rgb) else None
+    return None
+
+
+def realearth_threshold_from_properties(
+    properties: dict[str, object],
+    feature_id: object = None,
+) -> tuple[int | None, tuple[int, int, int] | None]:
+    color: tuple[int, int, int] | None = None
+    for key in ("COLOR", "BCOLOR", "stroke", "fill", "color", "bcolor"):
+        if key in properties:
+            candidate = parse_rgb_value(properties.get(key))
+            if candidate is not None:
+                color = candidate
+                break
+
+    if color is not None:
+        for threshold, expected_rgb in THRESHOLD_RGB_SOURCE.items():
+            if color == expected_rgb:
+                return threshold, color
+
+    descriptive_keys = (
+        "INFO",
+        "RE_TOOLTIP",
+        "LABEL",
+        "LABEL2",
+        "PRODUCT",
+        "RE_PRODUCT_NAME",
+        "NAME",
+        "TITLE",
+        "DESCRIPTION",
+        "OUTLOOK",
+        "info",
+        "tooltip",
+        "label",
+        "name",
+        "title",
+        "description",
+    )
+    text_parts = [str(properties[key]) for key in descriptive_keys if properties.get(key) is not None]
+    if feature_id is not None:
+        text_parts.append(str(feature_id))
+    text_blob = " ".join(text_parts)
+    patterns = (
+        r"P\s*\(\s*LTG\s*\)\s*(?:>=|≥|>|=)\s*(10|30|50|70|90)\s*%",
+        r"(?:>=|≥)\s*(10|30|50|70|90)\s*%",
+        r"\b(10|30|50|70|90)\s*%",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text_blob, re.IGNORECASE)
+        if match:
+            return int(match.group(1)), color
+
+    for key, value in properties.items():
+        key_lower = str(key).lower()
+        if not any(token in key_lower for token in ("prob", "pltg", "threshold")):
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= numeric <= 1.0:
+            numeric *= 100.0
+        rounded = int(round(numeric))
+        if rounded in THRESHOLDS and abs(numeric - rounded) < 0.01:
+            return rounded, color
+
+    for key in ("VALUE", "value", "LEVEL", "level"):
+        if key not in properties:
+            continue
+        try:
+            numeric = float(properties[key])
+        except (TypeError, ValueError):
+            continue
+        rounded = int(round(numeric))
+        if rounded in THRESHOLDS and abs(numeric - rounded) < 0.01:
+            return rounded, color
+
+    return None, color
+
+
+def realearth_geometry_lines(geometry: object) -> list[list[object]]:
+    if not isinstance(geometry, dict):
+        return []
+    geometry_type = str(geometry.get("type") or "")
+    coordinates = geometry.get("coordinates")
+
+    if geometry_type == "LineString" and isinstance(coordinates, list):
+        return [coordinates]
+    if geometry_type == "MultiLineString" and isinstance(coordinates, list):
+        return [line for line in coordinates if isinstance(line, list)]
+    if geometry_type == "Polygon" and isinstance(coordinates, list):
+        return [ring for ring in coordinates if isinstance(ring, list)]
+    if geometry_type == "MultiPolygon" and isinstance(coordinates, list):
+        return [
+            ring
+            for polygon in coordinates
+            if isinstance(polygon, list)
+            for ring in polygon
+            if isinstance(ring, list)
+        ]
+    if geometry_type == "GeometryCollection":
+        geometries = geometry.get("geometries")
+        if isinstance(geometries, list):
+            return [
+                line
+                for item in geometries
+                for line in realearth_geometry_lines(item)
+            ]
+    return []
+
+
+def parse_realearth_geojson(
+    payload: object,
+    expected_satellite: str,
+    frame_time: datetime,
+    product_id: str,
+) -> ParsedPlacefile:
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"RealEarth shapes reply for {product_id} is not a GeoJSON object")
+    features = payload.get("features")
+    if not isinstance(features, list):
+        raise RuntimeError(
+            f"RealEarth shapes reply for {product_id} has no GeoJSON features array; "
+            f"top-level keys={sorted(payload)[:12]}"
+        )
+
+    contours: list[Contour] = []
+    threshold_colors: dict[int, set[tuple[int, int, int]]] = defaultdict(set)
+    invalid_coordinate_lines = 0
+    invalid_examples: list[str] = []
+    unclassified_features = 0
+    unsupported_geometry = Counter()
+    property_key_counter: Counter = Counter()
+    sample_properties: dict[str, object] | None = None
+
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        properties = feature.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+        property_key_counter.update(str(key) for key in properties)
+        if sample_properties is None and properties:
+            sample_properties = dict(list(properties.items())[:12])
+
+        threshold, color = realearth_threshold_from_properties(
+            properties, feature.get("id")
+        )
+        if threshold is None:
+            unclassified_features += 1
+            continue
+
+        geometry = feature.get("geometry")
+        geometry_type = (
+            str(geometry.get("type") or "unknown")
+            if isinstance(geometry, dict)
+            else "missing"
+        )
+        lines = realearth_geometry_lines(geometry)
+        if not lines:
+            unsupported_geometry[geometry_type] += 1
+            continue
+
+        for raw_line in lines:
+            points: list[tuple[float, float]] = []
+            for raw_point in raw_line:
+                if not isinstance(raw_point, (list, tuple)) or len(raw_point) < 2:
+                    invalid_coordinate_lines += 1
+                    if len(invalid_examples) < 5:
+                        invalid_examples.append(repr(raw_point)[:240])
+                    continue
+                try:
+                    lon = float(raw_point[0])
+                    lat = float(raw_point[1])
+                except (TypeError, ValueError):
+                    invalid_coordinate_lines += 1
+                    if len(invalid_examples) < 5:
+                        invalid_examples.append(repr(raw_point)[:240])
+                    continue
+                if -180 <= lon <= 180 and -90 <= lat <= 90:
+                    points.append((lon, lat))
+                else:
+                    invalid_coordinate_lines += 1
+                    if len(invalid_examples) < 5:
+                        invalid_examples.append(repr(raw_point)[:240])
+
+            if len(points) >= 2:
+                contours.append(
+                    Contour(
+                        satellite=expected_satellite,
+                        scan_time=frame_time,
+                        threshold=threshold,
+                        color=color,
+                        points=points,
+                    )
+                )
+                if color is not None:
+                    threshold_colors[threshold].add(color)
+
+    if features and not contours:
+        keys = [key for key, _ in property_key_counter.most_common(20)]
+        raise RuntimeError(
+            f"RealEarth {product_id} returned {len(features)} feature(s) but no "
+            "LightningCast contours could be classified; "
+            f"property_keys={keys}; sample_properties={sample_properties}; "
+            f"unsupported_geometry={dict(unsupported_geometry)}"
+        )
+
+    warnings: list[str] = []
+    if unclassified_features:
+        warnings.append(
+            f"{unclassified_features} RealEarth feature(s) skipped because no standard "
+            "10/30/50/70/90% LightningCast threshold could be identified"
+        )
+    if unsupported_geometry:
+        warnings.append(
+            f"unsupported RealEarth geometry skipped: {dict(unsupported_geometry)}"
+        )
+
+    return ParsedPlacefile(
+        expected_satellite=expected_satellite,
+        title=f"RealEarth {product_id}",
+        refresh_seconds=None,
+        time_ranges=[(frame_time, frame_time + timedelta(minutes=5))],
+        frame_times={frame_time},
+        contours_by_frame={frame_time: contours},
+        threshold_colors=dict(threshold_colors),
+        invalid_coordinate_lines=invalid_coordinate_lines,
+        invalid_lines_by_frame=(
+            {frame_time: invalid_coordinate_lines} if invalid_coordinate_lines else {}
+        ),
+        invalid_line_examples_by_frame=(
+            {frame_time: invalid_examples} if invalid_examples else {}
+        ),
+        discarded_short_contours=0,
+        satellite_names_seen={expected_satellite},
+        warnings=warnings,
+    )
+
+
+def fetch_realearth_source(
+    product_id: str,
+    expected_satellite: str,
+    base_url: str,
+    timeout_seconds: int,
+    retries: int,
+    maximum_bytes: int,
+) -> tuple[ParsedPlacefile, dict[str, object], str]:
+    base_url = base_url.rstrip("/")
+    latest_url = (
+        f"{base_url}/api/latest?"
+        + urllib.parse.urlencode({"products": product_id})
+    )
+    latest_payload, latest_fetch = fetch_json(
+        latest_url, timeout_seconds, retries, maximum_bytes
+    )
+    frame_time = parse_realearth_latest(latest_payload, product_id)
+    exact_product = f"{product_id}_{frame_time:%Y%m%d_%H%M%S}"
+    shapes_url = (
+        f"{base_url}/api/shapes?"
+        + urllib.parse.urlencode({"products": exact_product})
+    )
+    shapes_payload, shapes_fetch = fetch_json(
+        shapes_url, timeout_seconds, retries, maximum_bytes
+    )
+    parsed = parse_realearth_geojson(
+        shapes_payload, expected_satellite, frame_time, product_id
+    )
+    fetch_meta: dict[str, object] = {
+        "source_transport": "realearth_geojson",
+        "product_id": product_id,
+        "latest_time_utc": iso_z(frame_time),
+        "latest_endpoint": latest_url,
+        "shapes_endpoint": shapes_url,
+        "latest_fetch": latest_fetch,
+        "shapes_fetch": shapes_fetch,
+    }
+    return parsed, fetch_meta, shapes_url
+
+
+def fetch_lightningcast_source(
+    expected_satellite: str,
+    realearth_product: str,
+    realearth_base_url: str,
+    legacy_url: str,
+    timeout_seconds: int,
+    retries: int,
+    maximum_bytes: int,
+) -> tuple[ParsedPlacefile, dict[str, object], str]:
+    try:
+        parsed, fetch_meta, source_url = fetch_realearth_source(
+            realearth_product,
+            expected_satellite,
+            realearth_base_url,
+            timeout_seconds,
+            retries,
+            maximum_bytes,
+        )
+        print(
+            f"GOES-{expected_satellite} LightningCast source: RealEarth "
+            f"{realearth_product} at {iso_z(max(parsed.frame_times))}"
+        )
+        return parsed, fetch_meta, source_url
+    except Exception as realearth_exc:
+        print(
+            f"RealEarth GOES-{expected_satellite} ingest failed: {realearth_exc}; "
+            "trying legacy CIMSS placefile fallback.",
+            file=sys.stderr,
+        )
+
+    text, legacy_fetch = fetch_text(
+        legacy_url, timeout_seconds, retries, maximum_bytes
+    )
+    parsed = parse_placefile(text, expected_satellite)
+    legacy_fetch = dict(legacy_fetch)
+    legacy_fetch["source_transport"] = "legacy_cimss_placefile"
+    legacy_fetch["source_url"] = legacy_url
+    legacy_fetch["primary_realearth_error"] = str(realearth_exc)
+    parsed.warnings.append(
+        f"RealEarth primary ingest failed: {realearth_exc}"
+    )
+    return parsed, legacy_fetch, legacy_url
 
 
 def parse_placefile(text: str, expected_satellite: str) -> ParsedPlacefile:
@@ -905,10 +1316,10 @@ def write_outputs(
     age_minutes = round(max(east_age_minutes, west_age_minutes), 2)
     metadata = {
         "metadata_mode": "lightningcast_dashboard_v1e",
-        "generator_revision": "v1g_near_time_frame_pairing",
+        "generator_revision": "v1h_realearth_primary_ingest",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
-        "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
+        "source_product": "LightningCast v1 CONUS probability contour vectors",
         "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
         "scan_time_utc": iso_z(composite_time),
         "source_scan_times_utc": {
@@ -1112,12 +1523,79 @@ End:
     assert iso_z(west_async_time) == "2026-08-08T16:05:00Z"
     assert async_selection["selected_frame_offset_minutes"] == 1.0
 
+    # RealEarth GeoJSON transport test: classify thresholds by source color/text,
+    # retain line/polygon geometry, and parse the documented latest-time format.
+    re_time = parse_realearth_latest(
+        {"PLTGGOESEastRadC": "20260808.161100"},
+        "PLTGGOESEastRadC",
+    )
+    assert iso_z(re_time) == "2026-08-08T16:11:00Z"
+    realearth_sample = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "COLOR": "#50c986",
+                    "INFO": "P(LTG) >= 10% in next 60 minutes",
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [-105.0, 35.0],
+                        [-104.0, 36.0],
+                    ],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "BCOLOR": "rgb(255,80,255)",
+                    "VALUE": 90,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [-103.0, 34.0],
+                        [-102.0, 34.0],
+                        [-102.0, 35.0],
+                        [-103.0, 34.0],
+                    ]],
+                },
+            },
+        ],
+    }
+    re_parsed = parse_realearth_geojson(
+        realearth_sample, "East", re_time, "PLTGGOESEastRadC"
+    )
+    re_thresholds = sorted(
+        contour.threshold for contour in re_parsed.contours_by_frame[re_time]
+    )
+    assert re_thresholds == [10, 90]
+    assert re_parsed.invalid_coordinate_lines == 0
+
     print("LightningCast production parser/rendering/frame-integrity self-test passed.")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--east-url", default=os.environ.get("LIGHTNINGCAST_EAST_URL", DEFAULT_EAST_URL))
     parser.add_argument("--west-url", default=os.environ.get("LIGHTNINGCAST_WEST_URL", DEFAULT_WEST_URL))
+    parser.add_argument(
+        "--realearth-base-url",
+        default=os.environ.get("LIGHTNINGCAST_REALEARTH_BASE_URL", DEFAULT_REALEARTH_BASE_URL),
+    )
+    parser.add_argument(
+        "--east-realearth-product",
+        default=os.environ.get(
+            "LIGHTNINGCAST_EAST_REALEARTH_PRODUCT", DEFAULT_EAST_REALEARTH_PRODUCT
+        ),
+    )
+    parser.add_argument(
+        "--west-realearth-product",
+        default=os.environ.get(
+            "LIGHTNINGCAST_WEST_REALEARTH_PRODUCT", DEFAULT_WEST_REALEARTH_PRODUCT
+        ),
+    )
     parser.add_argument("--output-dir", default="lightningcast_output")
     parser.add_argument("--timeout-seconds", type=int, default=60)
     parser.add_argument("--retries", type=int, default=3)
@@ -1140,10 +1618,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     fetched_at = utc_now()
 
     try:
-        east_text, east_fetch = fetch_text(args.east_url, args.timeout_seconds, args.retries, args.maximum_bytes)
-        west_text, west_fetch = fetch_text(args.west_url, args.timeout_seconds, args.retries, args.maximum_bytes)
-        east = parse_placefile(east_text, "East")
-        west = parse_placefile(west_text, "West")
+        east, east_fetch, east_source_url = fetch_lightningcast_source(
+            "East",
+            args.east_realearth_product,
+            args.realearth_base_url,
+            args.east_url,
+            args.timeout_seconds,
+            args.retries,
+            args.maximum_bytes,
+        )
+        west, west_fetch, west_source_url = fetch_lightningcast_source(
+            "West",
+            args.west_realearth_product,
+            args.realearth_base_url,
+            args.west_url,
+            args.timeout_seconds,
+            args.retries,
+            args.maximum_bytes,
+        )
         write_source_diagnostics(output_dir, east, west, east_fetch, west_fetch, fetched_at)
 
         if east.invalid_coordinate_lines or west.invalid_coordinate_lines:
@@ -1175,8 +1667,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         write_outputs(
             output_dir,
-            args.east_url,
-            args.west_url,
+            east_source_url,
+            west_source_url,
             east,
             west,
             east_fetch,
