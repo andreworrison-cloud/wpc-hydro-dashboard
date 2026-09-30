@@ -2,7 +2,11 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-placefile loops, selects the newest clean scan common to both feeds within the freshness window, groups nested LightningCast contours into coherent storm objects, applies the established v1E East/West ownership logic, and renders the native LightningCast probability contours to a transparent Web-Mercator PNG plus metadata and a compact manifest.
+placefile loops, selects the newest clean near-time frame pair within strict freshness and
+cross-satellite offset windows, groups nested LightningCast contours into coherent storm
+objects, applies the established v1E East/West ownership logic, and renders the native
+LightningCast probability contours to a transparent Web-Mercator PNG plus metadata and a
+compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
 """
@@ -478,13 +482,16 @@ def should_swap_to_alternate(primary: StormObject, alternate: StormObject) -> bo
 
 
 def select_contours_for_render(
-    frame_time: datetime, east: ParsedPlacefile, west: ParsedPlacefile
+    east_frame_time: datetime,
+    west_frame_time: datetime,
+    east: ParsedPlacefile,
+    west: ParsedPlacefile,
 ) -> tuple[dict[int, list[Contour]], dict[str, Counter], dict[str, object]]:
     selected: dict[int, list[Contour]] = {threshold: [] for threshold in THRESHOLDS}
     ownership_counts: dict[str, Counter] = {"East": Counter(), "West": Counter()}
 
-    west_objects = group_contours_into_objects(west.contours_by_frame.get(frame_time, []), "West")
-    east_objects = group_contours_into_objects(east.contours_by_frame.get(frame_time, []), "East")
+    west_objects = group_contours_into_objects(west.contours_by_frame.get(west_frame_time, []), "West")
+    east_objects = group_contours_into_objects(east.contours_by_frame.get(east_frame_time, []), "East")
 
     west_selected = {index for index, storm in enumerate(west_objects) if storm_object_owner(storm) == "West"}
     east_selected = {index for index, storm in enumerate(east_objects) if storm_object_owner(storm) == "East"}
@@ -618,7 +625,8 @@ def clip_segment_to_rect(
 
 
 def render_product(
-    frame_time: datetime,
+    east_frame_time: datetime,
+    west_frame_time: datetime,
     east: ParsedPlacefile,
     west: ParsedPlacefile,
     output_png: Path,
@@ -633,11 +641,16 @@ def render_product(
     rendered_lines: Counter = Counter()
     source_color_mismatches: list[str] = []
 
-    selected_contours, ownership_counts, object_summary = select_contours_for_render(frame_time, east, west)
+    selected_contours, ownership_counts, object_summary = select_contours_for_render(
+        east_frame_time, west_frame_time, east, west
+    )
 
     for threshold in THRESHOLDS:
         stroke = (*THRESHOLD_RGB_SOURCE[threshold], 242)
-        for satellite, parsed in (("West", west), ("East", east)):
+        for satellite, parsed, frame_time in (
+            ("West", west, west_frame_time),
+            ("East", east, east_frame_time),
+        ):
             contours = [c for c in parsed.contours_by_frame.get(frame_time, []) if c.threshold == threshold]
             source_counts[satellite][threshold] = len(contours)
             selected_counts[satellite][threshold] = ownership_counts[satellite][threshold]
@@ -690,67 +703,110 @@ def frame_invalid_count(parsed: ParsedPlacefile, frame_time: datetime) -> int:
     return int(parsed.invalid_lines_by_frame.get(frame_time, 0))
 
 
-def select_clean_common_frame(
+def fresh_clean_frames(
+    parsed: ParsedPlacefile,
+    fetched_at: datetime,
+    maximum_age_minutes: float,
+) -> tuple[list[datetime], list[dict[str, object]], list[str]]:
+    clean: list[datetime] = []
+    dirty: list[dict[str, object]] = []
+    future: list[str] = []
+
+    for frame_time in sorted(parsed.frame_times, reverse=True):
+        age_minutes = (fetched_at - frame_time).total_seconds() / 60.0
+        if age_minutes < -5:
+            future.append(iso_z(frame_time) or "unknown")
+            continue
+        if age_minutes > maximum_age_minutes:
+            continue
+
+        invalid_lines = frame_invalid_count(parsed, frame_time)
+        if invalid_lines:
+            dirty.append({
+                "scan_time_utc": iso_z(frame_time),
+                "age_minutes": round(age_minutes, 2),
+                "invalid_lines": invalid_lines,
+            })
+            continue
+        clean.append(frame_time)
+
+    return clean, dirty, future
+
+
+def select_clean_frame_pair(
     east: ParsedPlacefile,
     west: ParsedPlacefile,
     fetched_at: datetime,
     maximum_age_minutes: float,
-) -> tuple[datetime, dict[str, object]]:
-    common = common_frames_newest_first(east, west)
-    if not common:
-        raise RuntimeError("no scan time common to both GOES-East and GOES-West LightningCast loops")
+    maximum_offset_minutes: float,
+) -> tuple[datetime, datetime, dict[str, object]]:
+    east_clean, east_dirty, east_future = fresh_clean_frames(east, fetched_at, maximum_age_minutes)
+    west_clean, west_dirty, west_future = fresh_clean_frames(west, fetched_at, maximum_age_minutes)
 
-    skipped_dirty: list[dict[str, object]] = []
-    skipped_future: list[str] = []
-    stale_newest: datetime | None = None
+    newest_east = max(east.frame_times) if east.frame_times else None
+    newest_west = max(west.frame_times) if west.frame_times else None
+    newest_exact_common = latest_common_frame(east, west)
 
-    for frame_time in common:
-        age_minutes = (fetched_at - frame_time).total_seconds() / 60.0
-        if age_minutes < -5:
-            skipped_future.append(iso_z(frame_time) or "unknown")
-            continue
-        if age_minutes > maximum_age_minutes:
-            if stale_newest is None:
-                stale_newest = frame_time
-            break
-
-        east_bad = frame_invalid_count(east, frame_time)
-        west_bad = frame_invalid_count(west, frame_time)
-        if east_bad or west_bad:
-            skipped_dirty.append({
-                "scan_time_utc": iso_z(frame_time),
-                "age_minutes": round(age_minutes, 2),
-                "GOES-East_invalid_lines": east_bad,
-                "GOES-West_invalid_lines": west_bad,
-            })
-            continue
-
-        return frame_time, {
-            "policy": "newest clean exact-common frame within freshness window",
-            "selected_frame_clean": True,
-            "selected_frame_age_minutes": round(age_minutes, 2),
-            "skipped_dirty_common_frames": skipped_dirty,
-            "skipped_future_common_frames": skipped_future,
-            "newest_common_frame_utc": iso_z(common[0]),
-            "newest_east_frame_utc": iso_z(max(east.frame_times)) if east.frame_times else None,
-            "newest_west_frame_utc": iso_z(max(west.frame_times)) if west.frame_times else None,
-        }
-
-    if skipped_dirty:
-        details = "; ".join(
-            f"{item['scan_time_utc']} East={item['GOES-East_invalid_lines']} West={item['GOES-West_invalid_lines']}"
-            for item in skipped_dirty[:5]
+    if not east_clean or not west_clean:
+        details = (
+            f"newest East={iso_z(newest_east)}, newest West={iso_z(newest_west)}, "
+            f"clean fresh East={len(east_clean)}, clean fresh West={len(west_clean)}"
         )
         raise RuntimeError(
-            f"no clean common LightningCast frame within {maximum_age_minutes:.1f} minutes; dirty recent frames: {details}"
+            f"no clean fresh LightningCast frame pair within {maximum_age_minutes:.1f} minutes; {details}"
         )
 
-    reference = stale_newest or common[0]
-    age_minutes = (fetched_at - reference).total_seconds() / 60.0
-    raise RuntimeError(
-        f"selected common frame is {age_minutes:.1f} minutes old; maximum is {maximum_age_minutes:.1f} minutes"
+    candidates: list[tuple[datetime, datetime, float]] = []
+    for east_time in east_clean:
+        for west_time in west_clean:
+            offset_minutes = abs((east_time - west_time).total_seconds()) / 60.0
+            if offset_minutes <= maximum_offset_minutes:
+                candidates.append((east_time, west_time, offset_minutes))
+
+    if not candidates:
+        newest_clean_east = east_clean[0]
+        newest_clean_west = west_clean[0]
+        offset_minutes = abs((newest_clean_east - newest_clean_west).total_seconds()) / 60.0
+        raise RuntimeError(
+            "no clean fresh GOES-East/GOES-West LightningCast frame pair within "
+            f"{maximum_offset_minutes:.1f} minutes; newest clean East={iso_z(newest_clean_east)}, "
+            f"West={iso_z(newest_clean_west)}, offset={offset_minutes:.1f} minutes"
+        )
+
+    east_time, west_time, offset_minutes = max(
+        candidates,
+        key=lambda item: (
+            min(item[0], item[1]),
+            -item[2],
+            max(item[0], item[1]),
+        ),
     )
 
+    east_age = (fetched_at - east_time).total_seconds() / 60.0
+    west_age = (fetched_at - west_time).total_seconds() / 60.0
+
+    return east_time, west_time, {
+        "policy": "newest clean near-time East/West frame pair within freshness and offset windows",
+        "selected_frame_clean": True,
+        "selected_frame_age_minutes": round(max(east_age, west_age), 2),
+        "selected_east_frame_utc": iso_z(east_time),
+        "selected_west_frame_utc": iso_z(west_time),
+        "selected_east_age_minutes": round(east_age, 2),
+        "selected_west_age_minutes": round(west_age, 2),
+        "selected_frame_offset_minutes": round(offset_minutes, 2),
+        "maximum_frame_offset_minutes": maximum_offset_minutes,
+        "newest_exact_common_frame_utc": iso_z(newest_exact_common),
+        "newest_east_frame_utc": iso_z(newest_east),
+        "newest_west_frame_utc": iso_z(newest_west),
+        "skipped_dirty_frames": {
+            "GOES-East": east_dirty,
+            "GOES-West": west_dirty,
+        },
+        "skipped_future_frames": {
+            "GOES-East": east_future,
+            "GOES-West": west_future,
+        },
+    }
 
 def latest_common_frame(east: ParsedPlacefile, west: ParsedPlacefile) -> datetime | None:
     common = common_frames_newest_first(east, west)
@@ -827,7 +883,8 @@ def write_outputs(
     west: ParsedPlacefile,
     east_fetch: dict[str, object],
     west_fetch: dict[str, object],
-    frame_time: datetime,
+    east_frame_time: datetime,
+    west_frame_time: datetime,
     fetched_at: datetime,
     maximum_dimension: int,
     frame_selection: dict[str, object],
@@ -836,19 +893,33 @@ def write_outputs(
     metadata_name = "lightningcast_conus_probability_60min_metadata.json"
     manifest_name = "lightningcast_manifest.json"
     png_path = output_dir / png_name
-    render = render_product(frame_time, east, west, png_path, maximum_dimension)
+    render = render_product(
+        east_frame_time, west_frame_time, east, west, png_path, maximum_dimension
+    )
 
-    age_minutes = round((fetched_at - frame_time).total_seconds() / 60.0, 2)
+    composite_time = max(east_frame_time, west_frame_time)
+    common_window_start = composite_time
+    common_window_end = min(east_frame_time, west_frame_time) + timedelta(minutes=60)
+    east_age_minutes = (fetched_at - east_frame_time).total_seconds() / 60.0
+    west_age_minutes = (fetched_at - west_frame_time).total_seconds() / 60.0
+    age_minutes = round(max(east_age_minutes, west_age_minutes), 2)
     metadata = {
         "metadata_mode": "lightningcast_dashboard_v1e",
-        "generator_revision": "v1f_frame_scoped_integrity",
+        "generator_revision": "v1g_near_time_frame_pairing",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
         "source_product": "LightningCast CONUS GRLevelX probability contour placefile loops",
         "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
-        "scan_time_utc": iso_z(frame_time),
-        "forecast_window_start_utc": iso_z(frame_time),
-        "forecast_window_end_utc": iso_z(frame_time + timedelta(minutes=60)),
+        "scan_time_utc": iso_z(composite_time),
+        "source_scan_times_utc": {
+            "GOES-East": iso_z(east_frame_time),
+            "GOES-West": iso_z(west_frame_time),
+        },
+        "source_time_offset_minutes": round(
+            abs((east_frame_time - west_frame_time).total_seconds()) / 60.0, 2
+        ),
+        "forecast_window_start_utc": iso_z(common_window_start),
+        "forecast_window_end_utc": iso_z(common_window_end),
         "fetched_at_utc": iso_z(fetched_at),
         "frame_age_minutes_at_fetch": age_minutes,
         "frame_selection": frame_selection,
@@ -896,8 +967,8 @@ def write_outputs(
             "resampling": "not applicable; vector contours rendered directly to Web Mercator",
         },
         "source_summary": {
-            "GOES-East": source_summary(east, east_fetch, frame_time),
-            "GOES-West": source_summary(west, west_fetch, frame_time),
+            "GOES-East": source_summary(east, east_fetch, east_frame_time),
+            "GOES-West": source_summary(west, west_fetch, west_frame_time),
         },
         "render_summary": render,
         "leaflet_png": png_name,
@@ -907,8 +978,8 @@ def write_outputs(
 
     manifest = {
         "manifest_mode": "lightningcast_dashboard_manifest_v1",
-        "scan_time_utc": iso_z(frame_time),
-        "forecast_window_end_utc": iso_z(frame_time + timedelta(minutes=60)),
+        "scan_time_utc": iso_z(composite_time),
+        "forecast_window_end_utc": iso_z(common_window_end),
         "probability_thresholds_percent": list(THRESHOLDS),
         "products": {
             "probability_next_60_minutes": {"png": png_name, "metadata_json": metadata_name}
@@ -961,7 +1032,7 @@ End:
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "test.png"
-        summary = render_product(frame, east, west, path, 600)
+        summary = render_product(frame, frame, east, west, path, 600)
         assert path.exists() and path.stat().st_size > 100
         assert summary["has_visible_pixels"] is True
         assert summary["ownership_longitude"] == OWNERSHIP_LONGITUDE
@@ -1007,11 +1078,39 @@ End:
     ei = parse_placefile(east_integrity, "East")
     wi = parse_placefile(west_integrity, "West")
     now = datetime(2026, 8, 8, 16, 10, tzinfo=UTC)
-    chosen, selection = select_clean_common_frame(ei, wi, now, 20.0)
-    assert iso_z(chosen) == "2026-08-08T16:00:00Z"
+    east_chosen, west_chosen, selection = select_clean_frame_pair(ei, wi, now, 20.0, 5.0)
+    assert iso_z(east_chosen) == "2026-08-08T16:00:00Z"
+    assert iso_z(west_chosen) == "2026-08-08T16:00:00Z"
     assert frame_invalid_count(wi, datetime(2026, 8, 8, 16, 5, tzinfo=UTC)) == 1
     assert selection["selected_frame_clean"] is True
-    assert len(selection["skipped_dirty_common_frames"]) == 1
+    assert len(selection["skipped_dirty_frames"]["GOES-West"]) == 1
+
+    # Near-time pairing test: independent satellite loops may be offset by a minute.
+    east_async_text = (
+        east_sample
+        .replace(
+            "TimeRange: 2026-08-08T16:00:17Z 2026-08-08T16:05:17Z",
+            "TimeRange: 2026-08-08T16:06:17Z 2026-08-08T16:11:17Z",
+        )
+        .replace("2026-08-08 16:00Z", "2026-08-08 16:06Z")
+    )
+    west_async_text = (
+        west_sample
+        .replace(
+            "TimeRange: 2026-08-08T16:00:17Z 2026-08-08T16:05:17Z",
+            "TimeRange: 2026-08-08T16:05:17Z 2026-08-08T16:10:17Z",
+        )
+        .replace("2026-08-08 16:00Z", "2026-08-08 16:05Z")
+    )
+    east_async = parse_placefile(east_async_text, "East")
+    west_async = parse_placefile(west_async_text, "West")
+    async_now = datetime(2026, 8, 8, 16, 10, tzinfo=UTC)
+    east_async_time, west_async_time, async_selection = select_clean_frame_pair(
+        east_async, west_async, async_now, 20.0, 5.0
+    )
+    assert iso_z(east_async_time) == "2026-08-08T16:06:00Z"
+    assert iso_z(west_async_time) == "2026-08-08T16:05:00Z"
+    assert async_selection["selected_frame_offset_minutes"] == 1.0
 
     print("LightningCast production parser/rendering/frame-integrity self-test passed.")
 
@@ -1024,6 +1123,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--maximum-bytes", type=int, default=80_000_000)
     parser.add_argument("--maximum-age-minutes", type=float, default=20.0)
+    parser.add_argument("--maximum-frame-offset-minutes", type=float, default=5.0)
     parser.add_argument("--maximum-render-dimension", type=int, default=DEFAULT_MAXIMUM_DIMENSION)
     parser.add_argument("--self-test", action="store_true")
     return parser
@@ -1057,13 +1157,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     sample = f"; example={examples[0]!r}" if examples else ""
                     print(f"  GOES-{label} dirty frame {iso_z(dirty_frame)}: {count} invalid line(s){sample}", file=sys.stderr)
 
-        frame_time, frame_selection = select_clean_common_frame(
-            east, west, fetched_at, args.maximum_age_minutes
+        east_frame_time, west_frame_time, frame_selection = select_clean_frame_pair(
+            east,
+            west,
+            fetched_at,
+            args.maximum_age_minutes,
+            args.maximum_frame_offset_minutes,
         )
-        skipped = frame_selection.get("skipped_dirty_common_frames") or []
-        if skipped:
+        offset_minutes = float(frame_selection.get("selected_frame_offset_minutes") or 0.0)
+        if offset_minutes:
             print(
-                f"Selected clean fallback common frame {iso_z(frame_time)} after skipping {len(skipped)} dirty newer common frame(s).",
+                "Selected near-time LightningCast frame pair "
+                f"East={iso_z(east_frame_time)} West={iso_z(west_frame_time)} "
+                f"(offset {offset_minutes:.1f} minutes).",
                 file=sys.stderr,
             )
 
@@ -1075,12 +1181,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             west,
             east_fetch,
             west_fetch,
-            frame_time,
+            east_frame_time,
+            west_frame_time,
             fetched_at,
             args.maximum_render_dimension,
             frame_selection,
         )
-        print(f"LightningCast product built for {iso_z(frame_time)}")
+        print(
+            "LightningCast product built from "
+            f"GOES-East {iso_z(east_frame_time)} and GOES-West {iso_z(west_frame_time)}"
+        )
         print(f"Output: {output_dir / 'lightningcast_conus_probability_60min.png'}")
         return 0
     except Exception as exc:
