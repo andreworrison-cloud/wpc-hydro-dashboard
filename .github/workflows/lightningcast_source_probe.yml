@@ -88,6 +88,27 @@ jobs:
                       item["shapes_headers"] = shape_headers
                       item["shape_type"] = shapes.get("type") if isinstance(shapes, dict) else None
                       item["feature_count"] = len(feats)
+                      geom_counts = {}
+                      probability_counts = {}
+                      property_keys = {}
+                      unclassified_contour_features = 0
+                      for feat in feats:
+                          if not isinstance(feat, dict):
+                              continue
+                          geom = (feat.get("geometry") or {}).get("type")
+                          geom_counts[str(geom)] = geom_counts.get(str(geom), 0) + 1
+                          props = feat.get("properties") or {}
+                          for key in props:
+                              property_keys[str(key)] = property_keys.get(str(key), 0) + 1
+                          prob = props.get("PROBABILITY")
+                          if prob is not None:
+                              probability_counts[str(prob)] = probability_counts.get(str(prob), 0) + 1
+                          elif geom in ("LineString","MultiLineString","Polygon","MultiPolygon","GeometryCollection"):
+                              unclassified_contour_features += 1
+                      item["geometry_counts"] = geom_counts
+                      item["probability_counts"] = probability_counts
+                      item["property_keys"] = property_keys
+                      item["unclassified_contour_features"] = unclassified_contour_features
                       item["sample_features"] = [
                           {
                               "id": f.get("id"),
