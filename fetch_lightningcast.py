@@ -604,6 +604,7 @@ def fetch_lightningcast_source(
     retries: int,
     maximum_bytes: int,
 ) -> tuple[ParsedPlacefile, dict[str, object], str]:
+    realearth_error: str | None = None
     try:
         parsed, fetch_meta, source_url = fetch_realearth_source(
             realearth_product,
@@ -619,8 +620,9 @@ def fetch_lightningcast_source(
         )
         return parsed, fetch_meta, source_url
     except Exception as realearth_exc:
+        realearth_error = str(realearth_exc)
         print(
-            f"RealEarth GOES-{expected_satellite} ingest failed: {realearth_exc}; "
+            f"RealEarth GOES-{expected_satellite} ingest failed: {realearth_error}; "
             "trying legacy CIMSS placefile fallback.",
             file=sys.stderr,
         )
@@ -632,9 +634,9 @@ def fetch_lightningcast_source(
     legacy_fetch = dict(legacy_fetch)
     legacy_fetch["source_transport"] = "legacy_cimss_placefile"
     legacy_fetch["source_url"] = legacy_url
-    legacy_fetch["primary_realearth_error"] = str(realearth_exc)
+    legacy_fetch["primary_realearth_error"] = realearth_error
     parsed.warnings.append(
-        f"RealEarth primary ingest failed: {realearth_exc}"
+        f"RealEarth primary ingest failed: {realearth_error}"
     )
     return parsed, legacy_fetch, legacy_url
 
