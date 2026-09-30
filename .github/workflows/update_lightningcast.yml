@@ -71,7 +71,7 @@ jobs:
           manifest = json.loads(manifest_path.read_text())
           if meta.get('metadata_mode') != 'lightningcast_dashboard_v1e':
               raise SystemExit('LightningCast metadata contract failed')
-          if meta.get('generator_revision') != 'v1g_near_time_frame_pairing':
+          if meta.get('generator_revision') != 'v1h_realearth_primary_ingest':
               raise SystemExit('LightningCast generator-revision contract failed')
           selection = meta.get('frame_selection') or {}
           if selection.get('selected_frame_clean') is not True:
@@ -239,6 +239,11 @@ jobs:
           print(f"- Dirty recent East frames skipped: **{len(dirty.get('GOES-East') or [])}**")
           print(f"- Dirty recent West frames skipped: **{len(dirty.get('GOES-West') or [])}**")
           print(f"- Probability common window ends: **{meta.get('forecast_window_end_utc')}**")
+          sources = meta.get('source_summary') or {}
+          east_transport = ((sources.get('GOES-East') or {}).get('fetch') or {}).get('source_transport')
+          west_transport = ((sources.get('GOES-West') or {}).get('fetch') or {}).get('source_transport')
+          print(f"- GOES-East transport: **{east_transport}**")
+          print(f"- GOES-West transport: **{west_transport}**")
           print('- Standard thresholds: **10 / 30 / 50 / 70 / 90%**')
           render = meta.get('render_summary') or {}
           print(f"- Image: **{render.get('width')} × {render.get('height')} px**")
