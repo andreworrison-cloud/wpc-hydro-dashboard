@@ -1082,8 +1082,24 @@ End:
     assert len(selection["skipped_dirty_frames"]["GOES-West"]) == 1
 
     # Near-time pairing test: independent satellite loops may be offset by a minute.
-    east_async = parse_placefile(east_sample.replace("16:00", "16:06"), "East")
-    west_async = parse_placefile(west_sample.replace("16:00", "16:05"), "West")
+    east_async_text = (
+        east_sample
+        .replace(
+            "TimeRange: 2026-08-08T16:00:17Z 2026-08-08T16:05:17Z",
+            "TimeRange: 2026-08-08T16:06:17Z 2026-08-08T16:11:17Z",
+        )
+        .replace("2026-08-08 16:00Z", "2026-08-08 16:06Z")
+    )
+    west_async_text = (
+        west_sample
+        .replace(
+            "TimeRange: 2026-08-08T16:00:17Z 2026-08-08T16:05:17Z",
+            "TimeRange: 2026-08-08T16:05:17Z 2026-08-08T16:10:17Z",
+        )
+        .replace("2026-08-08 16:00Z", "2026-08-08 16:05Z")
+    )
+    east_async = parse_placefile(east_async_text, "East")
+    west_async = parse_placefile(west_async_text, "West")
     async_now = datetime(2026, 8, 8, 16, 10, tzinfo=UTC)
     east_async_time, west_async_time, async_selection = select_clean_frame_pair(
         east_async, west_async, async_now, 20.0, 5.0
