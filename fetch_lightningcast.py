@@ -2,12 +2,13 @@
 """Build the WPC Hydrometeorological Dashboard LightningCast CONUS product.
 
 Retrieves authorized CIMSS/SSEC GOES-East and GOES-West CONUS LightningCast
-vectors from the current SSEC RealEarth GeoJSON feed, with the legacy CIMSS GRLevelX
-placefiles retained as a fail-closed fallback. It selects the newest clean near-time frame
-pair within strict freshness and cross-satellite offset windows, groups nested LightningCast
-contours into coherent storm objects, applies the established v1E East/West ownership logic,
-and renders the native LightningCast probability contours to a transparent Web-Mercator PNG
-plus metadata and a compact manifest.
+vectors from the SSEC RealEarth GeoJSON feed. The current LightningCast v2 ABI+MRMS
+products are preferred, the v1 RealEarth products are retained as freshness-checked
+fallbacks, and the legacy CIMSS GRLevelX placefiles remain a final fail-closed fallback.
+It selects the newest clean near-time frame pair within strict freshness and cross-satellite
+offset windows, groups nested LightningCast contours into coherent storm objects, applies
+the established v1E East/West ownership logic, and renders the native LightningCast
+probability contours to a transparent Web-Mercator PNG plus metadata and a compact manifest.
 
 This backend intentionally does not modify the dashboard interface.
 """
@@ -37,8 +38,10 @@ UTC = timezone.utc
 DEFAULT_EAST_URL = "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-East_CONUS_LOOP"
 DEFAULT_WEST_URL = "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-West_CONUS_LOOP"
 DEFAULT_REALEARTH_BASE_URL = "https://realearth.ssec.wisc.edu"
-DEFAULT_EAST_REALEARTH_PRODUCT = "PLTGGOESEastRadC"
-DEFAULT_WEST_REALEARTH_PRODUCT = "PLTGGOESWestRadC"
+DEFAULT_EAST_REALEARTH_PRODUCT = "PLTG-abi-mrms-GOESEastRadC"
+DEFAULT_WEST_REALEARTH_PRODUCT = "PLTG-abi-mrms-GOESWestRadC"
+DEFAULT_EAST_REALEARTH_FALLBACK_PRODUCT = "PLTGGOESEastRadC"
+DEFAULT_WEST_REALEARTH_FALLBACK_PRODUCT = "PLTGGOESWestRadC"
 
 THRESHOLDS = (10, 30, 50, 70, 90)
 THRESHOLD_RGBA = {
@@ -612,36 +615,78 @@ def fetch_realearth_source(
 
 def fetch_lightningcast_source(
     expected_satellite: str,
-    realearth_product: str,
+    realearth_products: Sequence[str],
     realearth_base_url: str,
     legacy_url: str,
+    fetched_at: datetime,
+    maximum_age_minutes: float,
     timeout_seconds: int,
     retries: int,
     maximum_bytes: int,
 ) -> tuple[ParsedPlacefile, dict[str, object], str]:
-    realearth_error: str | None = None
-    try:
-        parsed, fetch_meta, source_url = fetch_realearth_source(
-            realearth_product,
-            expected_satellite,
-            realearth_base_url,
-            timeout_seconds,
-            retries,
-            maximum_bytes,
-        )
-        print(
-            f"GOES-{expected_satellite} LightningCast source: RealEarth "
-            f"{realearth_product} at {iso_z(max(parsed.frame_times))}"
-        )
-        return parsed, fetch_meta, source_url
-    except Exception as realearth_exc:
-        realearth_error = str(realearth_exc)
-        print(
-            f"RealEarth GOES-{expected_satellite} ingest failed: {realearth_error}; "
-            "trying legacy CIMSS placefile fallback.",
-            file=sys.stderr,
-        )
+    candidate_errors: list[str] = []
 
+    for index, realearth_product in enumerate(realearth_products):
+        if not realearth_product:
+            continue
+        try:
+            parsed, fetch_meta, source_url = fetch_realearth_source(
+                realearth_product,
+                expected_satellite,
+                realearth_base_url,
+                timeout_seconds,
+                retries,
+                maximum_bytes,
+            )
+            newest = max(parsed.frame_times) if parsed.frame_times else None
+            if newest is None:
+                raise RuntimeError("source returned no frame times")
+
+            age_minutes = (fetched_at - newest).total_seconds() / 60.0
+            role = "primary" if index == 0 else "fallback"
+            if age_minutes < -5.0:
+                message = (
+                    f"RealEarth GOES-{expected_satellite} {role} product "
+                    f"{realearth_product} has a future frame {iso_z(newest)} "
+                    f"({age_minutes:.1f} minutes old); skipping."
+                )
+                candidate_errors.append(message)
+                print(message, file=sys.stderr)
+                continue
+            if age_minutes > maximum_age_minutes:
+                message = (
+                    f"RealEarth GOES-{expected_satellite} {role} product "
+                    f"{realearth_product} is stale at {iso_z(newest)} "
+                    f"({age_minutes:.1f} minutes old; maximum {maximum_age_minutes:.1f}); skipping."
+                )
+                candidate_errors.append(message)
+                print(message, file=sys.stderr)
+                continue
+
+            fetch_meta = dict(fetch_meta)
+            fetch_meta["candidate_role"] = role
+            fetch_meta["candidate_age_minutes"] = round(age_minutes, 2)
+            fetch_meta["candidate_products_considered"] = list(realearth_products)
+            fetch_meta["candidate_rejections"] = candidate_errors
+            print(
+                f"GOES-{expected_satellite} LightningCast source: RealEarth "
+                f"{realearth_product} at {iso_z(newest)} "
+                f"({age_minutes:.1f} minutes old; {role})."
+            )
+            return parsed, fetch_meta, source_url
+        except Exception as realearth_exc:
+            message = (
+                f"RealEarth GOES-{expected_satellite} product {realearth_product} "
+                f"ingest failed: {realearth_exc}"
+            )
+            candidate_errors.append(message)
+            print(message, file=sys.stderr)
+
+    print(
+        f"No fresh RealEarth GOES-{expected_satellite} LightningCast candidate; "
+        "trying legacy CIMSS placefile fallback.",
+        file=sys.stderr,
+    )
     text, legacy_fetch = fetch_text(
         legacy_url, timeout_seconds, retries, maximum_bytes
     )
@@ -649,12 +694,12 @@ def fetch_lightningcast_source(
     legacy_fetch = dict(legacy_fetch)
     legacy_fetch["source_transport"] = "legacy_cimss_placefile"
     legacy_fetch["source_url"] = legacy_url
-    legacy_fetch["primary_realearth_error"] = realearth_error
+    legacy_fetch["candidate_products_considered"] = list(realearth_products)
+    legacy_fetch["primary_realearth_errors"] = candidate_errors
     parsed.warnings.append(
-        f"RealEarth primary ingest failed: {realearth_error}"
+        "No fresh RealEarth LightningCast candidate: " + " | ".join(candidate_errors)
     )
     return parsed, legacy_fetch, legacy_url
-
 
 def parse_placefile(text: str, expected_satellite: str) -> ParsedPlacefile:
     title = None
@@ -1333,10 +1378,10 @@ def write_outputs(
     age_minutes = round(max(east_age_minutes, west_age_minutes), 2)
     metadata = {
         "metadata_mode": "lightningcast_dashboard_v1e",
-        "generator_revision": "v1h_realearth_primary_ingest",
+        "generator_revision": "v1i_realearth_v2_live_ingest",
         "product_role": "probability_of_lightning_next_60_minutes",
         "display_label": "CIMSS/SSEC LightningCast — Probability of Lightning in Next 60 Minutes",
-        "source_product": "LightningCast v1 CONUS probability contour vectors",
+        "source_product": "LightningCast CONUS probability contour vectors (RealEarth v2 ABI+MRMS preferred; v1 fallback)",
         "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
         "scan_time_utc": iso_z(composite_time),
         "source_scan_times_utc": {
@@ -1590,6 +1635,10 @@ End:
     )
     assert re_thresholds == [10, 90]
     assert re_parsed.invalid_coordinate_lines == 0
+    assert DEFAULT_EAST_REALEARTH_PRODUCT == "PLTG-abi-mrms-GOESEastRadC"
+    assert DEFAULT_WEST_REALEARTH_PRODUCT == "PLTG-abi-mrms-GOESWestRadC"
+    assert DEFAULT_EAST_REALEARTH_FALLBACK_PRODUCT == "PLTGGOESEastRadC"
+    assert DEFAULT_WEST_REALEARTH_FALLBACK_PRODUCT == "PLTGGOESWestRadC"
 
     print("LightningCast production parser/rendering/frame-integrity self-test passed.")
 
@@ -1611,6 +1660,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--west-realearth-product",
         default=os.environ.get(
             "LIGHTNINGCAST_WEST_REALEARTH_PRODUCT", DEFAULT_WEST_REALEARTH_PRODUCT
+        ),
+    )
+    parser.add_argument(
+        "--east-realearth-fallback-product",
+        default=os.environ.get(
+            "LIGHTNINGCAST_EAST_REALEARTH_FALLBACK_PRODUCT",
+            DEFAULT_EAST_REALEARTH_FALLBACK_PRODUCT,
+        ),
+    )
+    parser.add_argument(
+        "--west-realearth-fallback-product",
+        default=os.environ.get(
+            "LIGHTNINGCAST_WEST_REALEARTH_FALLBACK_PRODUCT",
+            DEFAULT_WEST_REALEARTH_FALLBACK_PRODUCT,
         ),
     )
     parser.add_argument("--output-dir", default="lightningcast_output")
@@ -1637,18 +1700,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         east, east_fetch, east_source_url = fetch_lightningcast_source(
             "East",
-            args.east_realearth_product,
+            (args.east_realearth_product, args.east_realearth_fallback_product),
             args.realearth_base_url,
             args.east_url,
+            fetched_at,
+            args.maximum_age_minutes,
             args.timeout_seconds,
             args.retries,
             args.maximum_bytes,
         )
         west, west_fetch, west_source_url = fetch_lightningcast_source(
             "West",
-            args.west_realearth_product,
+            (args.west_realearth_product, args.west_realearth_fallback_product),
             args.realearth_base_url,
             args.west_url,
+            fetched_at,
+            args.maximum_age_minutes,
             args.timeout_seconds,
             args.retries,
             args.maximum_bytes,
