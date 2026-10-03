@@ -49,7 +49,9 @@ jobs:
           python fetch_lightningcast.py \
             --output-dir "$LIGHTNINGCAST_OUTPUT_DIR" \
             --maximum-age-minutes 20 \
-            --maximum-frame-offset-minutes 5
+            --maximum-frame-offset-minutes 5 \
+            --reuse-existing-on-transient-pair-gap \
+            --existing-package-dir static
 
       - name: Validate generated package
         shell: bash
