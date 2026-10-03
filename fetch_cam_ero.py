@@ -733,17 +733,21 @@ class EROCamEngine:
         )
 
         if not r_date:
+            reason = (
+                "No complete REFS run is available for the current "
+                "12Z-to-12Z ERO window."
+            )
             print(
                 f"ERO cycle discovery summary -> HREF: {h_date} "
                 f"{h_cyc:02d}Z | REFS: MISSING for "
                 f"{base_12z:%Y-%m-%d} 12Z ERO window"
             )
-            return {
-                "error": (
-                    "No complete REFS run is available for the current "
-                    "12Z-to-12Z ERO window."
-                )
-            }
+            print(
+                "ERO update deferred without error: REFS has not fully "
+                "disseminated the required window. Existing published layers "
+                "will be retained until a complete REFS cycle is available."
+            )
+            return {"no_update": True, "reason": reason}
 
         print(
             f"Locked Models for ERO -> HREF: {h_cyc:02d}Z | "
@@ -1015,6 +1019,12 @@ class EROCamEngine:
         return dashboard_payload
 
     def export_dashboard_layers(self, payload):
+        if payload.get("no_update"):
+            print(
+                "No Day 1 ERO CAM files changed: "
+                + str(payload.get("reason") or "upstream guidance is incomplete")
+            )
+            return
         if "error" in payload:
             raise RuntimeError(payload["error"])
 
