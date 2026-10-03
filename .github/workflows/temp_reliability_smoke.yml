@@ -59,22 +59,6 @@ jobs:
           git add -A -- 'static/cam_*.png' static/cam_metadata.json
           git diff --cached --name-status > staged.txt
           cat staged.txt
-          grep -q $'^D\\tstatic/cam_old.png$' staged.txt
-          grep -q $'^M\\tstatic/cam_metadata.json$' staged.txt
+          awk -F '\t' '$1=="D" && $2=="static/cam_old.png" {found=1} END{exit !found}' staged.txt
+          awk -F '\t' '$1=="M" && $2=="static/cam_metadata.json" {found=1} END{exit !found}' staged.txt
 
-      - name: Record smoke result on reliability branch
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          if [[ "${JOB_STATUS}" == "success" ]]; then
-            result="PASS"
-          else
-            result="FAIL"
-          fi
-          printf '%s %s\n' "${result}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > reliability_smoke_result.txt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add reliability_smoke_result.txt
-          git commit -m "Record reliability smoke-test ${result,,}"
-          git push origin HEAD:fix/actions-reliability-20261003
