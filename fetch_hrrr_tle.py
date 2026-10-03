@@ -164,6 +164,14 @@ def hrrr_grib_url(run_dt: datetime, fxx: int) -> str:
     return f"{hrrr_base_url(run_dt)}/hrrr.t{run_dt:%H}z.wrfsfcf{fxx:02d}.grib2"
 
 
+def hrrr_aws_grib_url(run_dt: datetime, fxx: int) -> str:
+    return (
+        "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/"
+        f"hrrr.{run_dt:%Y%m%d}/conus/"
+        f"hrrr.t{run_dt:%H}z.wrfsfcf{fxx:02d}.grib2"
+    )
+
+
 def apcp_1h_search_string(fxx: int) -> str:
     return f":APCP:surface:{fxx - 1}-{fxx} hour"
 
@@ -253,17 +261,12 @@ def _extract_idx_byte_range(idx_text: str, search_str: str):
     return None, None
 
 
-def download_nomads_subset(
+def _download_hrrr_subset_from_url(
     grib_url: str,
     search_str: str,
     local_file: Path,
 ) -> None:
-    '''
-    Download only the GRIB message matching search_str by using the
-    NOMADS .idx byte offsets.
-    '''
-    local_file.parent.mkdir(parents=True, exist_ok=True)
-
+    """Download one indexed HRRR GRIB message from a specific mirror."""
     idx_resp = SESSION.get(grib_url + ".idx", timeout=20)
     if idx_resp.status_code != 200:
         raise RuntimeError(f"IDX HTTP {idx_resp.status_code}: {grib_url}.idx")
@@ -294,7 +297,7 @@ def download_nomads_subset(
         expected = end_byte - start_byte + 1
         if len(grib_resp.content) != expected:
             raise RuntimeError(
-                "NOMADS ignored the byte-range request and returned a "
+                "HRRR mirror ignored the byte-range request and returned a "
                 "different-sized object; refusing to cache an ambiguous file."
             )
 
@@ -305,6 +308,41 @@ def download_nomads_subset(
     tmp.write_bytes(grib_resp.content)
     tmp.replace(local_file)
 
+
+def download_hrrr_subset(
+    run_dt: datetime,
+    fxx: int,
+    search_str: str,
+    local_file: Path,
+) -> None:
+    """
+    Download the same indexed HRRR record from NOMADS first, then NOAA's
+    public AWS HRRR archive. The scientific field and byte-range selection
+    are identical; only the transport mirror changes.
+    """
+    local_file.parent.mkdir(parents=True, exist_ok=True)
+    candidates = (
+        ("NOMADS", hrrr_grib_url(run_dt, fxx)),
+        ("AWS-NODD", hrrr_aws_grib_url(run_dt, fxx)),
+    )
+    errors = []
+    for source, grib_url in candidates:
+        try:
+            _download_hrrr_subset_from_url(grib_url, search_str, local_file)
+            if source != "NOMADS":
+                print(
+                    f"ℹ️ HRRR transport fallback used for "
+                    f"{run_dt:%Y-%m-%d %HZ} f{fxx:02d}: {source}"
+                )
+            return
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+            local_file.unlink(missing_ok=True)
+
+    raise RuntimeError(
+        f"All HRRR mirrors failed for {run_dt:%Y-%m-%d %HZ} f{fxx:02d}: "
+        + " | ".join(errors)
+    )
 
 def _read_apcp_subset(local_file: Path):
     ds = xr.open_dataset(
@@ -373,7 +411,7 @@ def get_hrrr_hourly_qpf(
         for attempt in (1, 2):
             try:
                 if not local_file.exists() or local_file.stat().st_size < 100:
-                    download_nomads_subset(grib_url, search_str, local_file)
+                    download_hrrr_subset(run_dt, fxx, search_str, local_file)
 
                 qpf_in, lat_i, lon_i = _read_apcp_subset(local_file)
 
