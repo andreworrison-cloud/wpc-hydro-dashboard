@@ -181,6 +181,10 @@ class ParsedPlacefile:
     warnings: list[str]
 
 
+class FramePairNotReadyError(RuntimeError):
+    """Both sources are fresh, but no pair meets the synchronization limit."""
+
+
 def utc_now() -> datetime:
     return datetime.now(tz=UTC)
 
@@ -1240,7 +1244,7 @@ def select_clean_frame_pair(
         newest_clean_east = east_clean[0]
         newest_clean_west = west_clean[0]
         offset_minutes = abs((newest_clean_east - newest_clean_west).total_seconds()) / 60.0
-        raise RuntimeError(
+        raise FramePairNotReadyError(
             "no clean fresh GOES-East/GOES-West LightningCast frame pair within "
             f"{maximum_offset_minutes:.1f} minutes; newest clean East={iso_z(newest_clean_east)}, "
             f"West={iso_z(newest_clean_west)}, offset={offset_minutes:.1f} minutes"
@@ -1346,6 +1350,39 @@ def write_source_diagnostics(
     (output_dir / "lightningcast_source_diagnostics.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def reuse_existing_package(existing_dir: Path, output_dir: Path) -> bool:
+    """
+    Copy the last validated dashboard package into the working output directory.
+    This is used only when both live sources are fresh but temporarily outside
+    the synchronization tolerance. It does not create or publish a new frame.
+    """
+    names = (
+        "lightningcast_conus_probability_60min.png",
+        "lightningcast_conus_probability_60min_metadata.json",
+        "lightningcast_manifest.json",
+    )
+    paths = [existing_dir / name for name in names]
+    if any(not path.exists() or path.stat().st_size == 0 for path in paths):
+        return False
+
+    try:
+        metadata = json.loads(paths[1].read_text(encoding="utf-8"))
+        manifest = json.loads(paths[2].read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    if metadata.get("generator_revision") != "v1i_realearth_v2_live_ingest":
+        return False
+    if manifest.get("scan_time_utc") != metadata.get("scan_time_utc"):
+        return False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for source in paths:
+        target = output_dir / source.name
+        target.write_bytes(source.read_bytes())
+    return True
 
 
 def write_outputs(
@@ -1683,6 +1720,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--maximum-age-minutes", type=float, default=20.0)
     parser.add_argument("--maximum-frame-offset-minutes", type=float, default=5.0)
     parser.add_argument("--maximum-render-dimension", type=int, default=DEFAULT_MAXIMUM_DIMENSION)
+    parser.add_argument(
+        "--reuse-existing-on-transient-pair-gap",
+        action="store_true",
+        help=(
+            "If both sources are fresh but temporarily outside the East/West "
+            "offset tolerance, retain the existing validated package instead "
+            "of treating the timing gap as a hard workflow failure."
+        ),
+    )
+    parser.add_argument("--existing-package-dir", default="static")
     parser.add_argument("--self-test", action="store_true")
     return parser
 
@@ -1769,6 +1816,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"Output: {output_dir / 'lightningcast_conus_probability_60min.png'}")
         return 0
+    except FramePairNotReadyError as exc:
+        if args.reuse_existing_on_transient_pair_gap:
+            existing_dir = Path(args.existing_package_dir)
+            if reuse_existing_package(existing_dir, output_dir):
+                print(
+                    "LightningCast timing gap deferred without error; "
+                    "retaining the last validated dashboard package. "
+                    f"Reason: {exc}",
+                    file=sys.stderr,
+                )
+                return 0
+            print(
+                "ERROR: transient LightningCast timing gap occurred, but no "
+                "compatible existing package was available to retain.",
+                file=sys.stderr,
+            )
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
