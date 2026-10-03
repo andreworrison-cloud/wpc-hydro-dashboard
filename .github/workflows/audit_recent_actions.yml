@@ -1,0 +1,225 @@
+name: Temporary Recent Actions Failure Audit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/audit_recent_actions.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Audit recent failed workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import collections
+          import datetime as dt
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          token = os.environ["GH_TOKEN"]
+          repo = os.environ["GH_REPOSITORY"]
+          api = "https://api.github.com"
+          cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=4)
+
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "WPC-dashboard-actions-audit/1.0",
+          }
+
+          def get_json(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=45) as r:
+                  return json.loads(r.read())
+
+          def get_text(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  raw = r.read(8_000_000)
+              return raw.decode("utf-8", errors="replace")
+
+          def parse_time(s):
+              return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+          def extract_signature(text):
+              lines = [x.rstrip() for x in text.splitlines()]
+              interesting = []
+              patterns = (
+                  "traceback", "error:", "error ", "exception", "failed", "failure",
+                  "exit code", "timed out", "timeout", "404", "403", "429", "502", "503",
+                  "connection", "no such file", "not found", "stale", "age", "could not",
+              )
+              for line in lines:
+                  low = line.lower()
+                  if any(p in low for p in patterns):
+                      cleaned = re.sub(r"^\d{4}-\d\d-\d\dT[^ ]+Z\s*", "", line)
+                      interesting.append(cleaned[:1000])
+              tail = lines[-80:]
+              selected = interesting[-20:] if interesting else tail[-20:]
+              return selected
+
+          failures = []
+          # Failure is the main target; include timed_out and action_required as hard failures.
+          for status in ("failure", "timed_out", "action_required"):
+              for page in range(1, 6):
+                  params = urllib.parse.urlencode({
+                      "status": status,
+                      "per_page": 100,
+                      "page": page,
+                  })
+                  data = get_json(f"{api}/repos/{repo}/actions/runs?{params}")
+                  runs = data.get("workflow_runs", [])
+                  if not runs:
+                      break
+                  stop = False
+                  for run in runs:
+                      created = parse_time(run["created_at"])
+                      if created < cutoff:
+                          stop = True
+                          continue
+                      failures.append(run)
+                  if stop:
+                      break
+
+          # Deduplicate because GitHub status filtering can overlap odd terminal states.
+          by_id = {int(r["id"]): r for r in failures}
+          failures = sorted(by_id.values(), key=lambda r: r["created_at"], reverse=True)
+
+          records = []
+          for run in failures[:120]:
+              run_id = int(run["id"])
+              jobs_data = get_json(f"{api}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+              jobs_out = []
+              for job in jobs_data.get("jobs", []):
+                  if job.get("conclusion") not in ("failure", "timed_out", "action_required"):
+                      continue
+                  failed_steps = [
+                      {
+                          "name": step.get("name"),
+                          "number": step.get("number"),
+                          "conclusion": step.get("conclusion"),
+                      }
+                      for step in job.get("steps", [])
+                      if step.get("conclusion") in ("failure", "timed_out", "action_required")
+                  ]
+                  log_error = None
+                  signature = []
+                  try:
+                      log = get_text(f"{api}/repos/{repo}/actions/jobs/{job['id']}/logs")
+                      signature = extract_signature(log)
+                  except Exception as exc:
+                      log_error = repr(exc)
+                  jobs_out.append({
+                      "job_id": job.get("id"),
+                      "name": job.get("name"),
+                      "conclusion": job.get("conclusion"),
+                      "started_at": job.get("started_at"),
+                      "completed_at": job.get("completed_at"),
+                      "failed_steps": failed_steps,
+                      "log_signature": signature,
+                      "log_error": log_error,
+                  })
+              records.append({
+                  "run_id": run_id,
+                  "name": run.get("name"),
+                  "display_title": run.get("display_title"),
+                  "workflow_path": run.get("path"),
+                  "event": run.get("event"),
+                  "conclusion": run.get("conclusion"),
+                  "run_attempt": run.get("run_attempt"),
+                  "created_at": run.get("created_at"),
+                  "updated_at": run.get("updated_at"),
+                  "head_sha": run.get("head_sha"),
+                  "html_url": run.get("html_url"),
+                  "jobs": jobs_out,
+              })
+
+          counts = collections.Counter(r["name"] for r in records)
+          events = collections.Counter((r["name"], r["event"]) for r in records)
+          step_counts = collections.Counter()
+          for r in records:
+              for j in r["jobs"]:
+                  for st in j["failed_steps"]:
+                      step_counts[(r["name"], st["name"])] += 1
+
+          payload = {
+              "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "cutoff_utc": cutoff.isoformat(),
+              "failed_run_count": len(records),
+              "workflow_failure_counts": dict(counts.most_common()),
+              "workflow_event_counts": [
+                  {"workflow": k[0], "event": k[1], "count": v}
+                  for k, v in events.most_common()
+              ],
+              "failed_step_counts": [
+                  {"workflow": k[0], "step": k[1], "count": v}
+                  for k, v in step_counts.most_common()
+              ],
+              "runs": records,
+          }
+          Path("actions_failure_audit.json").write_text(
+              json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+          )
+
+          lines = [
+              f"Generated: {payload['generated_at_utc']}",
+              f"Cutoff: {payload['cutoff_utc']}",
+              f"Hard-failure runs found: {len(records)}",
+              "",
+              "FAILURES BY WORKFLOW",
+          ]
+          for name, count in counts.most_common():
+              lines.append(f"{count:4d}  {name}")
+          lines += ["", "FAILED STEPS"]
+          for (name, step), count in step_counts.most_common():
+              lines.append(f"{count:4d}  {name} :: {step}")
+          lines += ["", "RUN DETAILS"]
+          for r in records:
+              lines.append("")
+              lines.append(
+                  f"[{r['created_at']}] {r['name']} | event={r['event']} | "
+                  f"run={r['run_id']} | {r['html_url']}"
+              )
+              for j in r["jobs"]:
+                  lines.append(f"  JOB {j['name']} ({j['conclusion']})")
+                  for st in j["failed_steps"]:
+                      lines.append(f"    STEP: {st['name']} ({st['conclusion']})")
+                  for line in j["log_signature"][-12:]:
+                      lines.append(f"    LOG: {line}")
+                  if j["log_error"]:
+                      lines.append(f"    LOG_FETCH_ERROR: {j['log_error']}")
+          Path("actions_failure_audit.txt").write_text("\n".join(lines)+"\n", encoding="utf-8")
+          print("\n".join(lines[:200]))
+          PY
+
+      - name: Commit audit report to audit branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add actions_failure_audit.json actions_failure_audit.txt
+          git commit -m "Record recent Actions failure audit"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
