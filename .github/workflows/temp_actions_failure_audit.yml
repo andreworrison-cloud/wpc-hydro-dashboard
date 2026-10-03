@@ -1,9 +1,10 @@
 name: Temporary Recent Actions Failure Audit
 
 on:
-  push:
-    paths:
-      - '.github/workflows/temp_actions_failure_audit.yml'
+  workflow_run:
+    workflows: ["Update WPC Data"]
+    types: [completed]
+  workflow_dispatch:
 
 permissions:
   actions: read
