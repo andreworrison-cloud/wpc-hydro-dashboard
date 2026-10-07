@@ -2,13 +2,23 @@
   "product": "MRMS Flash Flood Detector Rolling Maximum",
   "aggregation": "At each synchronized 10-minute analysis, diagnose the FFD category from QPE_FFGMAX, QPE_ARIMAX, CREST Unit Q, and SAC Unit Q; then retain the highest category reached at each grid cell during the rolling window.",
   "important_method_note": "The four input maxima are not independently maximized before applying the detector. Each category is calculated from inputs valid at the same analysis time.",
-  "window_start_utc": "2026-10-06T14:30:00Z",
-  "window_end_utc": "2026-10-07T14:20:00Z",
+  "window_start_utc": "2026-10-06T16:20:00Z",
+  "window_end_utc": "2026-10-07T16:10:00Z",
   "window_hours": 24,
   "expected_cycles": 144,
-  "processed_cycles": 144,
-  "completeness_fraction": 1.0,
-  "missing_times_utc": [],
+  "processed_cycles": 135,
+  "completeness_fraction": 0.9375,
+  "missing_times_utc": [
+    "2026-10-07T14:30:00Z",
+    "2026-10-07T14:40:00Z",
+    "2026-10-07T14:50:00Z",
+    "2026-10-07T15:00:00Z",
+    "2026-10-07T15:10:00Z",
+    "2026-10-07T15:20:00Z",
+    "2026-10-07T15:30:00Z",
+    "2026-10-07T15:40:00Z",
+    "2026-10-07T15:50:00Z"
+  ],
   "metadata_mode": "dashboard_compact",
   "input_products": [
     "CREST_MAXUNITSTREAMFLOW",
@@ -69,23 +79,23 @@
   "category_statistics": {
     "total_grid_cells": 24500000,
     "counts": {
-      "None": 24483830,
-      "Monitor": 15647,
-      "Flood Advisory": 436,
-      "FFW Base": 80,
+      "None": 24484286,
+      "Monitor": 15189,
+      "Flood Advisory": 437,
+      "FFW Base": 81,
       "FFW Considerable": 7,
       "FFW Catastrophic": 0
     },
     "percentages": {
-      "None": 99.934,
-      "Monitor": 0.06386530612244898,
-      "Flood Advisory": 0.001779591836734694,
-      "FFW Base": 0.00032653061224489796,
+      "None": 99.9358612244898,
+      "Monitor": 0.06199591836734694,
+      "Flood Advisory": 0.0017836734693877552,
+      "FFW Base": 0.0003306122448979592,
       "FFW Considerable": 2.857142857142857e-05,
       "FFW Catastrophic": 0.0
     }
   },
-  "generated_time_utc": "2026-10-07T16:18:44.852921Z",
+  "generated_time_utc": "2026-10-07T16:50:08.502595Z",
   "outputs": {
     "png": "mrms_ffd_max24h.png",
     "metadata": "mrms_ffd_max24h_metadata.json"
