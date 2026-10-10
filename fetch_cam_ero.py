@@ -162,6 +162,25 @@ class EROCamEngine:
         return None
 
 
+    @staticmethod
+    def _ffg_duration_expected(fxx, duration, window_start):
+        """
+        Return whether an FFG-exceedance duration is expected at this fxx.
+
+        HREF/REFS provide 1-hour FFG exceedance guidance hourly. The 3-hour
+        and 6-hour perspectives are carried on the 3-hour forecast cadence;
+        6-hour guidance begins only once a full six-hour period fits inside
+        the selected model portion of the ERO window.
+        """
+        if fxx - duration < window_start:
+            return False
+        if duration == 1:
+            return True
+        if duration in (3, 6):
+            return fxx % 3 == 0
+        return True
+
+
     def _get_latest_cycle(self, model, target_ero_start=None):
         now = datetime.now(timezone.utc)
         curr_cycle = now.replace(
@@ -889,7 +908,7 @@ class EROCamEngine:
             )
             ffri_idx = ffri_url + ".idx"
             for d in self.ffg_durations:
-                if fxx - d >= h_window_start:
+                if self._ffg_duration_expected(fxx, d, h_window_start):
                     out_file = self.grib_dir / (
                         f"H_{h_date}_{h_cyc:02d}_F_{d}_{fxx:02d}.grib2"
                     )
@@ -975,7 +994,7 @@ class EROCamEngine:
                 file.unlink(missing_ok=True)
 
             for d in self.ffg_durations:
-                if fxx - d >= h_window_start:
+                if self._ffg_duration_expected(fxx, d, h_window_start):
                     file = self.grib_dir / (
                         f"H_{h_date}_{h_cyc:02d}_F_{d}_{fxx:02d}.grib2"
                     )
@@ -1033,6 +1052,7 @@ class EROCamEngine:
         refs_hours_used = []
         refs_ffri_hours_used = []
         refs_ffg_durations_seen = set()
+        refs_ffg_slots_used = set()
 
         for fxx in r_fxx_list:
             full_prob, source = self._download_refs_full(
@@ -1072,7 +1092,10 @@ class EROCamEngine:
                     except Exception:
                         pass
 
-            if any(fxx - d >= r_window_start for d in self.ffg_durations):
+            if any(
+                self._ffg_duration_expected(fxx, d, r_window_start)
+                for d in self.ffg_durations
+            ):
                 full_ffri, _ = self._download_refs_full(
                     r_date, r_cyc, "ffri", fxx
                 )
@@ -1083,7 +1106,9 @@ class EROCamEngine:
                         )
                         found_ffg = False
                         for d in self.ffg_durations:
-                            if fxx - d >= r_window_start:
+                            if self._ffg_duration_expected(
+                                fxx, d, r_window_start
+                            ):
                                 arr = ffg_fields.get(d)
                                 if arr is not None:
                                     data_store["FFG_MAX"]["REFS"] = self._merge_max(
@@ -1091,6 +1116,7 @@ class EROCamEngine:
                                     )
                                     found_ffg = True
                                     refs_ffg_durations_seen.add(d)
+                                    refs_ffg_slots_used.add((fxx, d))
                         if found_ffg:
                             refs_ffri_hours_used.append(fxx)
                             if coords["REFS"][0] is None:
@@ -1116,6 +1142,13 @@ class EROCamEngine:
                     f"f{h:02d}" for h in sorted(set(refs_ffri_hours_used))
                 )
             )
+            print(
+                "REFS ERO FFG fields used: "
+                + ", ".join(
+                    f"f{fxx:02d}/{d}h"
+                    for fxx, d in sorted(refs_ffg_slots_used)
+                )
+            )
         else:
             print(
                 "REFS FFRI unavailable/no usable fields; "
@@ -1133,6 +1166,15 @@ class EROCamEngine:
             expected_refs_hours - set(refs_ffri_hours_used)
         )
 
+        expected_refs_ffg_slots = {
+            (fxx, d)
+            for fxx in r_fxx_list
+            for d in self.ffg_durations
+            if self._ffg_duration_expected(fxx, d, r_window_start)
+        }
+        missing_refs_ffg_slots = sorted(
+            expected_refs_ffg_slots - refs_ffg_slots_used
+        )
         missing_ffg_durations = sorted(
             set(self.ffg_durations) - refs_ffg_durations_seen
         )
@@ -1141,6 +1183,7 @@ class EROCamEngine:
             missing_qpf_hours
             or missing_ffri_hours
             or missing_ffg_durations
+            or missing_refs_ffg_slots
         ):
             reason = (
                 "REFS processing became incomplete after a successful "
@@ -1162,6 +1205,14 @@ class EROCamEngine:
                 print(
                     "  REFS FFG durations never decoded: "
                     + ", ".join(f"{d}-h" for d in missing_ffg_durations)
+                )
+            if missing_refs_ffg_slots:
+                print(
+                    "  Missing expected REFS FFG fields: "
+                    + ", ".join(
+                        f"f{fxx:02d}/{d}h"
+                        for fxx, d in missing_refs_ffg_slots
+                    )
                 )
             return {"no_update": True, "reason": reason}
 
