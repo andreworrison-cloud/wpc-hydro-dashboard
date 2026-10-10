@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # REFS, probability thresholds, existing REFS-to-HREF interpolation, and
 # super-ensemble calculations are intentionally unchanged.
 MAP_RENDER_DPI = 600       # 10 x 6 inches -> 6000 x 3600 px
-RENDER_REVISION = "ero-cam-completeness-v1c"
+RENDER_REVISION = "ero-cam-window-boundaries-v1d"
 
 class EROCamEngine:
     def __init__(self, output_dir="grib_cache_ero"):
@@ -185,11 +185,25 @@ class EROCamEngine:
         return True
 
     def _get_fxx_range_for_ero(self, cycle):
-        """Matches the user's logic to perfectly bound the 12Z-12Z ERO period."""
-        if cycle == 12: return range(1, 25)
-        elif cycle == 18: return range(1, 19)
-        elif cycle == 0: return range(12, 37)
-        elif cycle == 6: return range(6, 31)
+        """
+        Return forecast-hour endpoints whose accumulation periods are fully
+        contained in the intended Day 1 ERO coverage.
+
+        00Z/06Z/12Z guidance covers 12Z on the cycle date through 12Z the
+        following day. The 18Z cycle is an update covering only the unexpired
+        portion of Day 1: 18Z on the cycle date through 12Z the following day.
+
+        The one-hour fields ending exactly at 12Z describe the preceding hour,
+        so 00Z begins at f13 (not f12) and 06Z begins at f07 (not f06).
+        """
+        if cycle == 12:
+            return range(1, 25)
+        elif cycle == 18:
+            return range(1, 19)
+        elif cycle == 0:
+            return range(13, 37)
+        elif cycle == 6:
+            return range(7, 31)
         return None
 
 
@@ -858,17 +872,34 @@ class EROCamEngine:
         if not r_date:
             reason = (
                 "No complete REFS run is available for the current "
-                "12Z-to-12Z ERO window."
+                "Day 1 ERO coverage."
             )
             print(
                 f"ERO cycle discovery summary -> HREF: {h_date} "
                 f"{h_cyc:02d}Z | REFS: MISSING for "
-                f"{base_12z:%Y-%m-%d} 12Z ERO window"
+                f"{base_12z:%Y-%m-%d} Day 1 ERO"
             )
             print(
                 "ERO update deferred without error: REFS has not fully "
-                "disseminated the required window. Existing published layers "
+                "disseminated the required coverage. Existing published layers "
                 "will be retained until a complete REFS cycle is available."
+            )
+            return {"no_update": True, "reason": reason}
+
+        # A fallback REFS cycle from the same date is scientifically compatible
+        # with 00Z/06Z/12Z because all three represent the same 12Z-to-12Z
+        # Day 1 period. The 18Z cycle is different: it represents only the
+        # unexpired 18Z-to-12Z update. Never blend that shortened HREF window
+        # with a 00Z/06Z/12Z REFS maximum (or vice versa).
+        if h_cyc == 18 and r_dt != h_dt:
+            reason = (
+                "The 18Z Day 1 ERO update requires a matching 18Z REFS cycle; "
+                "retaining the last complete package rather than blending "
+                "different valid-time windows."
+            )
+            print(
+                f"ERO cycle alignment deferred -> HREF: {h_date} "
+                f"{h_cyc:02d}Z | REFS fallback: {r_date} {r_cyc:02d}Z"
             )
             return {"no_update": True, "reason": reason}
 
@@ -881,11 +912,18 @@ class EROCamEngine:
             f"{self.refs_cycle_source or 'unknown'}"
         )
 
-        start_ero = base_12z
-        end_ero = start_ero + timedelta(hours=24)
+        # 00Z/06Z/12Z all describe the full Day 1 ERO period beginning at
+        # 12Z on the cycle date. The 18Z cycle is a shortened update beginning
+        # at its own initialization time because 12Z-18Z has already expired.
+        start_ero = h_dt if h_cyc == 18 else base_12z
+        end_ero = base_12z + timedelta(hours=24)
+        ero_window_type = "18z_update" if h_cyc == 18 else "full_day1"
         ero_valid_str = (
-            f"12Z {start_ero.strftime('%b %d')} &mdash; "
-            f"12Z {end_ero.strftime('%b %d')}"
+            f"{start_ero.strftime('%HZ %b %d')} &mdash; "
+            f"{end_ero.strftime('%HZ %b %d')}"
+        )
+        ero_coverage_hours = int(
+            (end_ero - start_ero).total_seconds() / 3600
         )
 
         data_store = {
@@ -1256,6 +1294,10 @@ class EROCamEngine:
                 "lats": coords["HREF"][0],
                 "lons": coords["HREF"][1],
                 "ero_valid_str": ero_valid_str,
+                "ero_start_utc": start_ero.isoformat().replace("+00:00", "Z"),
+                "ero_end_utc": end_ero.isoformat().replace("+00:00", "Z"),
+                "ero_window_type": ero_window_type,
+                "ero_coverage_hours": ero_coverage_hours,
             },
             "QPF": {},
             "FFG_MAX": {},
@@ -1356,16 +1398,31 @@ class EROCamEngine:
             [float(np.nanmax(lats)), float(np.nanmax(lons))]
         ]
         
-        valid_time_str = f"Day 1 ERO Window (HREF {payload['metadata']['href_cycle']:02d}Z | REFS {payload['metadata']['refs_cycle']:02d}Z)"
+        window_name = (
+            "Day 1 ERO Update"
+            if payload["metadata"]["ero_window_type"] == "18z_update"
+            else "Day 1 ERO Window"
+        )
+        valid_time_str = (
+            f"{window_name} (HREF "
+            f"{payload['metadata']['href_cycle']:02d}Z | REFS "
+            f"{payload['metadata']['refs_cycle']:02d}Z)"
+        )
         
         with open("static/ero_cam_metadata.json", "w") as f:
             json.dump({
                 "valid_time": valid_time_str,
                 "ero_window_str": payload['metadata']['ero_valid_str'],
+                "ero_start_utc": payload['metadata']['ero_start_utc'],
+                "ero_end_utc": payload['metadata']['ero_end_utc'],
+                "ero_window_type": payload['metadata']['ero_window_type'],
+                "ero_coverage_hours": payload['metadata']['ero_coverage_hours'],
                 "href_init_utc": payload['metadata']['href_init_utc'],
                 "refs_init_utc": payload['metadata']['refs_init_utc'],
                 "href_forecast_hours": payload['metadata']['href_forecast_hours'],
                 "refs_forecast_hours": payload['metadata']['refs_forecast_hours'],
+                "ffg_durations_hours": [1, 3, 6],
+                "hourly_qpf_thresholds_in": self.qpf_thresh_in,
                 "source_completeness_contract": "full selected HREF and REFS fields required before publication",
                 "bounds": bounds,
                 "rendering": {
