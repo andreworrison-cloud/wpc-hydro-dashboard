@@ -1,4 +1,4 @@
-import os, requests, concurrent.futures, warnings, gc, json
+import os, requests, concurrent.futures, warnings, gc, json, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import xarray as xr
@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # REFS, probability thresholds, existing REFS-to-HREF interpolation, and
 # super-ensemble calculations are intentionally unchanged.
 MAP_RENDER_DPI = 600       # 10 x 6 inches -> 6000 x 3600 px
-RENDER_REVISION = "ero-cam-display-density-v1b"
+RENDER_REVISION = "ero-cam-completeness-v1c"
 
 class EROCamEngine:
     def __init__(self, output_dir="grib_cache_ero"):
@@ -230,19 +230,48 @@ class EROCamEngine:
         print(f"ERROR: No usable {model} ERO cycle found in the last 48 hours.")
         return None, None, None, None
 
-    def _get_idx(self, url):
-        if url not in self.idx_cache:
+    def _get_idx(self, url, attempts=4):
+        """
+        Fetch one HREF index with bounded retry/backoff.
+
+        NOMADS can intermittently return 302/timeout responses when many index
+        requests arrive together. Use a small ranged GET (the same behavior as
+        the successful cycle probe), cache only successful responses, and never
+        poison the cache with a transient failure.
+        """
+        cached = self.idx_cache.get(url)
+        if cached:
+            return cached
+
+        for attempt in range(1, attempts + 1):
             try:
-                r = requests.get(url, headers=self.headers, timeout=10, allow_redirects=True)
-                if r.status_code in (200, 206):
+                r = requests.get(
+                    url,
+                    headers={
+                        "Range": "bytes=0-2097151",
+                        "User-Agent": self.headers["User-Agent"],
+                    },
+                    timeout=(8, 20),
+                    allow_redirects=True,
+                )
+                if r.status_code in (200, 206) and r.text.strip():
                     self.idx_cache[url] = r.text
-                else:
-                    print(f"IDX fetch [{r.status_code}]: {url}")
-                    self.idx_cache[url] = ""
+                    return r.text
+
+                print(
+                    f"IDX fetch [{r.status_code}] attempt {attempt}/{attempts}: "
+                    f"{url}"
+                )
             except requests.RequestException as e:
-                print(f"IDX fetch [ERROR]: {url} ({type(e).__name__})")
-                self.idx_cache[url] = ""
-        return self.idx_cache[url]
+                print(
+                    f"IDX fetch [ERROR] attempt {attempt}/{attempts}: "
+                    f"{url} ({type(e).__name__})"
+                )
+
+            if attempt < attempts:
+                time.sleep(min(2 * attempt, 6))
+
+        return ""
 
     def _parse_idx(self, idx_text, param_type, val, fxx):
         lines = idx_text.strip().split('\n')
@@ -279,84 +308,130 @@ class EROCamEngine:
 
     def _fetch_grib(self, args):
         url, idx_url, p_type, val, fxx, out_file = args
-        if out_file.exists(): return True
+        if out_file.exists() and out_file.stat().st_size > 16:
+            return True
 
-        # HREF passes one URL pair. REFS passes ordered URL lists:
-        # AWS first, then NOMADS parallel, then NOMADS production.
         urls = list(url) if isinstance(url, (list, tuple)) else [url]
         idx_urls = list(idx_url) if isinstance(idx_url, (list, tuple)) else [idx_url]
 
         for source_url, source_idx_url in zip(urls, idx_urls):
-            start_b, end_b = self._parse_idx(self._get_idx(source_idx_url), p_type, val, fxx)
+            idx_text = self._get_idx(source_idx_url)
+            start_b, end_b = self._parse_idx(
+                idx_text, p_type, val, fxx
+            )
             if start_b is None:
+                print(
+                    f"HREF index match missing: {p_type} value={val} "
+                    f"f{fxx:02d} from {source_idx_url}"
+                )
                 continue
 
             rng = f"bytes={start_b}-{end_b}" if end_b else f"bytes={start_b}-"
-            try:
-                r = requests.get(
-                    source_url,
-                    headers={"Range": rng, "User-Agent": self.headers["User-Agent"]},
-                    timeout=30
-                )
-                if r.status_code in (200, 206):
-                    with open(out_file, 'wb') as f:
-                        f.write(r.content)
-                    return True
-            except requests.RequestException:
-                continue
+            for attempt in range(1, 4):
+                try:
+                    r = requests.get(
+                        source_url,
+                        headers={
+                            "Range": rng,
+                            "User-Agent": self.headers["User-Agent"],
+                        },
+                        timeout=(10, 60),
+                        allow_redirects=True,
+                    )
+                    if r.status_code in (200, 206) and len(r.content) > 16:
+                        tmp = out_file.with_suffix(out_file.suffix + ".part")
+                        tmp.write_bytes(r.content)
+                        tmp.replace(out_file)
+                        return True
+
+                    print(
+                        f"HREF range fetch [{r.status_code}] attempt "
+                        f"{attempt}/3: {p_type} value={val} f{fxx:02d}"
+                    )
+                except requests.RequestException as e:
+                    print(
+                        f"HREF range fetch [ERROR] attempt {attempt}/3: "
+                        f"{p_type} value={val} f{fxx:02d} "
+                        f"({type(e).__name__})"
+                    )
+
+                if attempt < 3:
+                    time.sleep(min(2 * attempt, 5))
 
         return False
 
 
-
     def _download_refs_full(self, d_str, cycle, product, fxx):
         """
-        Download one complete REFS GRIB2 product, trying the current parallel
-        feed first. Returns (path, source) or (None, None).
+        Download one complete REFS GRIB2 product with bounded retries.
 
-        The file is streamed to disk so it is never held in memory as one large
-        bytes object. Callers delete it immediately after local ecCodes scanning.
+        The preflight can pass and a later operational-server request can still
+        receive a transient redirect/timeout. Retry the preferred source before
+        moving to secondary mirrors, delete partial files between attempts, and
+        never let a partial download enter local ecCodes scanning.
         """
+        suffix = f"{d_str}_{cycle:02d}_{product}_f{fxx:02d}.grib2"
+        out_file = self.grib_dir / f"REFS_FULL_{suffix}"
+
         for source, url in self._refs_candidates(d_str, cycle, product, fxx):
-            try:
-                r = requests.get(
-                    url,
-                    headers={"User-Agent": self.headers["User-Agent"]},
-                    timeout=(10, 180),
-                    allow_redirects=True,
-                    stream=True,
-                )
-                if r.status_code not in (200, 206):
-                    # 404 is expected for forecast hours/products not published.
-                    continue
-
-                suffix = f"{d_str}_{cycle:02d}_{product}_f{fxx:02d}.grib2"
-                out_file = self.grib_dir / f"REFS_FULL_{suffix}"
-                total = r.headers.get("Content-Length", "?")
-                print(
-                    f"REFS full-GRIB download: {d_str} {cycle:02d}Z "
-                    f"{product.upper()} f{fxx:02d} via {source} "
-                    f"(Content-Length={total})"
-                )
-
-                with open(out_file, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            f.write(chunk)
-
-                if out_file.exists() and out_file.stat().st_size > 16:
-                    return out_file, source
-
+            for attempt in range(1, 4):
+                out_file.unlink(missing_ok=True)
                 try:
-                    out_file.unlink()
-                except FileNotFoundError:
-                    pass
-            except requests.RequestException as e:
-                print(
-                    f"REFS download error {source} {product} f{fxx:02d}: "
-                    f"{type(e).__name__}"
-                )
+                    r = requests.get(
+                        url,
+                        headers={"User-Agent": self.headers["User-Agent"]},
+                        timeout=(10, 180),
+                        allow_redirects=True,
+                        stream=True,
+                    )
 
+                    if r.status_code not in (200, 206):
+                        print(
+                            f"REFS full-GRIB HTTP {r.status_code} "
+                            f"{source} {product} f{fxx:02d} "
+                            f"attempt {attempt}/3"
+                        )
+                        r.close()
+                        if r.status_code == 404:
+                            break
+                        if attempt < 3:
+                            time.sleep(min(2 * attempt, 6))
+                        continue
+
+                    total = r.headers.get("Content-Length", "?")
+                    print(
+                        f"REFS full-GRIB download: {d_str} {cycle:02d}Z "
+                        f"{product.upper()} f{fxx:02d} via {source} "
+                        f"(attempt {attempt}/3, Content-Length={total})"
+                    )
+
+                    with open(out_file, "wb") as fh:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                fh.write(chunk)
+                    r.close()
+
+                    if out_file.exists() and out_file.stat().st_size > 16:
+                        with open(out_file, "rb") as fh:
+                            if fh.read(4) == b"GRIB":
+                                return out_file, source
+
+                    print(
+                        f"REFS full-GRIB validation failed {source} "
+                        f"{product} f{fxx:02d} attempt {attempt}/3"
+                    )
+                    out_file.unlink(missing_ok=True)
+                except requests.RequestException as e:
+                    out_file.unlink(missing_ok=True)
+                    print(
+                        f"REFS download error {source} {product} f{fxx:02d} "
+                        f"attempt {attempt}/3: {type(e).__name__}"
+                    )
+
+                if attempt < 3:
+                    time.sleep(min(2 * attempt, 6))
+
+        out_file.unlink(missing_ok=True)
         return None, None
 
     @staticmethod
@@ -789,79 +864,175 @@ class EROCamEngine:
             f"href.{h_date}/ensprod"
         )
         href_tasks = []
+        href_labels = []
 
         for fxx in h_fxx_list:
+            prob_url = (
+                f"{h_base}/href.t{h_cyc:02d}z.conus.prob."
+                f"f{fxx:02d}.grib2"
+            )
+            prob_idx = prob_url + ".idx"
             for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
+                out_file = self.grib_dir / (
+                    f"H_{h_date}_{h_cyc:02d}_Q_{t_in}_{fxx:02d}.grib2"
+                )
                 href_tasks.append(
-                    (
-                        f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2",
-                        f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2.idx",
-                        "QPF",
-                        t_mm,
-                        fxx,
-                        self.grib_dir / f"H_Q_{t_in}_{fxx}.grib2",
-                    )
+                    (prob_url, prob_idx, "QPF", t_mm, fxx, out_file)
+                )
+                href_labels.append(
+                    f"QPF {t_in}-inch f{fxx:02d}"
                 )
 
+            ffri_url = (
+                f"{h_base}/href.t{h_cyc:02d}z.conus.ffri."
+                f"f{fxx:02d}.grib2"
+            )
+            ffri_idx = ffri_url + ".idx"
             for d in self.ffg_durations:
                 if fxx - d >= h_window_start:
+                    out_file = self.grib_dir / (
+                        f"H_{h_date}_{h_cyc:02d}_F_{d}_{fxx:02d}.grib2"
+                    )
                     href_tasks.append(
-                        (
-                            f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2",
-                            f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2.idx",
-                            "FFG",
-                            d,
-                            fxx,
-                            self.grib_dir / f"H_F_{d}_{fxx}.grib2",
-                        )
+                        (ffri_url, ffri_idx, "FFG", d, fxx, out_file)
+                    )
+                    href_labels.append(
+                        f"{d}-h FFG f{fxx:02d}"
                     )
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            list(executor.map(self._fetch_grib, href_tasks))
+        # Fetch each unique HREF .idx once, serially, before byte-range work.
+        # This prevents many worker threads from hammering the same NOMADS
+        # index simultaneously and producing the intermittent 302/timeouts
+        # observed in the 2026-10-09 23:50Z workflow.
+        href_idx_urls = list(dict.fromkeys(task[1] for task in href_tasks))
+        missing_href_idx = []
+        for idx_url in href_idx_urls:
+            if not self._get_idx(idx_url):
+                missing_href_idx.append(idx_url)
+            time.sleep(0.05)
+
+        if missing_href_idx:
+            reason = (
+                "HREF index acquisition became incomplete after cycle "
+                "selection; retaining the last complete ERO CAM package."
+            )
+            print(reason)
+            for url in missing_href_idx:
+                print(f"  Missing HREF index: {url}")
+            return {"no_update": True, "reason": reason}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            href_fetch_ok = list(executor.map(self._fetch_grib, href_tasks))
+
+        failed_href_fetches = [
+            label
+            for label, ok in zip(href_labels, href_fetch_ok)
+            if not ok
+        ]
+        if failed_href_fetches:
+            reason = (
+                "HREF byte-range acquisition became incomplete after cycle "
+                "selection; retaining the last complete ERO CAM package."
+            )
+            print(reason)
+            print(
+                "  Failed HREF fields: "
+                + ", ".join(failed_href_fetches[:40])
+            )
+            return {"no_update": True, "reason": reason}
+
+        href_decode_failures = []
+        href_qpf_hours_by_threshold = {
+            t: [] for t in self.qpf_thresh_in
+        }
+        href_ffg_fields_used = []
 
         for fxx in h_fxx_list:
             for t_in in self.qpf_thresh_in:
-                file = self.grib_dir / f"H_Q_{t_in}_{fxx}.grib2"
-                if file.exists():
-                    (
-                        data_store["QPF"][t_in]["HREF"],
-                        coords["HREF"][0],
-                        coords["HREF"][1],
-                        _,
-                    ) = self._extract_max(
-                        file,
-                        data_store["QPF"][t_in]["HREF"],
-                        coords["HREF"][0],
-                        coords["HREF"][1],
+                file = self.grib_dir / (
+                    f"H_{h_date}_{h_cyc:02d}_Q_{t_in}_{fxx:02d}.grib2"
+                )
+                (
+                    new_max,
+                    new_lats,
+                    new_lons,
+                    decoded,
+                ) = self._extract_max(
+                    file,
+                    data_store["QPF"][t_in]["HREF"],
+                    coords["HREF"][0],
+                    coords["HREF"][1],
+                )
+                if decoded:
+                    data_store["QPF"][t_in]["HREF"] = new_max
+                    coords["HREF"][0] = new_lats
+                    coords["HREF"][1] = new_lons
+                    href_qpf_hours_by_threshold[t_in].append(fxx)
+                else:
+                    href_decode_failures.append(
+                        f"QPF {t_in}-inch f{fxx:02d}"
                     )
-                    try:
-                        file.unlink()
-                    except Exception:
-                        pass
+                file.unlink(missing_ok=True)
 
             for d in self.ffg_durations:
                 if fxx - d >= h_window_start:
-                    file = self.grib_dir / f"H_F_{d}_{fxx}.grib2"
-                    if file.exists():
-                        (
-                            data_store["FFG_MAX"]["HREF"],
-                            coords["HREF"][0],
-                            coords["HREF"][1],
-                            _,
-                        ) = self._extract_max(
-                            file,
-                            data_store["FFG_MAX"]["HREF"],
-                            coords["HREF"][0],
-                            coords["HREF"][1],
+                    file = self.grib_dir / (
+                        f"H_{h_date}_{h_cyc:02d}_F_{d}_{fxx:02d}.grib2"
+                    )
+                    (
+                        new_max,
+                        new_lats,
+                        new_lons,
+                        decoded,
+                    ) = self._extract_max(
+                        file,
+                        data_store["FFG_MAX"]["HREF"],
+                        coords["HREF"][0],
+                        coords["HREF"][1],
+                    )
+                    if decoded:
+                        data_store["FFG_MAX"]["HREF"] = new_max
+                        coords["HREF"][0] = new_lats
+                        coords["HREF"][1] = new_lons
+                        href_ffg_fields_used.append((fxx, d))
+                    else:
+                        href_decode_failures.append(
+                            f"{d}-h FFG f{fxx:02d}"
                         )
-                        try:
-                            file.unlink()
-                        except Exception:
-                            pass
+                    file.unlink(missing_ok=True)
+
+        if href_decode_failures:
+            reason = (
+                "HREF GRIB decoding became incomplete after download; "
+                "retaining the last complete ERO CAM package."
+            )
+            print(reason)
+            print(
+                "  Failed HREF decodes: "
+                + ", ".join(href_decode_failures[:40])
+            )
+            return {"no_update": True, "reason": reason}
+
+        print(
+            "HREF ERO hourly-QPF forecast hours used by threshold: "
+            + "; ".join(
+                f"{t:g}in="
+                + ",".join(f"f{h:02d}" for h in hours)
+                for t, hours in href_qpf_hours_by_threshold.items()
+            )
+        )
+        print(
+            "HREF ERO FFG fields used: "
+            + ", ".join(
+                f"f{fxx:02d}/{d}h"
+                for fxx, d in href_ffg_fields_used
+            )
+        )
 
         # ---------------- REFS ----------------
         refs_hours_used = []
         refs_ffri_hours_used = []
+        refs_ffg_durations_seen = set()
 
         for fxx in r_fxx_list:
             full_prob, source = self._download_refs_full(
@@ -872,20 +1043,29 @@ class EROCamEngine:
                     qpf_fields, rlats, rlons = self._scan_refs_prob_file(
                         full_prob, fxx
                     )
-                    found_any = False
-                    for t_in, t_mm in zip(
-                        self.qpf_thresh_in, self.qpf_thresh_mm
-                    ):
-                        arr = qpf_fields.get(float(t_mm))
-                        if arr is not None:
+                    missing_thresholds = [
+                        t_in
+                        for t_in, t_mm in zip(
+                            self.qpf_thresh_in, self.qpf_thresh_mm
+                        )
+                        if qpf_fields.get(float(t_mm)) is None
+                    ]
+                    if not missing_thresholds:
+                        for t_in, t_mm in zip(
+                            self.qpf_thresh_in, self.qpf_thresh_mm
+                        ):
+                            arr = qpf_fields[float(t_mm)]
                             data_store["QPF"][t_in]["REFS"] = self._merge_max(
                                 data_store["QPF"][t_in]["REFS"], arr
                             )
-                            found_any = True
-                    if found_any:
                         refs_hours_used.append(fxx)
                         if coords["REFS"][0] is None:
                             coords["REFS"] = [rlats, rlons]
+                    else:
+                        print(
+                            f"REFS QPF f{fxx:02d} missing threshold fields: "
+                            + ", ".join(f"{t:g}in" for t in missing_thresholds)
+                        )
                 finally:
                     try:
                         full_prob.unlink()
@@ -910,6 +1090,7 @@ class EROCamEngine:
                                         data_store["FFG_MAX"]["REFS"], arr
                                     )
                                     found_ffg = True
+                                    refs_ffg_durations_seen.add(d)
                         if found_ffg:
                             refs_ffri_hours_used.append(fxx)
                             if coords["REFS"][0] is None:
@@ -952,27 +1133,46 @@ class EROCamEngine:
             expected_refs_hours - set(refs_ffri_hours_used)
         )
 
-        if missing_qpf_hours:
-            print(
-                "WARNING: REFS QPF became incomplete during processing; "
-                "suppressing partial REFS QPF maxima. Missing: "
-                + ", ".join(f"f{h:02d}" for h in missing_qpf_hours)
-            )
-            for t_in in self.qpf_thresh_in:
-                data_store["QPF"][t_in]["REFS"] = None
+        missing_ffg_durations = sorted(
+            set(self.ffg_durations) - refs_ffg_durations_seen
+        )
 
-        if missing_ffri_hours:
-            print(
-                "WARNING: REFS FFRI became incomplete during processing; "
-                "suppressing partial REFS FFG maximum. Missing: "
-                + ", ".join(f"f{h:02d}" for h in missing_ffri_hours)
+        if (
+            missing_qpf_hours
+            or missing_ffri_hours
+            or missing_ffg_durations
+        ):
+            reason = (
+                "REFS processing became incomplete after a successful "
+                "preflight; retaining the last complete ERO CAM package "
+                "instead of publishing partial HREF/REFS maxima."
             )
-            data_store["FFG_MAX"]["REFS"] = None
+            print(reason)
+            if missing_qpf_hours:
+                print(
+                    "  Missing REFS hourly-QPF hours: "
+                    + ", ".join(f"f{h:02d}" for h in missing_qpf_hours)
+                )
+            if missing_ffri_hours:
+                print(
+                    "  Missing REFS FFRI hours: "
+                    + ", ".join(f"f{h:02d}" for h in missing_ffri_hours)
+                )
+            if missing_ffg_durations:
+                print(
+                    "  REFS FFG durations never decoded: "
+                    + ", ".join(f"{d}-h" for d in missing_ffg_durations)
+                )
+            return {"no_update": True, "reason": reason}
 
         dashboard_payload = {
             "metadata": {
                 "href_cycle": h_cyc,
                 "refs_cycle": r_cyc,
+                "href_init_utc": h_dt.isoformat().replace("+00:00", "Z"),
+                "refs_init_utc": r_dt.isoformat().replace("+00:00", "Z"),
+                "href_forecast_hours": h_fxx_list,
+                "refs_forecast_hours": r_fxx_list,
                 "lats": coords["HREF"][0],
                 "lons": coords["HREF"][1],
                 "ero_valid_str": ero_valid_str,
@@ -1082,6 +1282,11 @@ class EROCamEngine:
             json.dump({
                 "valid_time": valid_time_str,
                 "ero_window_str": payload['metadata']['ero_valid_str'],
+                "href_init_utc": payload['metadata']['href_init_utc'],
+                "refs_init_utc": payload['metadata']['refs_init_utc'],
+                "href_forecast_hours": payload['metadata']['href_forecast_hours'],
+                "refs_forecast_hours": payload['metadata']['refs_forecast_hours'],
+                "source_completeness_contract": "full selected HREF and REFS fields required before publication",
                 "bounds": bounds,
                 "rendering": {
                     "revision": RENDER_REVISION,
