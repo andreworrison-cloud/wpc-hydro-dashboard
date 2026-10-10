@@ -259,21 +259,19 @@ class EROCamEngine:
                         break
 
                 if terminal_source is not None:
-                    if not self._refs_cycle_complete(
-                        d_str, cycle, fxx_range
-                    ):
-                        print(
-                            f"REFS ERO candidate rejected: {d_str} "
-                            f"{cycle:02d}Z is not complete across the "
-                            "required ERO hours."
-                        )
-                        continue
-
+                    # Cycle discovery only establishes that the newest REFS
+                    # run has reached its terminal probability hour. Full
+                    # hourly-QPF and expected 1/3/6-h FFG completeness is
+                    # enforced transactionally during the actual downloads and
+                    # local ecCodes decode below. This avoids rejecting a good
+                    # cycle because a one-byte preflight probe had a transient
+                    # redirect/timeout.
                     self.refs_cycle_source = terminal_source
                     print(
                         f"REFS ERO candidate accepted: {d_str} {cycle:02d}Z "
-                        f"via {terminal_source} after full-window "
-                        f"PROB/FFRI completeness validation."
+                        f"via {terminal_source} (terminal PROB "
+                        f"f{max_fxx:02d}); full-field validation deferred "
+                        "to processing."
                     )
                     return d_str, cycle, fxx_range, dt
 
