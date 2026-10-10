@@ -66,28 +66,59 @@ class EROCamEngine:
 
 
 
-    def _probe_grib(self, source, grib_url, timeout=10, verbose=True):
-        """Probe only the first byte of a GRIB2 object."""
-        try:
-            r = requests.get(
-                grib_url,
-                headers={
-                    "Range": "bytes=0-0",
-                    "User-Agent": self.headers["User-Agent"],
-                },
-                timeout=timeout,
-                allow_redirects=True,
-                stream=True,
-            )
-            status = r.status_code
-            r.close()
-            if verbose:
-                print(f"GRIB probe [{status}] {source}: {grib_url}")
-            return status in (200, 206)
-        except requests.RequestException as e:
-            if verbose:
-                print(f"GRIB probe [ERROR] {source}: {grib_url} ({type(e).__name__})")
-            return False
+    def _probe_grib(
+        self, source, grib_url, timeout=10, verbose=True, attempts=3
+    ):
+        """
+        Probe only the first byte of a GRIB2 object with bounded retry.
+
+        NOMADS-PARA can transiently return redirects/timeouts for individual
+        forecast hours even when the cycle is otherwise complete. Treat 404 as
+        a real absence for that mirror, but retry other transient responses
+        before declaring an operationally published hour unavailable.
+        """
+        for attempt in range(1, attempts + 1):
+            try:
+                r = requests.get(
+                    grib_url,
+                    headers={
+                        "Range": "bytes=0-0",
+                        "User-Agent": self.headers["User-Agent"],
+                    },
+                    timeout=timeout,
+                    allow_redirects=True,
+                    stream=True,
+                )
+                status = r.status_code
+                r.close()
+
+                if status in (200, 206):
+                    if verbose:
+                        print(
+                            f"GRIB probe [{status}] {source}: {grib_url}"
+                        )
+                    return True
+
+                if verbose or attempt == attempts:
+                    print(
+                        f"GRIB probe [{status}] {source} "
+                        f"attempt {attempt}/{attempts}: {grib_url}"
+                    )
+
+                if status == 404:
+                    return False
+            except requests.RequestException as e:
+                if verbose or attempt == attempts:
+                    print(
+                        f"GRIB probe [ERROR] {source} "
+                        f"attempt {attempt}/{attempts}: {grib_url} "
+                        f"({type(e).__name__})"
+                    )
+
+            if attempt < attempts:
+                time.sleep(min(attempt, 2))
+
+        return False
 
     def _refs_candidates(self, d_str, cycle, product, fxx):
         return self._refs_product_urls(d_str, cycle, product, fxx)
