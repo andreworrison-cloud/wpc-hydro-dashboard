@@ -1,0 +1,94 @@
+name: ERO CAM 18Z Completeness Smoke Temporary
+
+on:
+  push:
+    paths:
+      - '.github/workflows/temp_ero_18z_smoke.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/ero-cam-18z-completeness-20261009
+          fetch-depth: 20
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source_file in /etc/apt/sources.list.d/*; do
+            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
+              sudo rm -f "${source_file}"
+            fi
+          done
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libeccodes0
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests numpy scipy xarray cfgrib matplotlib
+
+      - name: Compile and exercise live ERO CAM build
+        shell: bash
+        run: |
+          set +e
+          python -m py_compile fetch_cam_ero.py > /tmp/compile.log 2>&1
+          compile_status=$?
+          python fetch_cam_ero.py > /tmp/ero_smoke.log 2>&1
+          build_status=$?
+
+          {
+            echo "compile_status=${compile_status}"
+            echo "build_status=${build_status}"
+            echo
+            echo "=== KEY LOG LINES ==="
+            grep -E "HREF ERO candidate|REFS ERO completeness|REFS ERO candidate|Locked Models|HREF ERO hourly-QPF|HREF ERO FFG fields used|REFS ERO QPF forecast hours used|REFS ERO FFRI forecast hours used|processing became incomplete|acquisition became incomplete|GRIB decoding became incomplete|No Day 1 ERO CAM files changed|PNG mapping complete|IDX fetch|HREF range fetch|REFS full-GRIB HTTP|REFS download error" /tmp/ero_smoke.log || true
+            echo
+            echo "=== OUTPUT FILE CHECK ==="
+            for f in               static/ero_ffg_href.png               static/ero_ffg_refs.png               static/ero_ffg_super.png               static/ero_qpf_0.5_inch_href.png               static/ero_qpf_0.5_inch_refs.png               static/ero_qpf_1_inch_href.png               static/ero_qpf_1_inch_refs.png               static/ero_qpf_2_inch_href.png               static/ero_qpf_2_inch_refs.png               static/ero_qpf_3_inch_href.png               static/ero_qpf_3_inch_refs.png               static/ero_cam_metadata.json; do
+              if [ -s "${f}" ]; then
+                echo "PRESENT ${f}"
+              else
+                echo "MISSING ${f}"
+              fi
+            done
+            echo
+            echo "=== METADATA ==="
+            if [ -s static/ero_cam_metadata.json ]; then
+              cat static/ero_cam_metadata.json
+            fi
+            echo
+            echo "=== FULL LOG TAIL ==="
+            tail -n 100 /tmp/ero_smoke.log
+          } > ero_cam_18z_smoke_result.txt
+
+          cat ero_cam_18z_smoke_result.txt
+          exit 0
+
+      - name: Commit diagnostic result to test branch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git reset -- static/ero_*.png static/ero_cam_metadata.json 2>/dev/null || true
+          git checkout -- static/ero_*.png static/ero_cam_metadata.json 2>/dev/null || true
+          git add ero_cam_18z_smoke_result.txt
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Record ERO CAM 18Z smoke result"
+          git pull --rebase origin fix/ero-cam-18z-completeness-20261009
+          git push origin HEAD:fix/ero-cam-18z-completeness-20261009
