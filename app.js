@@ -7284,7 +7284,7 @@ function updateLegends() {
 
     const activeCAM = Array.from(activeLayerNames).find(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
     if (activeCAM) {
-        if (activeCAM.includes('Max FFG Exceedance (1/3/6h)')) {
+        if (activeCAM.includes('Max FFG Exceedance')) {
             addLegendBlock(camLegendFFG);
         } else {
             addLegendBlock(camLegendQPF);
@@ -7965,9 +7965,9 @@ const dashboardSections = [
         id: 'cam-3-9',
         title: 'CAM Nowcasts (+3h to +9h)',
         layers: [
-            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
-            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
+            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster'},
             {id: 'cam-3-9-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_refs'], kind: 'raster', nested: true},
@@ -7986,9 +7986,9 @@ const dashboardSections = [
         id: 'cam-9-15',
         title: 'CAM Nowcasts (+9h to +15h)',
         layers: [
-            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
-            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
+            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster'},
             {id: 'cam-9-15-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_refs'], kind: 'raster', nested: true},
