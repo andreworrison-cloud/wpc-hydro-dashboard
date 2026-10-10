@@ -3954,6 +3954,7 @@ let nldas3SlopeMetadata = null;
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
 let camCycles = { href: "Unknown", refs: "Unknown" };
+let eroCamCycles = { href: "Unknown", refs: "Unknown" };
 let eroValidRangeStr = "Unknown";
 let nwmValidTime = "Unknown";
 let sportValidTime = "Unknown";
@@ -4017,6 +4018,16 @@ function fetchEROCAMMetadata() {
         .then(r => r.json())
         .then(data => {
             if (data.ero_window_str) eroValidRangeStr = data.ero_window_str;
+
+            const hrefInit = new Date(data.href_init_utc || '');
+            const refsInit = new Date(data.refs_init_utc || '');
+            if (!Number.isNaN(hrefInit.getTime())) {
+                eroCamCycles.href = String(hrefInit.getUTCHours()).padStart(2, '0');
+            }
+            if (!Number.isNaN(refsInit.getTime())) {
+                eroCamCycles.refs = String(refsInit.getUTCHours()).padStart(2, '0');
+            }
+
             if (data.bounds) {
                 const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
                 Object.values(eroCamLayers).forEach(layer => {
@@ -7273,7 +7284,7 @@ function updateLegends() {
 
     const activeCAM = Array.from(activeLayerNames).find(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
     if (activeCAM) {
-        if (activeCAM.includes('Max FFG Exceedance')) {
+        if (activeCAM.includes('Max FFG Exceedance (1/3/6h)')) {
             addLegendBlock(camLegendFFG);
         } else {
             addLegendBlock(camLegendQPF);
@@ -7519,24 +7530,26 @@ map.on('overlayadd', function(eventLayer) {
     }
 
     if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
+        const isEROCAM = eventLayer.name.includes('[ERO]');
+        const displayedCycles = isEROCAM ? eroCamCycles : camCycles;
         let titleText = "";
-        let cycleText = `HREF: ${camCycles.href}Z &nbsp;|&nbsp; REFS: ${camCycles.refs}Z`;
-        let targetCycleForMath = camCycles.href; 
+        let cycleText = `HREF: ${displayedCycles.href}Z &nbsp;|&nbsp; REFS: ${displayedCycles.refs}Z`;
+        let targetCycleForMath = displayedCycles.href; 
         
         if (eventLayer.name.includes('SuperEnsemble')) {
             titleText = "SuperEnsemble Blend";
         } else if (eventLayer.name.includes('HREF')) {
             titleText = "HREF Only";
-            cycleText = `Latest Run: ${camCycles.href}Z`;
-            targetCycleForMath = camCycles.href;
+            cycleText = `Latest Run: ${displayedCycles.href}Z`;
+            targetCycleForMath = displayedCycles.href;
         } else if (eventLayer.name.includes('REFS')) {
             titleText = "REFS Only";
-            cycleText = `Latest Run: ${camCycles.refs}Z`;
-            targetCycleForMath = camCycles.refs;
+            cycleText = `Latest Run: ${displayedCycles.refs}Z`;
+            targetCycleForMath = displayedCycles.refs;
         }
 
         let validRangeStr = "Valid Time Unknown";
-        if (eventLayer.name.includes('[ERO]')) {
+        if (isEROCAM) {
             titleText = titleText + " (Day 1 ERO)";
             validRangeStr = eroValidRangeStr;
         } else {
@@ -7952,9 +7965,9 @@ const dashboardSections = [
         id: 'cam-3-9',
         title: 'CAM Nowcasts (+3h to +9h)',
         layers: [
-            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
-            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
+            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster'},
             {id: 'cam-3-9-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_refs'], kind: 'raster', nested: true},
@@ -7973,9 +7986,9 @@ const dashboardSections = [
         id: 'cam-9-15',
         title: 'CAM Nowcasts (+9h to +15h)',
         layers: [
-            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
-            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
+            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster'},
             {id: 'cam-9-15-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_refs'], kind: 'raster', nested: true},
@@ -7992,11 +8005,11 @@ const dashboardSections = [
     },
     {
         id: 'ero-cams',
-        title: 'Day 1 ERO CAMs (12Z-12Z)',
+        title: 'Day 1 ERO CAMs',
         layers: [
-            {id: 'ero-ffg-super', label: '<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance', layer: eroCamLayers['ffg_super'], kind: 'raster'},
-            {id: 'ero-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max FFG Exceedance', layer: eroCamLayers['ffg_href'], kind: 'raster', nested: true},
-            {id: 'ero-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max FFG Exceedance', layer: eroCamLayers['ffg_refs'], kind: 'raster', nested: true},
+            {id: 'ero-ffg-super', label: '<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_super'], kind: 'raster'},
+            {id: 'ero-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_href'], kind: 'raster', nested: true},
+            {id: 'ero-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_refs'], kind: 'raster', nested: true},
             {id: 'ero-q05-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_super'], kind: 'raster'},
             {id: 'ero-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'ero-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_refs'], kind: 'raster', nested: true},
