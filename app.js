@@ -1800,49 +1800,108 @@ const watchesLayer = L.geoJSON(null, commonAlertOptions('watches'));
 warningsLayer.addTo(map);
 watchesLayer.addTo(map);
 
+let nwsAlertRefreshInFlight = false;
+
 async function fetchNWSAlerts() {
+    // Treat each refresh transactionally. NOAA's ArcGIS service can
+    // occasionally return a syntactically valid HTTP-200 response whose
+    // feature payload is empty or incomplete. Never clear the last known-good
+    // polygons until a companion count query confirms the replacement set.
+    if (nwsAlertRefreshInFlight) return;
+    nwsAlertRefreshInFlight = true;
+
     try {
         const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
-        const url = `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson&t=${new Date().getTime()}`;
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        
+        const baseUrl = 'https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query';
+        const refreshToken = new Date().getTime();
+        const featureUrl = `${baseUrl}?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson&t=${refreshToken}`;
+        const countUrl = `${baseUrl}?where=${encodeURIComponent(whereClause)}&returnCountOnly=true&f=json&t=${refreshToken}`;
+
+        const [featureResponse, countResponse] = await Promise.all([
+            fetch(featureUrl, {cache: 'no-store'}),
+            fetch(countUrl, {cache: 'no-store'})
+        ]);
+
+        if (!featureResponse.ok) {
+            throw new Error(`Feature query HTTP ${featureResponse.status}`);
+        }
+        if (!countResponse.ok) {
+            throw new Error(`Count query HTTP ${countResponse.status}`);
+        }
+
+        const [data, countData] = await Promise.all([
+            featureResponse.json(),
+            countResponse.json()
+        ]);
+
+        if (!data || data.type !== 'FeatureCollection' || !Array.isArray(data.features)) {
+            throw new Error('NOAA hydro-alert query did not return a valid FeatureCollection');
+        }
+        if (data.exceededTransferLimit === true) {
+            throw new Error('NOAA hydro-alert query exceeded the service transfer limit');
+        }
+
+        const expectedCount = Number(countData?.count);
+        if (!Number.isInteger(expectedCount) || expectedCount < 0) {
+            throw new Error('NOAA hydro-alert count query returned an invalid count');
+        }
+
+        const validFeatures = data.features.filter(
+            feature => feature &&
+                feature.properties &&
+                feature.properties.prod_type &&
+                feature.geometry
+        );
+
+        // A mismatch is treated as a transient/partial upstream response.
+        // Retain the existing polygons and try again at the next refresh
+        // rather than flashing every active WFO product off the map.
+        if (validFeatures.length !== expectedCount) {
+            throw new Error(
+                `NOAA hydro-alert response incomplete: received ${validFeatures.length} of ${expectedCount} expected features`
+            );
+        }
+
+        const flashFloodFeatures = validFeatures.filter(
+            feature => feature.properties.prod_type === 'Flash Flood Warning'
+        );
+        const floodWarningFeatures = validFeatures.filter(
+            feature => feature.properties.prod_type === 'Flood Warning'
+        );
+        const floodAdvisoryFeatures = validFeatures.filter(
+            feature => feature.properties.prod_type === 'Flood Advisory'
+        );
+        const watchFeatures = validFeatures.filter(
+            feature => feature.properties.prod_type === 'Flood Watch' ||
+                feature.properties.prod_type === 'Flash Flood Watch'
+        );
+
+        // Commit the replacement only after both NOAA responses agree.
         flashFloodWarningLayer.clearLayers();
         floodWarningLayer.clearLayers();
         floodAdvisoryLayer.clearLayers();
         watchesLayer.clearLayers();
-        
-        if (data && data.features) {
-            const validFeatures = data.features.filter(
-                feature => feature.properties && feature.properties.prod_type
-            );
-            const flashFloodFeatures = validFeatures.filter(
-                feature => feature.properties.prod_type === 'Flash Flood Warning'
-            );
-            const floodWarningFeatures = validFeatures.filter(
-                feature => feature.properties.prod_type === 'Flood Warning'
-            );
-            const floodAdvisoryFeatures = validFeatures.filter(
-                feature => feature.properties.prod_type === 'Flood Advisory'
-            );
-            const watchFeatures = validFeatures.filter(
-                feature => feature.properties.prod_type === 'Flood Watch' ||
-                    feature.properties.prod_type === 'Flash Flood Watch'
-            );
 
-            if (floodAdvisoryFeatures.length > 0) {
-                floodAdvisoryLayer.addData(floodAdvisoryFeatures);
-            }
-            if (floodWarningFeatures.length > 0) {
-                floodWarningLayer.addData(floodWarningFeatures);
-            }
-            if (flashFloodFeatures.length > 0) {
-                flashFloodWarningLayer.addData(flashFloodFeatures);
-            }
-            if (watchFeatures.length > 0) watchesLayer.addData(watchFeatures);
+        if (floodAdvisoryFeatures.length > 0) {
+            floodAdvisoryLayer.addData(floodAdvisoryFeatures);
         }
-    } catch (error) { console.error("Error fetching NWS alerts:", error); }
+        if (floodWarningFeatures.length > 0) {
+            floodWarningLayer.addData(floodWarningFeatures);
+        }
+        if (flashFloodFeatures.length > 0) {
+            flashFloodWarningLayer.addData(flashFloodFeatures);
+        }
+        if (watchFeatures.length > 0) {
+            watchesLayer.addData(watchFeatures);
+        }
+    } catch (error) {
+        console.error(
+            "Error refreshing NWS hydro alerts; retaining last known-good polygons:",
+            error
+        );
+    } finally {
+        nwsAlertRefreshInFlight = false;
+    }
 }
 fetchNWSAlerts();
 setInterval(fetchNWSAlerts, 5 * 60 * 1000); 
