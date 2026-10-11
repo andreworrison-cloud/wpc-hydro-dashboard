@@ -1,4 +1,4 @@
-import os, requests, concurrent.futures, warnings, gc, json
+import os, requests, concurrent.futures, warnings, gc, json, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import xarray as xr
@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # REFS, probability thresholds, existing REFS-to-HREF interpolation, and
 # super-ensemble calculations are intentionally unchanged.
 MAP_RENDER_DPI = 600       # 10 x 6 inches -> 6000 x 3600 px
-RENDER_REVISION = "cam-display-density-v1b"
+RENDER_REVISION = "cam-operational-integrity-v1c"
 
 class EnsembleNowcastEngine:
     def __init__(self, output_dir="grib_cache"):
@@ -29,6 +29,24 @@ class EnsembleNowcastEngine:
         self.qpf_thresh_in = [0.5, 1, 2, 3]
         self.qpf_thresh_mm = [12.7, 25.4, 50.8, 76.2]
         self.ffg_durations = [1, 3, 6]
+
+
+    @staticmethod
+    def _ffg_duration_expected(fxx, duration, window_start):
+        """
+        Return whether an FFG-exceedance duration is expected at this forecast
+        hour and is fully contained inside the selected nowcast window.
+
+        The 1-hour FFG perspective is hourly. The 3-hour and 6-hour
+        perspectives are carried on the 3-hour forecast cadence.
+        """
+        if fxx - duration < window_start:
+            return False
+        if duration == 1:
+            return True
+        if duration in (3, 6):
+            return fxx % 3 == 0
+        return True
 
 
     def _refs_product_urls(self, d_str, cycle, product, fxx):
@@ -47,56 +65,91 @@ class EnsembleNowcastEngine:
             ("NOMADS-PROD", f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/prod/{rel}"),
         ]
 
-    def _probe_idx(self, source, grib_url, timeout=8):
-        """Probe the .idx endpoint with GET (not HEAD) and print the HTTP result."""
+    def _probe_idx(self, source, grib_url, timeout=8, attempts=3):
+        """Probe the HREF .idx endpoint with bounded retry."""
         idx_url = grib_url + ".idx"
-        try:
-            r = requests.get(
-                idx_url,
-                headers={
-                    "Range": "bytes=0-1023",
-                    "User-Agent": self.headers["User-Agent"],
-                },
-                timeout=timeout,
-                allow_redirects=True,
-            )
-            print(f"IDX probe [{r.status_code}] {source}: {idx_url}")
-            return r.status_code in (200, 206)
-        except requests.RequestException as e:
-            print(f"IDX probe [ERROR] {source}: {idx_url} ({type(e).__name__})")
-            return False
+        for attempt in range(1, attempts + 1):
+            try:
+                r = requests.get(
+                    idx_url,
+                    headers={
+                        "Range": "bytes=0-1023",
+                        "User-Agent": self.headers["User-Agent"],
+                    },
+                    timeout=timeout,
+                    allow_redirects=True,
+                )
+                status = r.status_code
+                ok = status in (200, 206) and bool(r.text.strip())
+                r.close()
+                if ok:
+                    print(f"IDX probe [{status}] {source}: {idx_url}")
+                    return True
+                print(
+                    f"IDX probe [{status}] {source} attempt "
+                    f"{attempt}/{attempts}: {idx_url}"
+                )
+                if status == 404:
+                    return False
+            except requests.RequestException as e:
+                print(
+                    f"IDX probe [ERROR] {source} attempt "
+                    f"{attempt}/{attempts}: {idx_url} ({type(e).__name__})"
+                )
+            if attempt < attempts:
+                time.sleep(min(attempt, 2))
+        return False
 
-
-
-    def _probe_grib(self, source, grib_url, timeout=10):
-        """
-        Probe the GRIB2 object itself without downloading the full file.
-        A one-byte Range request distinguishes:
-          - GRIB exists but .idx is missing
-          - GRIB itself is missing/unavailable
-        """
-        try:
-            r = requests.get(
-                grib_url,
-                headers={
-                    "Range": "bytes=0-0",
-                    "User-Agent": self.headers["User-Agent"],
-                },
-                timeout=timeout,
-                allow_redirects=True,
-                stream=True,
-            )
-            print(f"GRIB probe [{r.status_code}] {source}: {grib_url}")
-            return r.status_code in (200, 206)
-        except requests.RequestException as e:
-            print(f"GRIB probe [ERROR] {source}: {grib_url} ({type(e).__name__})")
-            return False
+    def _probe_grib(
+        self, source, grib_url, timeout=10, verbose=True, attempts=3
+    ):
+        """Probe a REFS GRIB object with bounded retry."""
+        for attempt in range(1, attempts + 1):
+            try:
+                r = requests.get(
+                    grib_url,
+                    headers={
+                        "Range": "bytes=0-0",
+                        "User-Agent": self.headers["User-Agent"],
+                    },
+                    timeout=timeout,
+                    allow_redirects=True,
+                    stream=True,
+                )
+                status = r.status_code
+                r.close()
+                if status in (200, 206):
+                    if verbose:
+                        print(f"GRIB probe [{status}] {source}: {grib_url}")
+                    return True
+                if verbose or attempt == attempts:
+                    print(
+                        f"GRIB probe [{status}] {source} attempt "
+                        f"{attempt}/{attempts}: {grib_url}"
+                    )
+                if status == 404:
+                    return False
+            except requests.RequestException as e:
+                if verbose or attempt == attempts:
+                    print(
+                        f"GRIB probe [ERROR] {source} attempt "
+                        f"{attempt}/{attempts}: {grib_url} "
+                        f"({type(e).__name__})"
+                    )
+            if attempt < attempts:
+                time.sleep(min(attempt, 2))
+        return False
 
     def _refs_candidates(self, d_str, cycle, product, fxx):
         return self._refs_product_urls(d_str, cycle, product, fxx)
 
 
-    def _get_latest_cycle(self, model, max_fxx):
+    def _get_latest_cycle(self, model, max_fxx, target_init=None):
+        """
+        Find the newest usable cycle. When target_init is supplied, require the
+        other ensemble to use that exact initialization so the relative
+        +3-to-+9 and +9-to-+15 windows represent the same absolute times.
+        """
         now = datetime.now(timezone.utc)
         curr_cycle = now.replace(
             hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0
@@ -104,6 +157,9 @@ class EnsembleNowcastEngine:
 
         for i in range(8):
             dt = curr_cycle - timedelta(hours=6 * i)
+            if target_init is not None and dt != target_init:
+                continue
+
             cycle = dt.hour
             d_str = dt.strftime("%Y%m%d")
 
@@ -118,10 +174,8 @@ class EnsembleNowcastEngine:
                         f"HREF candidate accepted: {d_str} {cycle:02d}Z "
                         f"(PROB f{max_fxx:02d})"
                     )
-                    return d_str, cycle
+                    return d_str, cycle, dt
             else:
-                # REFS no longer depends on an external .idx file.  The full
-                # probability GRIB itself establishes cycle readiness.
                 for source, prob_url in self._refs_candidates(
                     d_str, cycle, "prob", max_fxx
                 ):
@@ -131,24 +185,52 @@ class EnsembleNowcastEngine:
                             f"REFS candidate accepted: {d_str} {cycle:02d}Z "
                             f"via {source} (direct PROB GRIB f{max_fxx:02d})"
                         )
-                        return d_str, cycle
+                        return d_str, cycle, dt
 
-        print(f"ERROR: No usable {model} cycle found in the last 48 hours.")
-        return None, None
+        if target_init is not None:
+            print(
+                f"ERROR: No usable {model} cycle matching "
+                f"{target_init:%Y%m%d %H}Z."
+            )
+        else:
+            print(f"ERROR: No usable {model} cycle found in the last 48 hours.")
+        return None, None, None
 
-    def _get_idx(self, url):
-        if url not in self.idx_cache:
+    def _get_idx(self, url, attempts=4):
+        """
+        Fetch one HREF index with bounded retry/backoff. Cache only successful
+        responses so a transient NOMADS failure cannot poison the entire run.
+        """
+        cached = self.idx_cache.get(url)
+        if cached:
+            return cached
+
+        for attempt in range(1, attempts + 1):
             try:
-                r = requests.get(url, headers=self.headers, timeout=10, allow_redirects=True)
-                if r.status_code in (200, 206):
+                r = requests.get(
+                    url,
+                    headers={
+                        "Range": "bytes=0-2097151",
+                        "User-Agent": self.headers["User-Agent"],
+                    },
+                    timeout=(8, 20),
+                    allow_redirects=True,
+                )
+                if r.status_code in (200, 206) and r.text.strip():
                     self.idx_cache[url] = r.text
-                else:
-                    print(f"IDX fetch [{r.status_code}]: {url}")
-                    self.idx_cache[url] = ""
+                    return r.text
+                print(
+                    f"IDX fetch [{r.status_code}] attempt "
+                    f"{attempt}/{attempts}: {url}"
+                )
             except requests.RequestException as e:
-                print(f"IDX fetch [ERROR]: {url} ({type(e).__name__})")
-                self.idx_cache[url] = ""
-        return self.idx_cache[url]
+                print(
+                    f"IDX fetch [ERROR] attempt {attempt}/{attempts}: "
+                    f"{url} ({type(e).__name__})"
+                )
+            if attempt < attempts:
+                time.sleep(min(2 * attempt, 6))
+        return ""
 
     def _parse_idx(self, idx_text, param_type, val, fxx):
         lines = idx_text.strip().split('\n')
@@ -185,84 +267,118 @@ class EnsembleNowcastEngine:
 
     def _fetch_grib(self, args):
         url, idx_url, p_type, val, fxx, out_file = args
-        if out_file.exists(): return True
+        if out_file.exists() and out_file.stat().st_size > 16:
+            return True
 
-        # HREF passes one URL pair. REFS passes ordered URL lists:
-        # AWS first, then NOMADS parallel, then NOMADS production.
         urls = list(url) if isinstance(url, (list, tuple)) else [url]
         idx_urls = list(idx_url) if isinstance(idx_url, (list, tuple)) else [idx_url]
 
         for source_url, source_idx_url in zip(urls, idx_urls):
-            start_b, end_b = self._parse_idx(self._get_idx(source_idx_url), p_type, val, fxx)
+            idx_text = self._get_idx(source_idx_url)
+            start_b, end_b = self._parse_idx(idx_text, p_type, val, fxx)
             if start_b is None:
+                print(
+                    f"HREF index match missing: {p_type} value={val} "
+                    f"f{fxx:02d} from {source_idx_url}"
+                )
                 continue
 
             rng = f"bytes={start_b}-{end_b}" if end_b else f"bytes={start_b}-"
-            try:
-                r = requests.get(
-                    source_url,
-                    headers={"Range": rng, "User-Agent": self.headers["User-Agent"]},
-                    timeout=30
-                )
-                if r.status_code in (200, 206):
-                    with open(out_file, 'wb') as f:
-                        f.write(r.content)
-                    return True
-            except requests.RequestException:
-                continue
-
+            for attempt in range(1, 4):
+                try:
+                    r = requests.get(
+                        source_url,
+                        headers={
+                            "Range": rng,
+                            "User-Agent": self.headers["User-Agent"],
+                        },
+                        timeout=(10, 60),
+                        allow_redirects=True,
+                    )
+                    if (
+                        r.status_code in (200, 206)
+                        and len(r.content) > 16
+                        and r.content[:4] == b"GRIB"
+                    ):
+                        tmp = out_file.with_suffix(out_file.suffix + ".part")
+                        tmp.write_bytes(r.content)
+                        tmp.replace(out_file)
+                        return True
+                    print(
+                        f"HREF range fetch [{r.status_code}] attempt "
+                        f"{attempt}/3: {p_type} value={val} f{fxx:02d}"
+                    )
+                except requests.RequestException as e:
+                    print(
+                        f"HREF range fetch [ERROR] attempt {attempt}/3: "
+                        f"{p_type} value={val} f{fxx:02d} "
+                        f"({type(e).__name__})"
+                    )
+                if attempt < 3:
+                    time.sleep(min(2 * attempt, 5))
         return False
 
-
-
     def _download_refs_full(self, d_str, cycle, product, fxx):
-        """
-        Download one complete REFS GRIB2 product, trying the current parallel
-        feed first. Returns (path, source) or (None, None).
+        """Download and validate one complete REFS GRIB2 product."""
+        suffix = f"{d_str}_{cycle:02d}_{product}_f{fxx:02d}.grib2"
+        out_file = self.grib_dir / f"REFS_FULL_{suffix}"
 
-        The file is streamed to disk so it is never held in memory as one large
-        bytes object. Callers delete it immediately after local ecCodes scanning.
-        """
         for source, url in self._refs_candidates(d_str, cycle, product, fxx):
-            try:
-                r = requests.get(
-                    url,
-                    headers={"User-Agent": self.headers["User-Agent"]},
-                    timeout=(10, 180),
-                    allow_redirects=True,
-                    stream=True,
-                )
-                if r.status_code not in (200, 206):
-                    # 404 is expected for forecast hours/products not published.
-                    continue
-
-                suffix = f"{d_str}_{cycle:02d}_{product}_f{fxx:02d}.grib2"
-                out_file = self.grib_dir / f"REFS_FULL_{suffix}"
-                total = r.headers.get("Content-Length", "?")
-                print(
-                    f"REFS full-GRIB download: {d_str} {cycle:02d}Z "
-                    f"{product.upper()} f{fxx:02d} via {source} "
-                    f"(Content-Length={total})"
-                )
-
-                with open(out_file, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            f.write(chunk)
-
-                if out_file.exists() and out_file.stat().st_size > 16:
-                    return out_file, source
-
+            for attempt in range(1, 4):
+                out_file.unlink(missing_ok=True)
                 try:
-                    out_file.unlink()
-                except FileNotFoundError:
-                    pass
-            except requests.RequestException as e:
-                print(
-                    f"REFS download error {source} {product} f{fxx:02d}: "
-                    f"{type(e).__name__}"
-                )
+                    r = requests.get(
+                        url,
+                        headers={"User-Agent": self.headers["User-Agent"]},
+                        timeout=(10, 180),
+                        allow_redirects=True,
+                        stream=True,
+                    )
+                    if r.status_code not in (200, 206):
+                        print(
+                            f"REFS full-GRIB HTTP {r.status_code} "
+                            f"{source} {product} f{fxx:02d} "
+                            f"attempt {attempt}/3"
+                        )
+                        r.close()
+                        if r.status_code == 404:
+                            break
+                        if attempt < 3:
+                            time.sleep(min(2 * attempt, 6))
+                        continue
 
+                    total = r.headers.get("Content-Length", "?")
+                    print(
+                        f"REFS full-GRIB download: {d_str} {cycle:02d}Z "
+                        f"{product.upper()} f{fxx:02d} via {source} "
+                        f"(attempt {attempt}/3, Content-Length={total})"
+                    )
+                    with open(out_file, "wb") as fh:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                fh.write(chunk)
+                    r.close()
+
+                    if out_file.exists() and out_file.stat().st_size > 16:
+                        with open(out_file, "rb") as fh:
+                            if fh.read(4) == b"GRIB":
+                                return out_file, source
+
+                    print(
+                        f"REFS full-GRIB validation failed {source} "
+                        f"{product} f{fxx:02d} attempt {attempt}/3"
+                    )
+                    out_file.unlink(missing_ok=True)
+                except requests.RequestException as e:
+                    out_file.unlink(missing_ok=True)
+                    print(
+                        f"REFS download error {source} {product} f{fxx:02d} "
+                        f"attempt {attempt}/3: {type(e).__name__}"
+                    )
+                if attempt < 3:
+                    time.sleep(min(2 * attempt, 6))
+
+        out_file.unlink(missing_ok=True)
         return None, None
 
     @staticmethod
@@ -625,19 +741,31 @@ class EnsembleNowcastEngine:
 
     def generate_dashboard_data(self):
         print("Starting Super-Ensemble Data Generation...")
-        max_req_fxx = max([w[1] for w in self.windows])
+        max_req_fxx = max(w[1] for w in self.windows)
 
-        h_date, h_cyc = self._get_latest_cycle("HREF", max_req_fxx)
-        r_date, r_cyc = self._get_latest_cycle("REFS", max_req_fxx)
+        h_date, h_cyc, h_dt = self._get_latest_cycle("HREF", max_req_fxx)
+        if not h_date:
+            return {
+                "no_update": True,
+                "reason": "No complete HREF nowcast cycle is currently available."
+            }
 
-        if not h_date or not r_date:
-            print(
-                f"Cycle discovery summary -> HREF: {h_date or 'MISSING'} | "
-                f"REFS: {r_date or 'MISSING'}"
-            )
-            return {"error": f"Missing Core Ensemble Runs out to f{max_req_fxx}."}
+        # Relative nowcast windows must share the same absolute initialization.
+        # Do not blend HREF +3/+9 guidance with REFS +3/+9 guidance from a
+        # different cycle.
+        r_date, r_cyc, r_dt = self._get_latest_cycle(
+            "REFS", max_req_fxx, target_init=h_dt
+        )
+        if not r_date:
+            return {
+                "no_update": True,
+                "reason": (
+                    f"REFS {h_date} {h_cyc:02d}Z has not completed through "
+                    f"f{max_req_fxx:02d}; retaining the last aligned CAM package."
+                ),
+            }
 
-        print(f"Locked Models -> HREF: {h_cyc:02d}Z | REFS: {r_cyc:02d}Z")
+        print(f"Locked Models -> HREF: {h_date} {h_cyc:02d}Z | REFS: {r_date} {r_cyc:02d}Z")
         print(
             f"REFS direct-GRIB cycle source: "
             f"{self.refs_cycle_source or 'unknown'}"
@@ -656,92 +784,148 @@ class EnsembleNowcastEngine:
         coords = {"HREF": [None, None], "REFS": [None, None]}
 
         # ---------------- HREF ----------------
-        # Preserve the original efficient .idx byte-range extraction.
-        href_tasks = []
         h_base = (
             f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod/"
             f"href.{h_date}/ensprod"
         )
+        href_tasks = []
+        href_labels = []
 
         for w in self.windows:
             window_start = w[0] - 1
             for fxx in range(w[0], w[1] + 1):
+                prob_url = (
+                    f"{h_base}/href.t{h_cyc:02d}z.conus.prob."
+                    f"f{fxx:02d}.grib2"
+                )
+                prob_idx = prob_url + ".idx"
                 for t_in, t_mm in zip(self.qpf_thresh_in, self.qpf_thresh_mm):
+                    out_file = self.grib_dir / (
+                        f"H_{h_date}_{h_cyc:02d}_Q_{t_in}_{fxx:02d}.grib2"
+                    )
                     href_tasks.append(
-                        (
-                            f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2",
-                            f"{h_base}/href.t{h_cyc:02d}z.conus.prob.f{fxx:02d}.grib2.idx",
-                            "QPF",
-                            t_mm,
-                            fxx,
-                            self.grib_dir / f"H_Q_{t_in}_{fxx}.grib2",
-                        )
+                        (prob_url, prob_idx, "QPF", t_mm, fxx, out_file)
+                    )
+                    href_labels.append(
+                        f"{w[0]-1}-{w[1]}h QPF {t_in}-inch f{fxx:02d}"
                     )
 
+                ffri_url = (
+                    f"{h_base}/href.t{h_cyc:02d}z.conus.ffri."
+                    f"f{fxx:02d}.grib2"
+                )
+                ffri_idx = ffri_url + ".idx"
                 for d in self.ffg_durations:
-                    if fxx - d >= window_start:
+                    if self._ffg_duration_expected(fxx, d, window_start):
+                        out_file = self.grib_dir / (
+                            f"H_{h_date}_{h_cyc:02d}_F_{d}_{fxx:02d}.grib2"
+                        )
                         href_tasks.append(
-                            (
-                                f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2",
-                                f"{h_base}/href.t{h_cyc:02d}z.conus.ffri.f{fxx:02d}.grib2.idx",
-                                "FFG",
-                                d,
-                                fxx,
-                                self.grib_dir / f"H_F_{d}_{fxx}.grib2",
-                            )
+                            (ffri_url, ffri_idx, "FFG", d, fxx, out_file)
+                        )
+                        href_labels.append(
+                            f"{w[0]-1}-{w[1]}h {d}-h FFG f{fxx:02d}"
                         )
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            list(executor.map(self._fetch_grib, href_tasks))
+        # Fetch each HREF index once before launching byte-range workers.
+        href_idx_urls = list(dict.fromkeys(task[1] for task in href_tasks))
+        missing_href_idx = []
+        for idx_url in href_idx_urls:
+            if not self._get_idx(idx_url):
+                missing_href_idx.append(idx_url)
+            time.sleep(0.05)
+
+        if missing_href_idx:
+            reason = (
+                "HREF index acquisition is incomplete; retaining the last "
+                "complete nowcast package."
+            )
+            print(reason)
+            for url in missing_href_idx:
+                print(f"  Missing HREF index: {url}")
+            return {"no_update": True, "reason": reason}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            href_fetch_ok = list(executor.map(self._fetch_grib, href_tasks))
+
+        failed_href_fetches = [
+            label
+            for label, ok in zip(href_labels, href_fetch_ok)
+            if not ok
+        ]
+        if failed_href_fetches:
+            reason = (
+                "HREF byte-range acquisition is incomplete; retaining the "
+                "last complete nowcast package."
+            )
+            print(reason)
+            print("  Failed HREF fields: " + ", ".join(failed_href_fetches[:60]))
+            return {"no_update": True, "reason": reason}
+
+        href_qpf_hours = {
+            w: {t: set() for t in self.qpf_thresh_in}
+            for w in self.windows
+        }
+        href_ffg_slots = {w: set() for w in self.windows}
+        href_decode_failures = []
 
         for w in self.windows:
             window_start = w[0] - 1
             for fxx in range(w[0], w[1] + 1):
                 for t_in in self.qpf_thresh_in:
-                    file = self.grib_dir / f"H_Q_{t_in}_{fxx}.grib2"
-                    if file.exists():
-                        (
-                            data_store[w]["QPF"][t_in]["HREF"],
-                            coords["HREF"][0],
-                            coords["HREF"][1],
-                            _,
-                        ) = self._extract_max(
+                    file = self.grib_dir / (
+                        f"H_{h_date}_{h_cyc:02d}_Q_{t_in}_{fxx:02d}.grib2"
+                    )
+                    new_max, new_lats, new_lons, decoded = self._extract_max(
+                        file,
+                        data_store[w]["QPF"][t_in]["HREF"],
+                        coords["HREF"][0],
+                        coords["HREF"][1],
+                    )
+                    if decoded:
+                        data_store[w]["QPF"][t_in]["HREF"] = new_max
+                        coords["HREF"] = [new_lats, new_lons]
+                        href_qpf_hours[w][t_in].add(fxx)
+                    else:
+                        href_decode_failures.append(
+                            f"{w[0]-1}-{w[1]}h QPF {t_in}-inch f{fxx:02d}"
+                        )
+                    file.unlink(missing_ok=True)
+
+                for d in self.ffg_durations:
+                    if self._ffg_duration_expected(fxx, d, window_start):
+                        file = self.grib_dir / (
+                            f"H_{h_date}_{h_cyc:02d}_F_{d}_{fxx:02d}.grib2"
+                        )
+                        new_max, new_lats, new_lons, decoded = self._extract_max(
                             file,
-                            data_store[w]["QPF"][t_in]["HREF"],
+                            data_store[w]["FFG_MAX"]["HREF"],
                             coords["HREF"][0],
                             coords["HREF"][1],
                         )
-                        try:
-                            file.unlink()
-                        except Exception:
-                            pass
-
-                for d in self.ffg_durations:
-                    if fxx - d >= window_start:
-                        file = self.grib_dir / f"H_F_{d}_{fxx}.grib2"
-                        if file.exists():
-                            (
-                                data_store[w]["FFG_MAX"]["HREF"],
-                                coords["HREF"][0],
-                                coords["HREF"][1],
-                                _,
-                            ) = self._extract_max(
-                                file,
-                                data_store[w]["FFG_MAX"]["HREF"],
-                                coords["HREF"][0],
-                                coords["HREF"][1],
+                        if decoded:
+                            data_store[w]["FFG_MAX"]["HREF"] = new_max
+                            coords["HREF"] = [new_lats, new_lons]
+                            href_ffg_slots[w].add((fxx, d))
+                        else:
+                            href_decode_failures.append(
+                                f"{w[0]-1}-{w[1]}h {d}-h FFG f{fxx:02d}"
                             )
-                            try:
-                                file.unlink()
-                            except Exception:
-                                pass
+                        file.unlink(missing_ok=True)
+
+        if href_decode_failures:
+            reason = (
+                "HREF GRIB decoding is incomplete; retaining the last complete "
+                "nowcast package."
+            )
+            print(reason)
+            print("  Failed HREF decodes: " + ", ".join(href_decode_failures[:60]))
+            return {"no_update": True, "reason": reason}
 
         # ---------------- REFS ----------------
-        # Full GRIB2 files are available on the new parallel feed, but the
-        # external .idx companions are not. Download each forecast-hour product
-        # once, scan locally with ecCodes, merge the needed fields, then delete.
-        refs_hours_used = []
-        refs_ffri_hours_used = []
+        refs_qpf_hours = {w: set() for w in self.windows}
+        refs_ffri_hours = {w: set() for w in self.windows}
+        refs_ffg_slots = {w: set() for w in self.windows}
 
         for w in self.windows:
             window_start = w[0] - 1
@@ -754,30 +938,38 @@ class EnsembleNowcastEngine:
                         qpf_fields, rlats, rlons = self._scan_refs_prob_file(
                             full_prob, fxx
                         )
-                        found_any = False
-                        for t_in, t_mm in zip(
-                            self.qpf_thresh_in, self.qpf_thresh_mm
-                        ):
-                            arr = qpf_fields.get(float(t_mm))
-                            if arr is not None:
+                        missing_thresholds = [
+                            t_in
+                            for t_in, t_mm in zip(
+                                self.qpf_thresh_in, self.qpf_thresh_mm
+                            )
+                            if qpf_fields.get(float(t_mm)) is None
+                        ]
+                        if not missing_thresholds:
+                            for t_in, t_mm in zip(
+                                self.qpf_thresh_in, self.qpf_thresh_mm
+                            ):
+                                arr = qpf_fields[float(t_mm)]
                                 data_store[w]["QPF"][t_in]["REFS"] = self._merge_max(
                                     data_store[w]["QPF"][t_in]["REFS"], arr
                                 )
-                                found_any = True
-                        if found_any:
-                            refs_hours_used.append(fxx)
+                            refs_qpf_hours[w].add(fxx)
                             if coords["REFS"][0] is None:
                                 coords["REFS"] = [rlats, rlons]
+                        else:
+                            print(
+                                f"REFS QPF f{fxx:02d} missing threshold fields: "
+                                + ", ".join(
+                                    f"{t:g}in" for t in missing_thresholds
+                                )
+                            )
                     finally:
-                        try:
-                            full_prob.unlink()
-                        except Exception:
-                            pass
+                        full_prob.unlink(missing_ok=True)
 
-                # FFRI is currently optional / may not yet be published.
-                # Try it only at forecast hours where at least one requested
-                # FFG duration is inside this dashboard window.
-                if any(fxx - d >= window_start for d in self.ffg_durations):
+                if any(
+                    self._ffg_duration_expected(fxx, d, window_start)
+                    for d in self.ffg_durations
+                ):
                     full_ffri, _ = self._download_refs_full(
                         r_date, r_cyc, "ffri", fxx
                     )
@@ -786,52 +978,113 @@ class EnsembleNowcastEngine:
                             ffg_fields, rlats, rlons = self._scan_refs_ffri_file(
                                 full_ffri, fxx
                             )
-                            found_ffg = False
+                            found_any = False
                             for d in self.ffg_durations:
-                                if fxx - d >= window_start:
+                                if self._ffg_duration_expected(
+                                    fxx, d, window_start
+                                ):
                                     arr = ffg_fields.get(d)
                                     if arr is not None:
                                         data_store[w]["FFG_MAX"]["REFS"] = self._merge_max(
                                             data_store[w]["FFG_MAX"]["REFS"], arr
                                         )
-                                        found_ffg = True
-                            if found_ffg:
-                                refs_ffri_hours_used.append(fxx)
+                                        refs_ffg_slots[w].add((fxx, d))
+                                        found_any = True
+                            if found_any:
+                                refs_ffri_hours[w].add(fxx)
                                 if coords["REFS"][0] is None:
                                     coords["REFS"] = [rlats, rlons]
                         finally:
-                            try:
-                                full_ffri.unlink()
-                            except Exception:
-                                pass
+                            full_ffri.unlink(missing_ok=True)
+
+        # Validate the exact scientific contract for both windows. A temporal
+        # maximum built from only part of a window must never be published as
+        # if it represented the full MetWatch nowcast period.
+        completeness_errors = []
+        window_contract = {}
+
+        for w in self.windows:
+            window_start = w[0] - 1
+            expected_hours = set(range(w[0], w[1] + 1))
+            expected_ffg_slots = {
+                (fxx, d)
+                for fxx in expected_hours
+                for d in self.ffg_durations
+                if self._ffg_duration_expected(fxx, d, window_start)
+            }
+
+            for t_in in self.qpf_thresh_in:
+                missing = sorted(expected_hours - href_qpf_hours[w][t_in])
+                if missing:
+                    completeness_errors.append(
+                        f"HREF {window_start}-{w[1]}h QPF {t_in}in missing "
+                        + ",".join(f"f{h:02d}" for h in missing)
+                    )
+
+            missing_href_ffg = sorted(expected_ffg_slots - href_ffg_slots[w])
+            if missing_href_ffg:
+                completeness_errors.append(
+                    f"HREF {window_start}-{w[1]}h FFG missing "
+                    + ",".join(
+                        f"f{fxx:02d}/{d}h"
+                        for fxx, d in missing_href_ffg
+                    )
+                )
+
+            missing_refs_qpf = sorted(expected_hours - refs_qpf_hours[w])
+            if missing_refs_qpf:
+                completeness_errors.append(
+                    f"REFS {window_start}-{w[1]}h QPF missing "
+                    + ",".join(f"f{h:02d}" for h in missing_refs_qpf)
+                )
+
+            missing_refs_ffg = sorted(expected_ffg_slots - refs_ffg_slots[w])
+            if missing_refs_ffg:
+                completeness_errors.append(
+                    f"REFS {window_start}-{w[1]}h FFG missing "
+                    + ",".join(
+                        f"f{fxx:02d}/{d}h"
+                        for fxx, d in missing_refs_ffg
+                    )
+                )
+
+            w_label = f"{window_start}h_to_{w[1]}h"
+            window_contract[w_label] = {
+                "forecast_hours": list(range(w[0], w[1] + 1)),
+                "hourly_qpf_periods": [
+                    f"{fxx-1}-{fxx}h"
+                    for fxx in range(w[0], w[1] + 1)
+                ],
+                "ffg_slots": [
+                    {"forecast_hour": fxx, "duration_hours": d}
+                    for fxx, d in sorted(expected_ffg_slots)
+                ],
+            }
+
+        if completeness_errors:
+            reason = (
+                "CAM nowcast processing is incomplete; retaining the last "
+                "verified complete HREF/REFS package."
+            )
+            print(reason)
+            for error in completeness_errors:
+                print("  " + error)
+            return {"no_update": True, "reason": reason}
 
         print(
-            "REFS QPF forecast hours used: "
-            + (
-                ", ".join(f"f{h:02d}" for h in sorted(set(refs_hours_used)))
-                if refs_hours_used
-                else "NONE"
-            )
+            "CAM completeness check passed for both +3-to-+9 and +9-to-+15 "
+            "windows."
         )
-        if refs_ffri_hours_used:
-            print(
-                "REFS FFRI forecast hours used: "
-                + ", ".join(
-                    f"f{h:02d}" for h in sorted(set(refs_ffri_hours_used))
-                )
-            )
-        else:
-            print(
-                "REFS FFRI unavailable/no usable fields; "
-                "FFG guidance will use HREF-only for this run."
-            )
 
         dashboard_payload = {
             "metadata": {
                 "href_cycle": h_cyc,
                 "refs_cycle": r_cyc,
+                "href_init_utc": h_dt.isoformat().replace("+00:00", "Z"),
+                "refs_init_utc": r_dt.isoformat().replace("+00:00", "Z"),
                 "lats": coords["HREF"][0],
                 "lons": coords["HREF"][1],
+                "window_contract": window_contract,
             },
             "windows": {},
         }
@@ -851,7 +1104,6 @@ class EnsembleNowcastEngine:
                     coords["REFS"][0],
                     coords["REFS"][1],
                 )
-
                 dashboard_payload["windows"][w_label]["QPF"][f"{t_in}_inch"] = {
                     "HREF": href_data,
                     "REFS": refs_interp,
@@ -868,7 +1120,6 @@ class EnsembleNowcastEngine:
                 coords["REFS"][0],
                 coords["REFS"][1],
             )
-
             dashboard_payload["windows"][w_label]["FFG_MAX"] = {
                 "HREF": href_ffg,
                 "REFS": refs_ffg_interp,
@@ -878,6 +1129,12 @@ class EnsembleNowcastEngine:
         return dashboard_payload
 
     def export_dashboard_layers(self, payload):
+        if payload.get("no_update"):
+            print(
+                "No CAM nowcast files changed: "
+                + str(payload.get("reason") or "upstream guidance is incomplete")
+            )
+            return
         if "error" in payload:
             raise RuntimeError(payload["error"])
 
@@ -943,6 +1200,12 @@ class EnsembleNowcastEngine:
         with open("static/cam_metadata.json", "w") as f:
             json.dump({
                 "valid_time": valid_time_str,
+                "href_init_utc": payload['metadata']['href_init_utc'],
+                "refs_init_utc": payload['metadata']['refs_init_utc'],
+                "window_contract": payload['metadata']['window_contract'],
+                "hourly_qpf_thresholds_in": self.qpf_thresh_in,
+                "ffg_durations_hours": self.ffg_durations,
+                "source_completeness_contract": "aligned HREF/REFS cycles and complete selected fields required before publication",
                 "bounds": bounds,
                 "rendering": {
                     "revision": RENDER_REVISION,
