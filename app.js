@@ -4013,6 +4013,7 @@ let nldas3SlopeMetadata = null;
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
 let camCycles = { href: "Unknown", refs: "Unknown" };
+let camInitTimes = { href: null, refs: null };
 let eroCamCycles = { href: "Unknown", refs: "Unknown" };
 let eroValidRangeStr = "Unknown";
 let nwmValidTime = "Unknown";
@@ -4060,6 +4061,12 @@ function fetchCAMMetadata() {
                     camCycles.refs = match[2];
                 }
             }
+
+            const hrefInit = new Date(data.href_init_utc || '');
+            const refsInit = new Date(data.refs_init_utc || '');
+            camInitTimes.href = Number.isNaN(hrefInit.getTime()) ? null : hrefInit;
+            camInitTimes.refs = Number.isNaN(refsInit.getTime()) ? null : refsInit;
+
             if (data.bounds) {
                 const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
                 Object.values(camLayers).forEach(layer => {
@@ -6547,24 +6554,36 @@ setInterval(() => {
 
 // GLM and LightningCast products are refreshed by their manifest watchers above.
 
-function getValidTimeRange(cycleStr, windowStr) {
+function getValidTimeRange(cycleStr, windowStr, exactInitTime = null) {
     if (!cycleStr || cycleStr === "Unknown") return "Valid Time Unknown";
-    
-    let cycleHour = parseInt(cycleStr);
-    let now = new Date();
-    
-    let baseDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour, 0, 0));
-    
-    if (now.getUTCHours() < cycleHour) {
-        baseDate.setUTCDate(baseDate.getUTCDate() - 1);
+
+    let baseDate = null;
+    if (exactInitTime instanceof Date && !Number.isNaN(exactInitTime.getTime())) {
+        baseDate = new Date(exactInitTime.getTime());
+    } else {
+        // Backward-compatible fallback for metadata published before exact
+        // initialization timestamps were added.
+        const cycleHour = parseInt(cycleStr);
+        const now = new Date();
+        baseDate = new Date(Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate(),
+            cycleHour,
+            0,
+            0
+        ));
+        if (now.getUTCHours() < cycleHour) {
+            baseDate.setUTCDate(baseDate.getUTCDate() - 1);
+        }
     }
-    
-    let startOffset = windowStr === '+3h to +9h' ? 3 : 9;
-    let endOffset = windowStr === '+3h to +9h' ? 9 : 15;
-    
-    let startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
-    let endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
-    
+
+    const startOffset = windowStr === '+3h to +9h' ? 3 : 9;
+    const endOffset = windowStr === '+3h to +9h' ? 9 : 15;
+
+    const startDate = new Date(baseDate.getTime() + (startOffset * 60 * 60 * 1000));
+    const endDate = new Date(baseDate.getTime() + (endOffset * 60 * 60 * 1000));
+
     return `${formatUTC(startDate)} &mdash; ${formatUTC(endDate)}`;
 }
 
@@ -7593,7 +7612,8 @@ map.on('overlayadd', function(eventLayer) {
         const displayedCycles = isEROCAM ? eroCamCycles : camCycles;
         let titleText = "";
         let cycleText = `HREF: ${displayedCycles.href}Z &nbsp;|&nbsp; REFS: ${displayedCycles.refs}Z`;
-        let targetCycleForMath = displayedCycles.href; 
+        let targetCycleForMath = displayedCycles.href;
+        let targetInitForMath = isEROCAM ? null : camInitTimes.href;
         
         if (eventLayer.name.includes('SuperEnsemble')) {
             titleText = "SuperEnsemble Blend";
@@ -7601,10 +7621,12 @@ map.on('overlayadd', function(eventLayer) {
             titleText = "HREF Only";
             cycleText = `Latest Run: ${displayedCycles.href}Z`;
             targetCycleForMath = displayedCycles.href;
+            targetInitForMath = isEROCAM ? null : camInitTimes.href;
         } else if (eventLayer.name.includes('REFS')) {
             titleText = "REFS Only";
             cycleText = `Latest Run: ${displayedCycles.refs}Z`;
             targetCycleForMath = displayedCycles.refs;
+            targetInitForMath = isEROCAM ? null : camInitTimes.refs;
         }
 
         let validRangeStr = "Valid Time Unknown";
@@ -7617,7 +7639,11 @@ map.on('overlayadd', function(eventLayer) {
             if (matchedKey && matchedKey.includes('9h_to_15h')) {
                 currentWindow = "+9h to +15h";
             }
-            validRangeStr = getValidTimeRange(targetCycleForMath, currentWindow);
+            validRangeStr = getValidTimeRange(
+                targetCycleForMath,
+                currentWindow,
+                targetInitForMath
+            );
         }
 
         let productName = "Probabilistic Guidance";
@@ -8024,9 +8050,9 @@ const dashboardSections = [
         id: 'cam-3-9',
         title: 'CAM Nowcasts (+3h to +9h)',
         layers: [
-            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
-            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
+            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster'},
             {id: 'cam-3-9-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_refs'], kind: 'raster', nested: true},
@@ -8045,9 +8071,9 @@ const dashboardSections = [
         id: 'cam-9-15',
         title: 'CAM Nowcasts (+9h to +15h)',
         layers: [
-            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
-            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
+            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster'},
             {id: 'cam-9-15-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_href'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_refs'], kind: 'raster', nested: true},
