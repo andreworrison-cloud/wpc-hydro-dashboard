@@ -53,7 +53,7 @@ required_sections = [
     "HRRR-TLE Flash Flood Guidance - Experimental",
     "CAM Nowcasts (+3h to +9h)",
     "CAM Nowcasts (+9h to +15h)",
-    "Day 1 ERO CAMs (12Z-12Z)",
+    "Day 1 ERO CAMs",
     "Experimental Models",
     "Dashboard Utilities",
 ]
