@@ -6,6 +6,10 @@ on:
   pull_request:
     paths:
       - 'fetch_rfc_ffg.py'
+      - 'tools/rfc_ffg_display.js'
+      - 'tools/test_rfc_ffg_display.cjs'
+      - 'tools/build_rfc_ffg_review.py'
+      - 'tools/rfc_ffg_review_template.html'
       - 'tools/test_fetch_rfc_ffg.py'
       - 'tools/rfc_ffg_coverage_baseline.json'
       - 'tools/probe_rfc_ffg_numeric.py'
@@ -31,6 +35,8 @@ jobs:
         run: |
           python -m unittest discover -s tools -p 'test_probe_rfc_ffg*.py' -v
           python -m unittest discover -s tools -p 'test_fetch_rfc_ffg.py' -v
+      - name: Test browser freshness contract
+        run: node tools/test_rfc_ffg_display.cjs
       - name: Restore last validated rehearsal state
         uses: actions/cache/restore@v4
         with:
@@ -41,6 +47,9 @@ jobs:
       - name: Ingest latest hourly WPC product
         id: ingest
         run: python fetch_rfc_ffg.py --output-dir diagnostics/rfc_ffg_ingest/public --science-dir diagnostics/rfc_ffg_ingest/science
+      - name: Build offline display review
+        if: always() && steps.ingest.outcome == 'success'
+        run: python tools/build_rfc_ffg_review.py --public-dir diagnostics/rfc_ffg_ingest/public --output diagnostics/rfc_ffg_ingest/rfc_ffg_review.html
       - name: Save validated fields and explicit failure status
         if: always() && steps.ingest.outcome != 'skipped'
         uses: actions/cache/save@v4

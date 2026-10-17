@@ -269,3 +269,49 @@ cadence remains :50, pending transition/latency observations. The production Git
 publisher must commit the versioned assets and pointer together; it must also
 persist failure metadata when ingest exits nonzero. Do not gate status publication
 solely on a successful ingest exit.
+
+## H5 display review (2026-10-17)
+
+`review/rfc_ffg.html` is a self-contained frozen review of the validated 14Z
+snapshot (12Z reference), not a live operational layer. Open it in a browser;
+select a duration and a freshness scenario. The default uses the actual clock,
+so an expired frozen snapshot is hidden. Simulations are explicitly labeled.
+Rebuild with:
+
+```
+python tools/build_rfc_ffg_review.py --public-dir PATH_TO_PUBLIC --output review/rfc_ffg.html
+node tools/test_rfc_ffg_display.cjs
+```
+
+The generator verifies image hashes before embedding. Legends derive directly
+from generation metadata: inches, lower-inclusive/upper-exclusive intervals,
+with explicit open tails and NoData explanation. The palette is proposed,
+not an official RFC color scale and not flood-risk categories. All three
+raster previews were visually inspected: broad interior coverage is present;
+this does not resolve the independent expected-coverage-mask limitation.
+
+The pure JavaScript freshness contract recomputes expiry from source times
+and policy, never from successful polling or encoded duration endpoints.
+Ten assertions cover exact expiry, retained-but-fresh guidance, failed refresh
+past expiry, missing/invalid timestamps, future times, older reference cycles,
+unavailable status, and invalid policy. The review reevaluates every 30 seconds.
+It separates snapshot, GRIB reference, source modification, and actual last check.
+Individual RFC issue times remain unavailable. Freshness policy still needs
+operational acceptance (3-hour snapshot / 9-hour reference maximum ages).
+
+**Map integration gate:** existing PNGs are EPSG:4326. Do not place them directly
+in a default EPSG:3857 Leaflet image overlay: latitude stretching would be
+incorrect. This review deliberately uses a geographic SVG viewport with
+geographically aligned reference cities. Production needs a separately
+versioned nearest-neighbor EPSG:3857 derivative or a projection-aware raster
+renderer, followed by state/coastline alignment checks on the actual dashboard.
+Native scientific values must remain unchanged.
+
+The review page is responsive in CSS, but browser visual QA remains pending:
+this environment has no Chromium executable and its attempted browser download
+returned an invalid archive. No desktop/mobile screenshot validation is claimed.
+Actual raster images were inspected separately. No production app.js/index.html/
+style.css changes, publishing, or scheduler changes are included. The manual/PR
+rehearsal now builds an offline review artifact after successful ingestion.
+Scheduler choice (including the user's cron-job.org option) remains deferred
+until display integration and durable publication are validated.
