@@ -27,3 +27,13 @@ Install numpy and rasterio, then run:
     python tools/probe_sport_depths.py --output /tmp/sport-depth-audit
 
 The diagnostic downloads the newest listed complete suite, checks raster structure/ranges, compares all grids/masks, and writes source files and a JSON report outside production assets. It fails on an incomplete newest suite or invalid raster. It does not publish data or change schedules.
+
+## Shared ingest and clarity review implemented
+
+`fetch_sport.py --suite-dir <directory>` opts into the shared-depth ingest; invoking without arguments retains the existing 0–100 cm production path. Live retrieval of all four depths succeeded. Seven failure/freshness tests passed. An exact comparison against the original script confirmed identical legacy numerical display arrays, bounds and RGBA pixels. Sources and all four PNGs are staged together in content-addressed generations; the JSON pointer changes only after validation. Partial failures retain the complete prior suite. No production integration or schedule change is included.
+
+Review policy is explicitly provisional: warn at 72 h, hide at 96 h from valid time. This allows the observed roughly 46 h modification delay plus a daily interval; it is not an approved operational freshness standard.
+
+The actual current image is 1808×1147, despite a 3000-pixel upper cap. Review compares it against 4000×2538 bilinear-field and nearest-field outputs, with the identical RGBA palette. Crisp CSS is scoped to candidate SPoRT image overlays. Higher rendering resolution does not increase nominal 3-km scientific resolution. The nearest-field option has visibly more speckle; the bilinear-field candidate is the preferred review option.
+
+Run tools/build_sport_depth_review.py with --source-dir, --date, --vendor-dir review/vendor, and --output-dir to reproduce the self-contained three-map HTML and static figures. All four depths, synchronized map views, dark/light canvas, optional Esri basemap, legends and state boundaries are included. Static figures were visually inspected; the HTML scripts passed syntax checks. Automated live browser interaction with the local HTML was blocked by the cloud browser URL policy, so interactive visual verification remains pending user review.
