@@ -7948,18 +7948,30 @@ const dashboardSections = [
             {id: 'nwm-soilsat', label: 'NWM Soil Saturation (0-40cm)', layer: nwmLayer, kind: 'raster'},
             {id: 'nldas-rsm-010', label: 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)', layer: nldasRsm010Layer, kind: 'raster'},
             {id: 'nldas-rsm-0100', label: 'NLDAS-2 Noah Relative Soil Moisture (0-100 cm)', layer: nldasRsm0100Layer, kind: 'raster'},
-            ...(sportRSM ? window.SPoRTRSM.depths.map(depth => ({
-                id: `sport-rsm-${depth}`, label: `NASA SPoRT-LIS Relative Soil Moisture (0–${depth} cm)`,
+            {id: 'sport-rsm-10', label: 'NASA SPoRT-LIS Relative Soil Moisture (0–10 cm)',
                 description: 'NASA RSM: 0% at wilting point, 100% at saturation. This differs from NLDAS percent of saturation. Age warning at 48 h; hidden at 72 h.',
-                layer: sportRSM.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
-                keywords: 'soil moisture relative RSM saturation SPoRT LIS'
-            })) : []),
-            ...(sportSuite ? window.SPoRTSuite.depths.map(depth => ({
-                id: `sport-suite-${depth}`, label: `NASA SPoRT-LIS VSM Percentile (0–${depth} cm)`,
+                layer: sportRSM.layers[10], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture relative RSM saturation SPoRT LIS'},
+            {id: 'sport-rsm-200', label: 'NASA SPoRT-LIS Relative Soil Moisture (0–200 cm)',
+                description: 'NASA RSM: 0% at wilting point, 100% at saturation. This differs from NLDAS percent of saturation. Age warning at 48 h; hidden at 72 h.',
+                layer: sportRSM.layers[200], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture relative RSM saturation SPoRT LIS'},
+            {id: 'sport-suite-10', label: 'NASA SPoRT-LIS VSM Percentile (0–10 cm)',
                 description: 'Four-depth suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
-                layer: sportSuite.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
-                keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'
-            })) : [])
+                layer: sportSuite.layers[10], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'},
+            {id: 'sport-suite-40', label: 'NASA SPoRT-LIS VSM Percentile (0–40 cm)',
+                description: 'Four-depth suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
+                layer: sportSuite.layers[40], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'},
+            {id: 'sport-suite-100', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)',
+                description: 'Four-depth suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
+                layer: sportSuite.layers[100], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'},
+            {id: 'sport-suite-200', label: 'NASA SPoRT-LIS VSM Percentile (0–200 cm)',
+                description: 'Four-depth suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
+                layer: sportSuite.layers[200], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'}
         ]
     },
     {

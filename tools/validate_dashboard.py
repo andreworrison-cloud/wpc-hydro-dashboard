@@ -36,7 +36,7 @@ errors = []
 
 # Current registry total includes all existing dashboard data/config entries,
 # basemaps, and the two validated NASA NLDAS-3 static land-surface layers.
-EXPECTED_LAYER_COUNT = 148
+EXPECTED_LAYER_COUNT = 153
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -90,7 +90,12 @@ required_labels = [
     "NWM Soil Saturation (0-40cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
     "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
-    "NASA SPoRT-LIS VSM Percentile (0–100 cm)",
+    "NASA SPoRT-LIS Relative Soil Moisture (0–10 cm)",
+"NASA SPoRT-LIS Relative Soil Moisture (0–200 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–10 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–40 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–100 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–200 cm)",
     "NRCS Hydrologic Soil Group (A–D / Dual)",
     "NASA NLDAS-3 Soil Texture (Static)",
     "NASA NLDAS-3 Land Use / Vegetation (Static)",
@@ -192,7 +197,12 @@ if antecedent_start >= 0 and rap_start > antecedent_start:
         "NWM Soil Saturation (0-40cm)",
         "NLDAS-2 Noah Relative Soil Moisture (0-10 cm)",
         "NLDAS-2 Noah Relative Soil Moisture (0-100 cm)",
-        "NASA SPoRT-LIS VSM Percentile (0–100 cm)",
+        "NASA SPoRT-LIS Relative Soil Moisture (0–10 cm)",
+"NASA SPoRT-LIS Relative Soil Moisture (0–200 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–10 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–40 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–100 cm)",
+"NASA SPoRT-LIS VSM Percentile (0–200 cm)",
     ]
     antecedent_positions = [
         antecedent_block.find(label) for label in antecedent_labels
@@ -1588,4 +1598,5 @@ print(
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
+
 
