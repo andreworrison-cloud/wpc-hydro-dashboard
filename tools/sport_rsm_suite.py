@@ -46,7 +46,7 @@ def freshness(active,now):
 def atomic_json(path,data):
     tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(data,indent=2,allow_nan=False)+'\n');os.replace(tmp,path)
 
-def verify(root,active):
+def verify(root,active,require_sources=True):
     if not active or set(active['products'])!=set(DEPTHS):raise ValueError('Missing depth suite')
     generation=active['generation']
     if not re.fullmatch(r'\d{8}-[a-f0-9]{20}-sport-suite-rsm-v1',generation):raise ValueError('Invalid generation')
@@ -56,6 +56,8 @@ def verify(root,active):
             asset=p[role];rel=Path(asset['path'])
             if rel.is_absolute() or '..' in rel.parts or rel.parts[:2]!=('generations',generation):raise ValueError('Unsafe asset path')
             path=root/rel
+            if not re.fullmatch(r'[a-f0-9]{64}',asset['sha256']):raise ValueError('Invalid asset hash')
+            if role=='source' and not require_sources:continue
             if not path.is_file() or digest(path)!=asset['sha256']:raise ValueError('Missing or corrupt '+role)
     return True
 
@@ -76,7 +78,7 @@ def ingest(root,source_dir=None,date=None,now=None,session=None):
     pointer=root/'metadata.json'
     if pointer.exists():
         try:
-            previous=json.loads(pointer.read_text()).get('active');verify(root,previous)
+            previous=json.loads(pointer.read_text()).get('active');verify(root,previous,require_sources=False)
         except Exception as exc:previous=None;failure='Previous product invalid: '+str(exc)
     active=previous;state='unavailable';ok=False
     try:
@@ -112,7 +114,7 @@ def ingest(root,source_dir=None,date=None,now=None,session=None):
                 if grid is not None and grid!=this_grid:raise ValueError('Depth grid mismatch')
                 grid=this_grid
                 if np.count_nonzero(mask!=masks[0])>12905:raise ValueError('Depth coverage masks differ excessively')
-                products[d]={'depth_cm':[0,int(d)],'valid_time':iso(valid_time),'source_url':url,'http_modified_at':modified,'directory_modified_at':entry.get('directory_modified_at'),'retrieved_at':iso(datetime.now(timezone.utc)) if not source_dir else None,'retrieval_mode':'offline_review' if source_dir else 'live','coverage':stats,'source':{'path':path.name,'sha256':digest(path)}}
+                products[d]={'depth_cm':[0,int(d)],'valid_time':iso(valid_time),'source_url':url,'http_modified_at':modified,'directory_modified_at':entry.get('directory_modified_at'),'retrieved_at':iso(datetime.now(timezone.utc)) if not source_dir else None,'retrieval_mode':'offline_review' if source_dir else 'live','coverage':stats,'source':{'path':path.name,'sha256':digest(path),'storage':'workflow_artifact','retention_days':14}}
             combined=hashlib.sha256(''.join(products[d]['source']['sha256'] for d in DEPTHS).encode()).hexdigest()[:20]
             generation=f'{date}-{combined}-{REVISION}'
             if previous and generation==previous['generation']:

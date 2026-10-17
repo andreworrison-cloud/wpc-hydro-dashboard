@@ -13,6 +13,9 @@ on:
       - 'tools/build_sport_rsm_review.py'
       - 'tools/test_sport_display.cjs'
       - 'fetch_sport.py'
+      - 'tools/publish_sport.py'
+      - 'tools/test_publish_sport.py'
+      - '.github/workflows/fetch_sport.yml'
       - 'tools/sport_suite.py'
       - 'tools/test_sport_suite.py'
       - 'tools/build_sport_depth_review.py'
@@ -30,7 +33,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install 'numpy>=2,<3' 'rasterio>=1.4,<2' requests pillow
       - name: Check whole-suite retention and expiry
-        run: python -m unittest tools.test_sport_suite tools.test_sport_rsm_suite -v
+        run: python -m unittest tools.test_sport_suite tools.test_sport_rsm_suite tools.test_publish_sport -v
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

@@ -1,75 +1,62 @@
-name: Fetch SPoRT-LIS Soil Percentiles
-
+name: Publish SPoRT-LIS Soil Moisture
 on:
   schedule:
-    # Runs at 15 past the hour on cycles 01, 07, 13, and 19 UTC.
+    # Preserve the existing cadence until cron-job.org handoff is configured.
     - cron: '15 1,7,13,19 * * *'
   workflow_dispatch:
-
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fetch_sport.yml'
+      - 'fetch_sport.py'
+      - 'tools/sport_suite.py'
+      - 'tools/sport_rsm_suite.py'
+      - 'tools/publish_sport.py'
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
-  group: fetch-sport-lis-soil-percentiles
+  group: sport-lis-production
   cancel-in-progress: false
-
 jobs:
-  update-sport:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 20
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
         with:
-          python-version: '3.10'
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run SPoRT script
-        run: python fetch_sport.py
-
-      - name: Commit and push changes
-        env:
-          BRANCH_NAME: ${{ github.ref_name }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add static/sport_soil_percentile.png static/sport_metadata.json
-
-          if git diff --cached --quiet; then
-            echo "SPoRT-LIS products are unchanged."
-            exit 0
-          fi
-
-          git commit -m "Automated update: SPoRT-LIS percentiles"
-
-          for attempt in 1 2 3; do
-            echo "Sync/push attempt ${attempt}..."
-
-            if ! git pull --rebase origin "${BRANCH_NAME}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "SPoRT-LIS products committed successfully."
-              exit 0
-            fi
-
-            sleep $((attempt * 10))
-          done
-
-          echo "Unable to push SPoRT-LIS products after three attempts."
-          exit 1
+          node-version: '22'
+      - run: python -m pip install 'numpy>=2,<3' 'rasterio>=1.4,<2' requests pillow
+      - name: Check ingest and durable publication
+        run: python -m unittest tools.test_sport_suite tools.test_sport_rsm_suite tools.test_publish_sport -v
+      - name: Check display and approved age policy
+        run: node --test tools/test_sport_display.cjs tools/test_sport_rsm_display.cjs
+      - name: Restore durable state
+        run: python tools/publish_sport.py restore --data-dir diagnostics/sport --state-file "$RUNNER_TEMP/sport-restore.json"
+      - name: Ingest percentile suite
+        id: percentile
+        continue-on-error: true
+        run: python fetch_sport.py --suite-dir diagnostics/sport/public/percentile
+      - name: Ingest RSM suite
+        id: rsm
+        continue-on-error: true
+        run: python -m tools.sport_rsm_suite --suite-dir diagnostics/sport/public/rsm
+      - name: Atomically publish both suites and status
+        if: always() && steps.percentile.outcome != 'skipped' && steps.rsm.outcome != 'skipped'
+        run: python tools/publish_sport.py publish --data-dir diagnostics/sport --state-file "$RUNNER_TEMP/sport-restore.json"
+      - name: Report ingest failures after retained status is published
+        if: always() && (steps.percentile.outcome == 'failure' || steps.rsm.outcome == 'failure')
+        run: exit 1
+      - name: Preserve numerical provenance and product status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sport-provenance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/sport
+          retention-days: 14

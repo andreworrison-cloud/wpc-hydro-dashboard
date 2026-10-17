@@ -865,18 +865,19 @@ const rfcFFG = window.createRFCFFGLayers({map,
 });
 window.RFCFFG = rfcFFG;
 
-// Review opt-in until the four-depth publisher is activated.
-const sportSuite = new URLSearchParams(location.search).get('sportReview') === '1'
-    ? window.SPoRTSuite.create({map,
-        metadataURL: 'review/sport-suite/metadata.json',
-        onChange: () => updateLegends()
-    }) : null;
+// Approved SPoRT suites: durable products are separate from dashboard code.
+const sportReview = new URLSearchParams(location.search).get('sportReview') === '1';
+const sportDataRoot = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/sport-lis/public/';
+const sportSuite = window.SPoRTSuite.create({map,
+    metadataURL: sportReview ? 'review/sport-suite/metadata.json' : sportDataRoot + 'percentile/metadata.json',
+    onChange: () => updateLegends()
+});
 window.sportSuite = sportSuite;
-const sportRSM = sportSuite ? window.SPoRTRSM.create({map,
-    metadataURL: 'review/sport-rsm/metadata.json', onChange: () => updateLegends()
-}) : null;
+const sportRSM = window.SPoRTRSM.create({map,
+    metadataURL: sportReview ? 'review/sport-rsm/metadata.json' : sportDataRoot + 'rsm/metadata.json',
+    onChange: () => updateLegends()
+});
 window.sportRSM = sportRSM;
-
 
 // --- AUTO-TOGGLING GEOJSON STATE BORDERS ---
 const whiteBorders = L.geoJSON(null, {
@@ -6559,7 +6560,7 @@ refreshGLMFromManifest({forceMetadata: true});
 refreshLightningCastFromManifest({forceMetadata: true});
 refreshHRRRTLEFromManifest({forceMetadata: true});
 fetchNWMMetadata();
-fetchSPoRTMetadata();
+// Legacy SPoRT updater retired; shared suites own publication and freshness.
 fetchNLDASRSMMetadata();
 fetchNRCSHSGMetadata();
 fetchNLCDImperviousMetadata();
@@ -6573,7 +6574,7 @@ setInterval(() => {
     fetchEROCAMMetadata();
     fetchMRMSFlash24hMetadata();
     fetchNWMMetadata();
-    fetchSPoRTMetadata();
+    // Legacy SPoRT updater retired; shared suites own publication and freshness.
     fetchNLDASRSMMetadata();
 }, 15 * 60 * 1000); 
 
@@ -7364,7 +7365,6 @@ function updateLegends() {
     if (activeLayerNames.has(MRMS_CREST_24H_LAYER_NAME)) addLegendBlock(mrmsCrest24hLegendHTML);
     if (activeLayerNames.has(MRMS_FFD_24H_LAYER_NAME)) addLegendBlock(mrmsFfd24hLegendHTML);
     if (activeLayerNames.has('NWM Soil Saturation (0-40cm)')) addLegendBlock(nwmLegendHTML);
-    if (activeLayerNames.has('NASA SPoRT-LIS VSM Percentile (0–100 cm)')) addLegendBlock(sportLegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-10 cm)')) addLegendBlock(nldasRsm010LegendHTML);
     if (activeLayerNames.has('NLDAS-2 Noah Relative Soil Moisture (0-100 cm)')) addLegendBlock(nldasRsm0100LegendHTML);
     if (activeLayerNames.has(NRCS_HSG_LAYER_NAME)) addLegendBlock(nrcsHsgLegendHTML);
@@ -7553,17 +7553,6 @@ map.on('overlayadd', function(eventLayer) {
                 ? `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">${nwmValidTime}</span>`
                 : `<strong>NWM 0-40cm Soil Saturation</strong><br><span style="color: #ffeb3b;">Loading latest raster...</span>`;
             nwmTimeBox.style.display = 'block';
-        }
-    }
-
-    if (eventLayer.name === 'NASA SPoRT-LIS VSM Percentile (0–100 cm)') {
-        fetchSPoRTMetadata();
-
-        if (sportTimeBox) {
-            sportTimeBox.innerHTML = sportLayerReady
-                ? `<strong>NASA SPoRT-LIS VSM Percentile (0–100 cm)</strong><br><span style="color: #ffeb3b;">${sportValidTime}</span>`
-                : `<strong>NASA SPoRT-LIS VSM Percentile (0–100 cm)</strong><br><span style="color: #ffeb3b;">Loading latest raster...</span>`;
-            sportTimeBox.style.display = 'block';
         }
     }
 
@@ -7790,10 +7779,6 @@ map.on('overlayremove', function(eventLayer) {
         if (nwmTimeBox) nwmTimeBox.style.display = 'none';
     }
 
-    if (eventLayer.name === 'NASA SPoRT-LIS VSM Percentile (0–100 cm)') {
-        if (sportTimeBox) sportTimeBox.style.display = 'none';
-    }
-
     if (eventLayer.name === 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)') {
         if (nldasRsm010TimeBox) nldasRsm010TimeBox.style.display = 'none';
     }
@@ -7963,16 +7948,15 @@ const dashboardSections = [
             {id: 'nwm-soilsat', label: 'NWM Soil Saturation (0-40cm)', layer: nwmLayer, kind: 'raster'},
             {id: 'nldas-rsm-010', label: 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)', layer: nldasRsm010Layer, kind: 'raster'},
             {id: 'nldas-rsm-0100', label: 'NLDAS-2 Noah Relative Soil Moisture (0-100 cm)', layer: nldasRsm0100Layer, kind: 'raster'},
-            {id: 'sport-percentile', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)', layer: sportLayer, kind: 'raster', onActivate: enforceExclusiveSPoRTSelection},
             ...(sportRSM ? window.SPoRTRSM.depths.map(depth => ({
-                id: `sport-rsm-${depth}`, label: `NASA SPoRT-LIS Relative Soil Moisture (0–${depth} cm) — Review`,
+                id: `sport-rsm-${depth}`, label: `NASA SPoRT-LIS Relative Soil Moisture (0–${depth} cm)`,
                 description: 'NASA RSM: 0% at wilting point, 100% at saturation. This differs from NLDAS percent of saturation. Age warning at 48 h; hidden at 72 h.',
                 layer: sportRSM.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
                 keywords: 'soil moisture relative RSM saturation SPoRT LIS'
             })) : []),
             ...(sportSuite ? window.SPoRTSuite.depths.map(depth => ({
-                id: `sport-suite-${depth}`, label: `NASA SPoRT-LIS VSM Percentile (0–${depth} cm) — Review`,
-                description: 'Four-depth review suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
+                id: `sport-suite-${depth}`, label: `NASA SPoRT-LIS VSM Percentile (0–${depth} cm)`,
+                description: 'Four-depth suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
                 layer: sportSuite.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
                 keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'
             })) : [])
