@@ -32,7 +32,7 @@ def create_rgba_image(data):
 
 REVISION='sport-suite-rsm-v1'
 DISPLAY_MAX_DIMENSION=4000
-POLICY={'warn_age_hours':72,'expire_age_hours':96,'status':'provisional_review_only'}
+POLICY={'warn_age_hours':48,'expire_age_hours':72,'status':'approved_dashboard_policy_v1'}
 
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def iso(t):return t.isoformat().replace('+00:00','Z')

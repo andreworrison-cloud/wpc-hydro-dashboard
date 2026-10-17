@@ -9,13 +9,13 @@
         const a = metadata?.active, time = Date.parse(a?.valid_time), age = (now-time)/3600000;
         if (!a || !Number.isFinite(age)) return {visible:false, state:'unavailable', label:'Unavailable — no validated suite'};
         if (age < 0) return {visible:false, state:'future', label:'Hidden — invalid future valid time'};
-        if (age >= 96) return {visible:false, state:'expired', age, label:'Expired — hidden (96-hour review cutoff)'};
+        if (age >= 72) return {visible:false, state:'expired', age, label:'Expired—awaiting newer data (hidden at 72 hours)'};
         const retained = failed || metadata.last_attempt?.ok === false;
-        return {visible:true, age, state:retained?'retained':age>=72?'aging':'available',
-            label:(retained?'Retained previous suite · ':'')+(age>=72?'Aging':'Within review age limit')+` · ${age.toFixed(1)} h old`};
+        return {visible:true, age, state:retained?'retained':age>=48?'aging':'available',
+            label:(retained?'Retained previous suite · ':'')+(age>=48?'Aging soil-moisture data':'Within dashboard age limit')+` · ${age.toFixed(1)} h old`};
     }
     function validate(metadata, previous) {
-        if (metadata?.schema_version !== 1 || metadata.policy?.warn_age_hours !== 72 || metadata.policy?.expire_age_hours !== 96 || metadata.policy?.status !== 'provisional_review_only') throw Error('SPoRT review policy mismatch');
+        if (metadata?.schema_version !== 1 || metadata.policy?.warn_age_hours !== 48 || metadata.policy?.expire_age_hours !== 72 || metadata.policy?.status !== 'approved_dashboard_policy_v1') throw Error('SPoRT dashboard policy mismatch');
         const a=metadata.active;if(!a)return;
         if (!Number.isFinite(Date.parse(a.valid_time)) || !/^\d{8}-[a-f0-9]{20}-sport-suite-wet-tail-v2$/.test(a.generation) || a.render_revision!=='sport-suite-wet-tail-v2') throw Error('Invalid SPoRT generation');
         if (Object.keys(a.products || {}).sort().join(',') !== ['10','100','200','40'].join(',')) throw Error('Incomplete SPoRT suite');
@@ -74,11 +74,11 @@
             finally{staged.forEach(u=>URL.revokeObjectURL(u));clearTimeout(timeout);busy=false;sync();}
         }
         function legendHTML(){const ds=selected();if(!ds.length)return '';const s=state(),a=metadata?.active;
-            let html=`<div class="sport-suite-card"><strong>NASA SPoRT-LIS VSM Percentile<br>${ds.map(d=>`0–${d} cm`).join(' / ')}</strong><p><b>Four-depth review</b> · ${esc(s.label)}</p><div>Soil moisture percentile · wet tail</div>`;
+            let html=`<div class="sport-suite-card"><strong>NASA SPoRT-LIS VSM Percentile<br>${ds.map(d=>`0–${d} cm`).join(' / ')}</strong><p><b>Four-depth review</b> · <span style="font-weight:700;${s.state==='aging'||s.state==='retained'?'color:#7a3e00;background:#fff0c2;padding:2px 4px;':''}">${esc(s.label)}</span></p><div>Soil moisture percentile · wet tail</div>`;
             colors.forEach((c,i)=>{html+=`<div><i class="sport-suite-swatch" style="background:rgba(${c.slice(0,3).join(',')},${c[3]/255})"></i>${edges[i]}–${i===4?'100':`&lt;${edges[i+1]}`}</div>`;});
             html+='<p>Below the 70th percentile and missing data are transparent. Transparency does not establish dry ground. Percentiles are not saturation percentages or flood probabilities.</p>';
-            if(a){const p=a.products[ds[0]];html+=`<div>Valid: ${esc(utc(a.valid_time))}<br>Source file modified: ${esc(utc(p.http_modified_at || p.directory_modified_at))}<br>Retrieved: ${esc(utc(p.retrieved_at))}<br>Last ingest attempt: ${esc(utc(metadata.last_attempt?.at))}<br>Mode: ${esc(p.retrieval_mode)}<br>Display cutoff: ${esc(utc(new Date(Date.parse(a.valid_time)+96*3600000).toISOString()))}</div>`;}
-            return html+'<p>Provisional review policy: warning at 72 h; hidden at 96 h. Nominal 3-km source; bilinear display reprojection adds no scientific resolution.</p></div>';
+            if(a){const p=a.products[ds[0]];html+=`<div>Valid: ${esc(utc(a.valid_time))}<br>Source file modified: ${esc(utc(p.http_modified_at || p.directory_modified_at))}<br>Retrieved: ${esc(utc(p.retrieved_at))}<br>Last ingest attempt: ${esc(utc(metadata.last_attempt?.at))}<br>Mode: ${esc(p.retrieval_mode)}<br>Display cutoff: ${esc(utc(new Date(Date.parse(a.valid_time)+72*3600000).toISOString()))}</div>`;}
+            return html+'<p>Dashboard policy: warning at 48 h; hidden at 72 h; age measured from valid time. Nominal 3-km source; bilinear display reprojection adds no scientific resolution.</p></div>';
         }
         function setBorders(data){if(borders&&map.hasLayer(borders))map.removeLayer(borders);borders=L.layerGroup([
             L.geoJSON(data,{pane:'mapReference',interactive:false,style:{color:'#101820',weight:2.6,opacity:.85,fill:false}}),

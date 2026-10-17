@@ -865,7 +865,7 @@ const rfcFFG = window.createRFCFFGLayers({map,
 });
 window.RFCFFG = rfcFFG;
 
-// Review opt-in until the four-depth publisher and freshness policy are approved.
+// Review opt-in until the four-depth publisher is activated.
 const sportSuite = new URLSearchParams(location.search).get('sportReview') === '1'
     ? window.SPoRTSuite.create({map,
         metadataURL: 'review/sport-suite/metadata.json',
@@ -7966,13 +7966,13 @@ const dashboardSections = [
             {id: 'sport-percentile', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)', layer: sportLayer, kind: 'raster', onActivate: enforceExclusiveSPoRTSelection},
             ...(sportRSM ? window.SPoRTRSM.depths.map(depth => ({
                 id: `sport-rsm-${depth}`, label: `NASA SPoRT-LIS Relative Soil Moisture (0–${depth} cm) — Review`,
-                description: 'NASA RSM: 0% at wilting point, 100% at saturation. This differs from NLDAS percent of saturation. Provisional freshness policy.',
+                description: 'NASA RSM: 0% at wilting point, 100% at saturation. This differs from NLDAS percent of saturation. Age warning at 48 h; hidden at 72 h.',
                 layer: sportRSM.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
                 keywords: 'soil moisture relative RSM saturation SPoRT LIS'
             })) : []),
             ...(sportSuite ? window.SPoRTSuite.depths.map(depth => ({
                 id: `sport-suite-${depth}`, label: `NASA SPoRT-LIS VSM Percentile (0–${depth} cm) — Review`,
-                description: 'Four-depth review suite. Shared valid time; provisional age limits. Original numerical NASA SPoRT-LIS percentiles.',
+                description: 'Four-depth review suite. Shared valid time; warning at 48 h, hidden at 72 h. Original numerical NASA SPoRT-LIS percentiles.',
                 layer: sportSuite.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
                 keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'
             })) : [])

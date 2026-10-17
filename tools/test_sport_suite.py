@@ -48,8 +48,8 @@ class SuiteTests(unittest.TestCase):
         next(self.source.glob('*0-200cm*')).unlink();self.run_ingest();self.assertIsNone(self.metadata()['active'])
     def test_exact_expiry_and_warning(self):
         active={'valid_time':'2026-10-17T00:00:00Z'};base=s.parse(active['valid_time'])
-        self.assertEqual(s.freshness(active,base+timedelta(hours=72))['status'],'aging')
-        self.assertFalse(s.freshness(active,base+timedelta(hours=96))['usable'])
+        self.assertEqual(s.freshness(active,base+timedelta(hours=48))['status'],'aging')
+        self.assertFalse(s.freshness(active,base+timedelta(hours=72))['usable'])
     def test_future_rejected(self):
         self.assertEqual(self.run_ingest(now=self.now-timedelta(days=1)),1);self.assertIsNone(self.metadata()['active'])
     def test_expired_failure_preserves_files_but_hides(self):
