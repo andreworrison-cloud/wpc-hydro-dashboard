@@ -109,7 +109,7 @@ def publish_export(repo,target,state_file):
         if parent and tree==git(repo,'rev-parse',f'{parent}^{{tree}}'):return parent
         args=['commit-tree',tree]
         if parent:args+=['-p',parent]
-        commit=git(repo,*args,'-m','Publish complete RFC FFG review generation and status',env=env)
+        commit=git(repo,*args,'-m','Publish validated SPoRT-LIS suites and freshness status',env=env)
         git(repo,'push','origin',f'{commit}:refs/heads/{BRANCH}')
         return commit
 
