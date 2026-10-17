@@ -20,10 +20,20 @@ def build(public, output):
         if hashlib.sha256(data).hexdigest() != asset['sha256']:
             raise ValueError('Image hash mismatch')
         images[hour] = 'data:image/png;base64,' + base64.b64encode(data).decode()
-    if active['legend']['crs'] != 'EPSG:4326' or active['legend']['bounds_wsen'] != [-126, 24, -66, 50]:
+    if active['legend']['crs'] not in ('EPSG:4326', 'EPSG:3857') or active['legend']['bounds_wsen'] != [-126, 24, -66, 50]:
         raise ValueError('Review map expects geographic display bounds')
-    template = (Path(__file__).parent / 'rfc_ffg_review_template.html').read_text()
-    payload = json.dumps({'metadata': metadata, 'images': images}).replace('<', '\\u003c')
+    root = Path(__file__).resolve().parents[1]
+    mercator = active['legend']['crs'] == 'EPSG:3857'
+    name = 'rfc_ffg_leaflet_template.html' if mercator else 'rfc_ffg_review_template.html'
+    template = (Path(__file__).parent / name).read_text()
+    data = {'metadata': metadata, 'images': images}
+    if mercator:
+        vendor = root / 'review/vendor'
+        data['states'] = json.loads((vendor / 'us-states.json').read_text())
+        data['basemaps'] = json.loads((root / 'review/basemaps.json').read_text())
+        template = template.replace('/*LEAFLET_JS*/', (vendor / 'leaflet-1.9.4.js').read_text())
+        template = template.replace('/*LEAFLET_CSS*/', (vendor / 'leaflet-1.9.4.css').read_text())
+    payload = json.dumps(data).replace('<', '\\u003c')
     html = template.replace('/*DISPLAY_CONTRACT*/', (Path(__file__).parent / 'rfc_ffg_display.js').read_text())
     html = html.replace('/*REVIEW_DATA*/', 'const review = ' + payload + ';')
     output.parent.mkdir(parents=True, exist_ok=True)

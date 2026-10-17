@@ -315,3 +315,57 @@ style.css changes, publishing, or scheduler changes are included. The manual/PR
 rehearsal now builds an offline review artifact after successful ingestion.
 Scheduler choice (including the user's cron-job.org option) remains deferred
 until display integration and durable publication are validated.
+
+## H5 Mercator and browser validation (2026-10-17 follow-up)
+
+The previous browser-blocker and geographic-only display notes are superseded
+by this section. `review/rfc_ffg_leaflet.html` is the new frozen Leaflet review;
+the earlier geographic review remains available for comparison.
+
+- Ingest render revision `rfc-ffg-ingest-v0.2-mercator` produces 3000x1650
+  EPSG:3857 display PNGs directly from the native numerical arrays with nearest
+  neighbor resampling. W/S/E/N bounds remain -126/24/-66/50; projected bounds
+  are recorded separately. The new revision prevents reuse of old geographic
+  images as Mercator generations. Scientific grids are unchanged.
+- The focused Leaflet 1.9.4 review requires the Mercator CRS before creating an
+  image overlay. It embeds raster assets, Leaflet, and generalized state
+  reference geometry; external map backgrounds require internet connectivity.
+  It includes the existing dashboard's 15 background selections (the WPC Dark
+  Reference is simplified to country polygons without production place labels).
+- CONUS state boundaries use separate vector layers above the raster, with a
+  dark halo and a light inner stroke. They stay visible on all backgrounds,
+  including No Basemap. They are not burned into the scientific data.
+- Browser QA now runs using Chromium 133.0.6943.0, obtained via the packaged
+  Chromium distribution after the Playwright download endpoint failed. Actual
+  desktop, regional-zoom, and 390px mobile screenshots were visually inspected.
+  A conflicting SVG style found on the first render was corrected before
+  validation. No JavaScript page errors or mobile horizontal overflow remained.
+- All three duration selections, 15 basemap layer transitions, and retained /
+  expired / unavailable raster visibility transitions passed browser checks.
+  A separate analytical Mercator placement check at five locations and three
+  zoom levels had maximum discrepancy 0.90 screen pixels (Leaflet rounding).
+  This is a rendering geometry check, not a claim of subpixel source accuracy.
+- Two independent numerical tests check projected bounds against the spherical
+  Mercator formula, the latitude displacement of a known synthetic boundary,
+  preserved color categories and NoData, and unsupported CRS rejection.
+  Existing 28 Python tests and 10 JavaScript freshness assertions still pass.
+  SHA-256 verification confirms the original native numerical GeoTIFF is unchanged.
+
+Rebuild the review from new ingest output using `tools/build_rfc_ffg_review.py`;
+it selects the correct template from the declared CRS. Browser test command:
+
+```
+# With playwright available to Node and Chromium installed:
+node tools/test_rfc_ffg_leaflet.cjs review/rfc_ffg_leaflet.html
+# Optional CHROMIUM_EXECUTABLE_PATH selects an existing Chromium executable.
+```
+
+This remains a focused review within draft PR 12. No production dashboard
+registration, main-branch publication, durable hosting, or schedule is changed.
+
+External background check: after allowing additional load time through the
+execution environment's network proxy, all 28 requested tiles loaded for both
+Esri Light Gray and Esri World Imagery. Both complete screenshots were visually
+inspected for coastline/state alignment and contrast. OpenStreetMap loaded
+partially (9/28 tiles during its shorter observation). Other backgrounds passed
+layer-switch checks but were not individually certified for tile availability.

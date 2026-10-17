@@ -92,13 +92,17 @@ def checked_array(array):
     return np.ma.array(np.asarray(array), mask=mask)
 
 
-def preview(array, crs, affine, path, width=1500, height=650):
+def preview(array, crs, affine, path, width=1500, height=650, target_crs="EPSG:4326"):
     """Display only: nearest-neighbor geographic derivative; no invented values."""
     dest = np.full((height, width), np.nan, dtype='float32')
-    out_transform = from_bounds(-126, 24, -66, 50, width, height)
+    from rasterio.warp import transform_bounds
+    if target_crs not in ("EPSG:4326", "EPSG:3857"):
+        raise ValueError("Unsupported display projection")
+    projected_bounds = transform_bounds("EPSG:4326", target_crs, -126, 24, -66, 50)
+    out_transform = from_bounds(*projected_bounds, width, height)
     reproject(array.filled(np.nan).astype('float32'), dest, src_transform=affine,
               src_crs=crs, src_nodata=np.nan, dst_transform=out_transform,
-              dst_crs='EPSG:4326', dst_nodata=np.nan, resampling=Resampling.nearest)
+              dst_crs=target_crs, dst_nodata=np.nan, resampling=Resampling.nearest)
     # Diagnostic palette: lower rainfall thresholds are warmer. Not a final UI legend.
     edges = np.array([0.25, .5, .75, 1, 1.5, 2, 2.5, 3, 4, 5])
     colors = np.array([[128,0,38],[189,0,38],[227,26,28],[252,78,42],
@@ -110,9 +114,9 @@ def preview(array, crs, affine, path, width=1500, height=650):
     rgba[:3] = colors[idx].transpose(2,0,1)
     rgba[:3, ~valid] = 0
     rgba[3] = valid * 255
-    with rasterio.open(path, 'w', driver='PNG', width=dest.shape[1], height=dest.shape[0], count=4, dtype='uint8', crs='EPSG:4326', transform=out_transform) as out:
+    with rasterio.open(path, 'w', driver='PNG', width=dest.shape[1], height=dest.shape[0], count=4, dtype='uint8', crs=target_crs, transform=out_transform) as out:
         out.write(rgba)
-    return {'bounds_wsen': [-126,24,-66,50], 'crs': 'EPSG:4326', 'units': 'inches',
+    return {'bounds_wsen': [-126,24,-66,50], 'crs': target_crs, 'projected_bounds': list(projected_bounds), 'units': 'inches',
             'class_upper_edges': edges.tolist(), 'colors_rgb': colors.tolist(),
             'role': 'diagnostic_display_only', 'resampling': 'nearest'}
 

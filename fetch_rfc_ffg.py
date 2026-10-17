@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / 'tools'))
 from probe_rfc_ffg_numeric import (SOURCE, HOURS, download, snapshot_names,
                                   validate_grib, band_contract, checked_array, preview)
 
-REVISION = 'rfc-ffg-ingest-v0.1'
+REVISION = 'rfc-ffg-ingest-v0.2-mercator'
 BASELINE = Path(__file__).resolve().parent / 'tools/rfc_ffg_coverage_baseline.json'
 POLICY = {'max_snapshot_age_hours': 3, 'max_reference_age_hours': 9,
           'future_tolerance_minutes': 5, 'max_total_mask_change_fraction': .005,
@@ -235,7 +235,7 @@ def ingest(output, science, current=None, fetcher=download, policy=None, baselin
                 assets={};legend=None
                 for h in HOURS:
                     name=f'rfc_ffg_{h}h.png'
-                    legend=preview(fields[h],crs,affine,stage_public/name,width=3000,height=1300)
+                    legend=preview(fields[h],crs,affine,stage_public/name,width=3000,height=1650,target_crs="EPSG:3857")
                     with rasterio.open(stage_public/name) as image:
                         if image.count!=4 or not np.any(image.read(4)>0):
                             raise ValueError('Empty or invalid rendered image')

@@ -6,6 +6,10 @@ on:
   pull_request:
     paths:
       - 'fetch_rfc_ffg.py'
+      - 'review/**'
+      - 'tools/rfc_ffg_leaflet_template.html'
+      - 'tools/test_rfc_ffg_projection.py'
+      - 'tools/test_rfc_ffg_leaflet.cjs'
       - 'tools/rfc_ffg_display.js'
       - 'tools/test_rfc_ffg_display.cjs'
       - 'tools/build_rfc_ffg_review.py'
@@ -35,6 +39,7 @@ jobs:
         run: |
           python -m unittest discover -s tools -p 'test_probe_rfc_ffg*.py' -v
           python -m unittest discover -s tools -p 'test_fetch_rfc_ffg.py' -v
+          python -m unittest discover -s tools -p 'test_rfc_ffg_projection.py' -v
       - name: Test browser freshness contract
         run: node tools/test_rfc_ffg_display.cjs
       - name: Restore last validated rehearsal state
