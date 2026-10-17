@@ -140,7 +140,7 @@ def download_latest_sport():
 
 
 def read_and_reproject_geotiff(source_path=None, max_dimension=MAX_OUTPUT_DIMENSION,
-                               resampling=Resampling.bilinear, upscale=False):
+                               resampling=Resampling.bilinear, upscale=False, upper_tolerance=0.0):
     destination_crs = CRS.from_epsg(3857)
 
     with rasterio.open(source_path or SPORT_FILE) as source:
@@ -154,9 +154,15 @@ def read_and_reproject_geotiff(source_path=None, max_dimension=MAX_OUTPUT_DIMENS
         source_valid = (
             np.isfinite(source_data)
             & (source_data >= 0.0)
-            & (source_data <= 100.0)
+            & (source_data <= 100.0 + upper_tolerance)
         )
 
+        if upper_tolerance:
+            # Opt-in RSM float roundoff tolerance; preserve the legacy path.
+            source_valid &= source.read_masks(1) > 0
+            if source.nodata is not None:
+                source_valid &= source_data != source.nodata
+            source_data = np.minimum(source_data, 100.0)
         source_data[~source_valid] = np.nan
 
         (
@@ -276,12 +282,12 @@ def read_and_reproject_geotiff(source_path=None, max_dimension=MAX_OUTPUT_DIMENS
 
     if valid_values.size:
         print(
-            "SPoRT valid percentile range: "
+            ("SPoRT valid RSM (%) range: " if upper_tolerance else "SPoRT valid percentile range: ") +
             f"{float(np.nanmin(valid_values)):.1f} to "
             f"{float(np.nanmax(valid_values)):.1f}"
         )
         print(
-            "SPoRT fraction at or above 70th percentile: "
+            ("SPoRT fraction at or above 70% RSM: " if upper_tolerance else "SPoRT fraction at or above 70th percentile: ") +
             f"{100.0 * np.mean(valid_values >= 70.0):.1f}%"
         )
 
