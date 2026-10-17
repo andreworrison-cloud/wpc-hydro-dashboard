@@ -1,0 +1,38 @@
+name: H5 RFC FFG source diagnostic
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'tools/probe_rfc_ffg.py'
+      - 'tools/test_probe_rfc_ffg.py'
+      - 'tools/probe_rfc_ffg_numeric.py'
+      - 'tools/test_probe_rfc_ffg_numeric.py'
+      - '.github/workflows/probe_rfc_ffg.yml'
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical decoder
+        run: python -m pip install "numpy>=2,<3" "rasterio>=1.4,<2"
+      - name: Test diagnostic failure handling
+        run: python -m unittest discover -s tools -p 'test_probe_rfc_ffg*.py' -v
+      - name: Observe source without publishing dashboard assets
+        run: python tools/probe_rfc_ffg.py --output-dir diagnostics/rfc_ffg
+      - name: Validate two direct WPC numerical snapshots
+        if: always()
+        run: python tools/probe_rfc_ffg_numeric.py --output-dir diagnostics/rfc_ffg
+      - name: Retain source evidence even when a probe fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfc-ffg-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/rfc_ffg/
+          if-no-files-found: warn
+          retention-days: 14
