@@ -87,17 +87,22 @@ def publish(repo,target,state_file):
         if parent and tree==git(repo,'rev-parse',f'{parent}^{{tree}}'):return parent
         args=['commit-tree',tree]
         if parent:args+=['-p',parent]
-        commit=git(repo,*args,'-m','Publish complete RFC FFG review generation and status',env=env)
+        commit=git(repo,*args,'-m','Publish complete RFC FFG generation and status',env=env)
         git(repo,'push','origin',f'{commit}:refs/heads/{BRANCH}')
         return commit
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action',choices=['restore','publish'])
+    parser.add_argument('--production',action='store_true',help='Use the isolated production data branch')
     parser.add_argument('--repo',type=Path,default=Path.cwd())
     parser.add_argument('--data-dir',type=Path,required=True)
     parser.add_argument('--state-file',type=Path,required=True)
     args=parser.parse_args()
+    if args.production:
+        global BRANCH, IDENTITY
+        BRANCH='data/rfc-ffg'
+        IDENTITY={'schema_version':1,'purpose':'RFC FFG production data'}
     result=(restore if args.action=='restore' else publish)(args.repo,args.data_dir,args.state_file)
-    print(f'{args.action}: {result or "new review branch"}',flush=True)
+    print(f'{args.action}: {result or "new data branch"}',flush=True)
 if __name__=='__main__':main()

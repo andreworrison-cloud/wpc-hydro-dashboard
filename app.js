@@ -858,9 +858,9 @@ const esriLightLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest
 });
 wpcDarkCountryLabels.addTo(map);
 
-// Review-branch RFC FFG integration; durable data branch is separate from Pages.
+// Official RFC FFG; durable product data are separate from the Pages code branch.
 const rfcFFG = window.createRFCFFGLayers({map,
-    metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rfc-ffg-review/public/metadata.json',
+    metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rfc-ffg/public/metadata.json',
     onChange: () => updateLegends()
 });
 window.RFCFFG = rfcFFG;

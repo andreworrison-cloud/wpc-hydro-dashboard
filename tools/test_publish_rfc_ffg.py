@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import unittest
 from publish_rfc_ffg import restore,publish,git,BRANCH
 
@@ -33,6 +34,19 @@ class DurablePublishTests(unittest.TestCase):
         (fresh/'public/metadata.json').write_text('{}')
         with self.assertRaises(ValueError):publish(self.repo,fresh,state)
         self.assertEqual(git(self.repo,'ls-remote','--heads','origin').split()[0],head)
+    def test_production_cli_isolates_branch(self):
+        prod=self.root/'production';state=self.root/'production-state.json'
+        script=Path(__file__).with_name('publish_rfc_ffg.py')
+        def cli(action):
+            subprocess.run([sys.executable,str(script),action,'--production','--repo',str(self.repo),'--data-dir',str(prod),'--state-file',str(state)],check=True,capture_output=True)
+        cli('restore')
+        self.assertEqual(json.loads(state.read_text())['branch'],'data/rfc-ffg')
+        (prod/'public').mkdir(exist_ok=True)
+        (prod/'public/metadata.json').write_text(json.dumps({'schema_version':1,'state':'unavailable','active':None}))
+        cli('publish')
+        self.assertEqual(git(self.repo,'ls-remote','--heads','origin').split()[1],'refs/heads/data/rfc-ffg')
+        self.assertEqual(json.loads((prod/'RFC_FFG_DATA_BRANCH.json').read_text())['purpose'],'RFC FFG production data')
+
     def test_nonempty_restore_rejected(self):
         self.write()
         with self.assertRaises(ValueError):restore(self.repo,self.data,self.state)
