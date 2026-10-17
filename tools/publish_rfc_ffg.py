@@ -55,6 +55,7 @@ def verify(target):
     if m.get('schema_version')!=1:raise ValueError('Invalid metadata schema')
     a=m.get('active')
     if not a:return
+    if a.get('legend',{}).get('crs')!='EPSG:3857':raise ValueError('Durable review requires Mercator display')
     verify_active(target/'public',a)
     native=safe_path(target/'science',a['science']['path'])
     if sha(native)!=a['science']['sha256']:raise ValueError('Native science checksum mismatch')

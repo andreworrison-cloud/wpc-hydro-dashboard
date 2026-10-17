@@ -131,3 +131,10 @@ class IngestTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class FreshnessBoundaryTests(unittest.TestCase):
+    def test_exact_cutoff_is_expired(self):
+        active={'snapshot_time':'2026-10-17T14:00:00+00:00','reference_time':'2026-10-17T12:00:00+00:00'}
+        self.assertTrue(ingest.freshness(active,ingest.dt('2026-10-17T17:00:00+00:00'),ingest.POLICY)['expired'])
+    def test_missing_duration_is_rejected(self):
+        with self.assertRaises(ValueError):ingest.verify_active(Path('.'),{'assets':{}})

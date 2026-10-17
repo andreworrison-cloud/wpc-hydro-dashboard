@@ -64,6 +64,8 @@ def safe_path(root, relative):
 
 
 def verify_active(root, active):
+    if set(active.get('assets', {})) != {'1', '3', '6'}:
+        raise ValueError('Retained product lacks a complete duration set')
     for item in active['assets'].values():
         path = safe_path(root, item['path'])
         if not path.is_file() or digest(path) != item['sha256']:
@@ -79,7 +81,7 @@ def freshness(active, current, policy):
     expiry = expires_at(active, policy)
     return {'snapshot_age_hours': (current-dt(active['snapshot_time'])).total_seconds()/3600,
             'reference_age_hours': (current-dt(active['reference_time'])).total_seconds()/3600,
-            'expires_at': expiry.isoformat(), 'expired': current > expiry}
+            'expires_at': expiry.isoformat(), 'expired': current >= expiry}
 
 
 def validate_times(snapshot, reference, request, current, policy):

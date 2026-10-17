@@ -1,7 +1,7 @@
 /* RFC guidance adapter: immutable, hash-verified images; all durations swap together. */
 window.createRFCFFGLayers = function ({map, metadataURL, onChange = () => {}, now = () => Date.now()}) {
     const hours = [1, 3, 6], layers = {}, images = {};
-    let metadata = null, busy = false, failed = false, objectURLs = [], borders = null;
+    let metadata = null, loadedGeneration = null, busy = false, failed = false, objectURLs = [], borders = null;
     map.createPane('rfcFFG'); map.getPane('rfcFFG').style.zIndex = 340;
     hours.forEach(h => {
         const group = L.layerGroup(); group.options.opacity = 1;
@@ -48,7 +48,7 @@ window.createRFCFFGLayers = function ({map, metadataURL, onChange = () => {}, no
             const response=await fetch(url,{cache:'no-store',signal:controller.signal});
             if (!response.ok) throw Error('FFG metadata unavailable');
             const next=await response.json();validate(next);
-            if (next.active && ffgDisplayState(next,now()).visible && next.active.generation!==metadata?.active?.generation) {
+            if (next.active && ffgDisplayState(next,now()).visible && next.active.generation!==loadedGeneration) {
                 // Wait for every download, hash, and decode before changing anything on the map.
                 const results=await Promise.allSettled(hours.map(async h => {
                     const asset=next.active.assets[h], assetURL=new URL(asset.path,new URL('.',url));
@@ -63,6 +63,7 @@ window.createRFCFFGLayers = function ({map, metadataURL, onChange = () => {}, no
                 const error=results.find(r=>r.status==='rejected');if(error)throw error.reason;
                 hours.forEach(h=>layers[h].clearLayers());
                 results.forEach(r=>{images[r.value[0]]=r.value[1];});
+                loadedGeneration=next.active.generation;
                 const old=objectURLs;objectURLs=staged.splice(0);old.forEach(u=>URL.revokeObjectURL(u));
             }
             // An unavailable upstream pointer must not discard a still-valid local generation.

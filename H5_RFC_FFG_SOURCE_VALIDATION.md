@@ -412,7 +412,7 @@ volume and either approve this storage model or move the same immutable-object /
 manifest contract to an object store with an explicit lifecycle. No history is
 rewritten or deleted by this implementation.
 
-Validation: 34 Python tests (including four durable publisher tests), ten
+Validation: 36 Python tests (including four durable publisher tests), ten
 JavaScript freshness assertions, and a browser rehearsal of the actual
 `index.html` / `app.js` passed. The browser isolated unrelated remote products
 and used the actual validated Mercator PNGs with controlled metadata and clock.
@@ -430,3 +430,13 @@ contains the three Mercator `rfc_ffg_{1,3,6}h.png` files and metadata.json from 
 frozen 2026-10-17 14Z review. Cache the existing dashboard's CDN dependencies
 iso8601-js-period 0.2.1 as `/tmp/h5_iso.js` and leaflet-timedimension 1.1.1 as
 `/tmp/h5_time.js` before running. These files are test dependencies only.
+
+
+GitHub rehearsal run 39050746511 completed successfully on commit
+856b47fa5fe977ba01ea241aa675eaea01e55558. It created durable data commit
+2b78c581b68647f32795f3d70ea665a955884de5 with the actual 2026-10-17 16Z
+snapshot / 12Z reference. The integrated dashboard loaded and hash-verified
+those remote assets in Chromium (controlled review clock 16:45Z). The existing
+Validate Dashboard Interface workflow also passed with 148 registry entries.
+A final consistency check aligned backend expiry with browser expiry at the
+exact cutoff and rejects retained manifests missing any of the three durations.
