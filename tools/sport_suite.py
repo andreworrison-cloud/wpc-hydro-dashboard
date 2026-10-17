@@ -13,7 +13,8 @@ from PIL import Image
 from fetch_sport import DEPTHS, BASE_URL, build_session, read_and_reproject_geotiff, create_rgba_image
 from tools.probe_sport_depths import inventory
 
-REVISION='sport-suite-wet-tail-v1'
+REVISION='sport-suite-wet-tail-v2'
+DISPLAY_MAX_DIMENSION=4000
 POLICY={'warn_age_hours':72,'expire_age_hours':96,'status':'provisional_review_only'}
 
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -31,7 +32,7 @@ def atomic_json(path,data):
 def verify(root,active):
     if not active or set(active['products'])!=set(DEPTHS):raise ValueError('Missing depth suite')
     generation=active['generation']
-    if not re.fullmatch(r'\d{8}-[a-f0-9]{20}-sport-suite-wet-tail-v1',generation):raise ValueError('Invalid generation')
+    if not re.fullmatch(r'\d{8}-[a-f0-9]{20}-sport-suite-wet-tail-v[12]',generation):raise ValueError('Invalid generation')
     for depth,p in active['products'].items():
         if p['depth_cm']!=[0,int(depth)] or p['valid_time']!=active['valid_time']:raise ValueError('Depth/time mismatch')
         for role in ('source','image'):
@@ -98,7 +99,7 @@ def ingest(root,source_dir=None,date=None,now=None,session=None):
                 state='unchanged'
             else:
                 for d in DEPTHS:
-                    p=products[d];data,bounds=read_and_reproject_geotiff(stage/p['source']['path'])
+                    p=products[d];data,bounds=read_and_reproject_geotiff(stage/p['source']['path'], max_dimension=DISPLAY_MAX_DIMENSION, upscale=True)
                     image=stage/f'sport_0_{d}cm.png';Image.fromarray(create_rgba_image(data)).save(image,optimize=True)
                     p['image']={'path':image.name,'sha256':digest(image),'width':data.shape[1],'height':data.shape[0],'crs':'EPSG:3857','bounds':bounds,'resampling':'bilinear','mask_resampling':'nearest','palette':'sport-wet-tail-v4'}
                     for role in ('source','image'):p[role]['path']=f'generations/{generation}/'+p[role]['path']

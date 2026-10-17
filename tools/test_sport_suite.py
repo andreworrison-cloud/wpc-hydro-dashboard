@@ -16,12 +16,26 @@ class SuiteTests(unittest.TestCase):
         self.stats={'shape':[2,2],'transform':[1,0,0,0,-1,2],'crs':'EPSG:4326','valid_cells':4}
         self.addCleanup(patch.stopall)
         patch.object(s,'validate_source',return_value=(self.stats,np.ones((2,2),bool))).start()
-        patch.object(s,'read_and_reproject_geotiff',return_value=(np.array([[70.,85.],[96.,99.]]),[[25,-125],[53,-67]])).start()
+        self.renderer=patch.object(s,'read_and_reproject_geotiff',return_value=(np.array([[70.,85.],[96.,99.]]),[[25,-125],[53,-67]])).start()
     def run_ingest(self,**kwargs):return s.ingest(self.root,source_dir=self.source,date='20261017',now=kwargs.pop('now',self.now),**kwargs)
     def metadata(self):return json.loads((self.root/'metadata.json').read_text())
     def test_complete_suite_and_sources(self):
         self.assertEqual(self.run_ingest(),0);m=self.metadata();self.assertEqual(set(m['active']['products']),set(s.DEPTHS));self.assertTrue(s.verify(self.root,m['active']))
         self.assertEqual(self.run_ingest(),0);self.assertEqual(self.metadata()['state'],'unchanged')
+    def test_approved_render_configuration(self):
+        self.assertEqual(self.run_ingest(),0)
+        self.assertEqual(self.renderer.call_count,4)
+        for call in self.renderer.call_args_list:
+            self.assertEqual(call.kwargs,{'max_dimension':4000,'upscale':True})
+    def test_revision_upgrade_and_failure_retention(self):
+        with patch.object(s,'REVISION','sport-suite-wet-tail-v1'):
+            self.assertEqual(self.run_ingest(),0)
+        before=self.metadata()['active']
+        with patch.object(s,'read_and_reproject_geotiff',side_effect=RuntimeError('render failed')):
+            self.assertEqual(self.run_ingest(),1)
+        self.assertEqual(self.metadata()['active'],before)
+        self.assertEqual(self.run_ingest(),0)
+        self.assertNotEqual(self.metadata()['active']['generation'],before['generation'])
     def test_partial_failure_keeps_whole_generation(self):
         self.run_ingest();before=self.metadata()['active'];next(self.source.glob('*0-200cm*')).unlink()
         self.assertEqual(self.run_ingest(),1);m=self.metadata();self.assertEqual(m['active'],before);self.assertEqual(m['state'],'retained')
