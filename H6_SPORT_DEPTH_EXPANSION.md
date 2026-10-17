@@ -85,3 +85,10 @@ Andrew authorized durable publishing and activation. The production dashboard no
 The existing `.github/workflows/fetch_sport.yml` becomes the six-layer production publisher. It restores durable state, ingests each suite independently, publishes valid new/retained status even after a source failure, then reports the failure. Push-to-main bootstraps the data branch. The pre-existing 01:15/07:15/13:15/19:15 UTC GitHub cadence is preserved until cron-job.org can be configured; the browser scheduler session currently requires sign-in. There is no second SPoRT publishing workflow. Production uses the approved 48-hour warning and 72-hour hiding cutoff.
 
 Local pre-activation checks: 26 Python tests and 43 Node tests pass. The six publisher tests use a local bare Git remote and cover atomic restore, source exclusion, unchanged trees, concurrent writers, corruption rejection, restoration without original floats during upstream failure, nonempty restore rejection and generation-directory retention. Live production and UI verification are recorded in the task completion report.
+
+
+## Production activation — 2026-10-17
+
+PR #13 merged as `24827ea663c0ee505fa49543a45632e876998c69`. Production run 39063079411 and Pages deployment succeeded. Both durable manifests contain the 2026-10-17 00Z valid cycle and the approved 48-hour warning / 72-hour expiration policy. All six layers loaded at 4000 × 2538 in live-browser checks; depth exclusivity, legends, separate timestamps, zoom, and state-border alignment were verified on dark, light-gray, and satellite basemaps.
+
+cron-job.org job **8666661**, “WPC SPoRT-LIS Soil Moisture,” is enabled with `15 1,7,13,19 * * *` in UTC. Its test dispatched workflow run **39063513109**, which completed successfully against the existing durable data branch. The GitHub schedule is removed to avoid duplicate timers. `workflow_dispatch` and code-change bootstrap remain available. Existing RFC FFG job 8666235 is unchanged.

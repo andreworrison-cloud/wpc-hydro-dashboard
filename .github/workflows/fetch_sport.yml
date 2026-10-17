@@ -1,8 +1,7 @@
 name: Publish SPoRT-LIS Soil Moisture
 on:
-  schedule:
-    # Preserve the existing cadence until cron-job.org handoff is configured.
-    - cron: '15 1,7,13,19 * * *'
+  # cron-job.org job 8666661 dispatches at 01:15, 07:15, 13:15, 19:15 UTC.
+  # Keep a single external scheduler; manual dispatch and code-change bootstrap remain.
   workflow_dispatch:
   push:
     branches: [main]
