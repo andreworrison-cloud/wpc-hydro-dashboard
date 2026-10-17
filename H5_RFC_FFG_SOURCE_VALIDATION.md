@@ -174,3 +174,98 @@ published metadata/image set as one version. Then review the 1/3/6h maps and
 legends on the feature branch before integrating. Continue to observe the source
 through synoptic transitions; two historical hourly snapshots do not constitute
 a measured posting-latency service-level guarantee.
+
+## Production-ingest implementation (feature branch, not yet deployed)
+
+`fetch_rfc_ffg.py` now implements ingestion and transaction-safe product output.
+It reuses the already-tested numerical decoding/rendering utilities from
+`tools/probe_rfc_ffg_numeric.py`. Existing diagnostic callers retain their default
+preview size; ingest previews are 3000 x 1300 pixels. These are still the review
+palette, not a final operational display design.
+
+```sh
+python fetch_rfc_ffg.py \
+  --output-dir diagnostics/rfc_ffg_ingest/public \
+  --science-dir diagnostics/rfc_ffg_ingest/science
+```
+
+### Product contract
+
+- Discover latest eligible `.g2` snapshot from the live WPC directory on every run.
+  Re-download and hash even when a filename has been seen; never infer unchanged
+  data from a cycle name. No silent fallback to an older source candidate.
+- Validate complete GRIB2 messages, FFLDG quantity/units, duration metadata,
+  consistent reference times, numerical values, grid geometry and coverage.
+- Preserve snapshot hour, encoded reference cycle, encoded period ends, HTTP
+  Last-Modified when supplied, retrieval time and acceptance time separately.
+  No individual RFC issue times are fabricated.
+- Preserve original GRIB and exact native-mm GeoTIFF under the science root.
+  Public output contains three rendered maps, legend definition and metadata.
+- Stage all three durations in an immutable generation directory. Promote
+  `metadata.json` with one atomic filesystem replace only after the generation
+  and scientific data are complete. A process lock prevents concurrent writers.
+- `metadata.json.active.assets` maps each duration to a version-specific PNG and
+  SHA-256. Readers must follow those paths; there are no mutable fixed-name PNGs.
+- Keep the most recent 48 generation directories in each root, always preserving
+  the active generation. This is a short-term operational cache, not a research
+  archive for long-term H8 tendency verification.
+
+### Provisional acceptance policy (explicit in every metadata file)
+
+- Snapshot age at most 3 hours; reference-cycle age at most 9 hours.
+- Reject future/inconsistent timestamps (5-minute clock tolerance), backwards
+  snapshot/reference transitions, changed grid/CRS, missing/nonfinite/nonpositive
+  values or values greater than the conservative 1000-mm sanity ceiling.
+- Fixed coverage baseline from the directly validated 2026-10-17 14Z source:
+  total valid-cell count changes at most 0.5%; per 100 x 100 native-cell tile,
+  changes at most 2% (five-cell allowance for small edge tiles).
+- Compare actual missing-data masks against the preceding accepted numerical
+  product as well: changes at most 0.5% of its valid cells.
+- These are technical integrity checks against an observed baseline, not proof
+  of an independently established expected CONUS land/RFC footprint. The Northwest
+  coverage question remains a provenance limitation. Legitimate major coverage
+  changes require review rather than automatically relearning a degraded baseline.
+
+### Failure and freshness behavior
+
+Successful status is `updated` or `unchanged`. Failed refreshes exit nonzero and
+write a failed attempt record while preserving previously verified assets:
+
+| State | Meaning | usable |
+|---|---|---|
+| retained | Refresh failed; last-good fields remain within age limits | true, with stale=true |
+| expired | Last-good fields retained but exceed age limits | false |
+| unavailable | No verified last-good product exists | false |
+
+Retention does not mean freshness. The metadata gives snapshot/reference ages
+and `freshness.expires_at`, the earlier of their two deadlines. Dashboard readers
+must recompute expiration against their current clock, even if no subsequent job
+runs. A failed refresh must have a visible stale/retained indicator in the later
+UI. Expired data must not be presented as current. No such UI is wired yet.
+
+### Validation and execution
+
+Fourteen new tests exercise retention on outages and malformed GRIB, missing
+coverage, regional loss, old/future timestamps, modified content under the same
+filename, interrupted publication, corrupted retained assets, expiration,
+unchanged reruns, and science/public separation. Combined with the existing
+fourteen numerical/source tests, 28 local tests pass.
+
+A live ingest generated all three maps and preserved the native fields. Visual
+review found the interior areas populated. Simulated failure and expiration on
+a copy of those actual products left every active asset unchanged while correctly
+switching retained -> expired. Evidence: `tools/rfc_ffg_ingest_observation.json`.
+
+`.github/workflows/update_rfc_ffg.yml` runs this ingest on relevant PR changes and
+supports manual dispatch once discoverable by GitHub. It restores/saves rehearsal
+state through a branch-scoped Actions cache and uploads public/scientific artifacts.
+Cache eviction is possible; a cache miss means no last-good state, never permission
+to invent one. Durable production state still needs deployment wiring.
+
+The workflow has read-only repository permissions, no cron and no dashboard
+publication. Hourly source discovery is implemented; hourly unattended production
+execution begins only when this feature is reviewed and integrated. The proposed
+cadence remains :50, pending transition/latency observations. The production Git
+publisher must commit the versioned assets and pointer together; it must also
+persist failure metadata when ingest exits nonzero. Do not gate status publication
+solely on a successful ingest exit.

@@ -92,10 +92,10 @@ def checked_array(array):
     return np.ma.array(np.asarray(array), mask=mask)
 
 
-def preview(array, crs, affine, path):
+def preview(array, crs, affine, path, width=1500, height=650):
     """Display only: nearest-neighbor geographic derivative; no invented values."""
-    dest = np.full((650, 1500), np.nan, dtype='float32')
-    out_transform = from_bounds(-126, 24, -66, 50, 1500, 650)
+    dest = np.full((height, width), np.nan, dtype='float32')
+    out_transform = from_bounds(-126, 24, -66, 50, width, height)
     reproject(array.filled(np.nan).astype('float32'), dest, src_transform=affine,
               src_crs=crs, src_nodata=np.nan, dst_transform=out_transform,
               dst_crs='EPSG:4326', dst_nodata=np.nan, resampling=Resampling.nearest)
