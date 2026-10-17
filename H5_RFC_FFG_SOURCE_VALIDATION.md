@@ -369,3 +369,64 @@ Esri Light Gray and Esri World Imagery. Both complete screenshots were visually
 inspected for coastline/state alignment and contrast. OpenStreetMap loaded
 partially (9/28 tiles during its shorter observation). Other backgrounds passed
 layer-switch checks but were not individually certified for tile availability.
+
+## Dashboard integration and durable review publishing
+
+Andrew approved the 3-hour snapshot / 9-hour reference freshness policy on
+2026-10-17. The review branch now registers RFC 1-, 3-, and 6-hour guidance in
+Antecedent Hydrologic Conditions, off by default and mutually exclusive.
+The existing sidebar handles selection, opacity, solo, and clear controls.
+The existing legend dock displays thresholds, source timestamps, and freshness.
+State borders remain vectors above the FFG raster even with No Basemap; the
+existing remote boundary source has a bundled reference fallback.
+
+`rfc_ffg_layer.js` validates metadata projection, units, policy, legend, and
+immutable-generation identity. It downloads, SHA-256 verifies, and decodes
+all three images before swapping any layers. Metadata/image/decoding failures
+retain the prior complete generation while it remains fresh. The 30-second
+clock check hides expired images without waiting for an ingest run. Browser
+metadata polling is every five minutes; this is not a server ingestion schedule.
+
+`tools/publish_rfc_ffg.py` restores and publishes the dedicated
+`data/rfc-ffg-review` branch. It is a data-only tree with `public`, `science`,
+and a branch identity marker; its initial commit has no code-branch parent.
+The public manifest, all display assets, original GRIB, native GeoTIFF, and
+scientific provenance share one commit. Restore verifies the active hashes.
+Publication verifies again and advances the remote ref without force; competing
+writers are rejected. Cold runners restore from Git, not Actions cache.
+A failed ingest still publishes explicit retained/expired status when the
+retained scientific files remain valid. Read or validation failures do not
+silently overwrite the durable branch. No main or Pages update is performed.
+
+The workflow is limited to the same-repository H5 review branch PR or manual
+runs on that branch. It has no schedule. Its write permission is used solely
+by the review publisher. Production activation remains a separate decision.
+The dashboard reads the review data branch through raw GitHub URLs. Unique
+hashed generation paths prevent mixed-version asset reuse; metadata requests
+include a cache-busting query and browser freshness is independently enforced.
+
+Retention is 48 generation directories at the current branch tip. Git retains
+historical commits and blobs: this is durable rehearsal storage, not a claim of
+bounded historical storage. Before sustained production scheduling, review data
+volume and either approve this storage model or move the same immutable-object /
+manifest contract to an object store with an explicit lifecycle. No history is
+rewritten or deleted by this implementation.
+
+Validation: 34 Python tests (including four durable publisher tests), ten
+JavaScript freshness assertions, and a browser rehearsal of the actual
+`index.html` / `app.js` passed. The browser isolated unrelated remote products
+and used the actual validated Mercator PNGs with controlled metadata and clock.
+It checked selection, legend, opacity, exclusivity, partial-image failure,
+successful replacement, unchanged-product download avoidance, metadata outage,
+and expiry; no JavaScript page errors occurred. A real-GRIB local Git rehearsal
+performed update -> publish -> cold restore -> unchanged -> publish -> cold
+restore -> retained -> publish -> cold restore -> expired. Evidence is in
+`tools/rfc_ffg_durable_observation.json`. Local mock/failure tests are not claims
+of continuous operational uptime.
+
+Browser reproduction: `tools/test_rfc_ffg_dashboard.cjs REPO PUBLIC_FIXTURE_DIR`
+uses Playwright and optional `CHROMIUM_EXECUTABLE_PATH`. The fixture directory
+contains the three Mercator `rfc_ffg_{1,3,6}h.png` files and metadata.json from the
+frozen 2026-10-17 14Z review. Cache the existing dashboard's CDN dependencies
+iso8601-js-period 0.2.1 as `/tmp/h5_iso.js` and leaflet-timedimension 1.1.1 as
+`/tmp/h5_time.js` before running. These files are test dependencies only.

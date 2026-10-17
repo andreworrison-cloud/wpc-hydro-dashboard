@@ -858,6 +858,13 @@ const esriLightLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest
 });
 wpcDarkCountryLabels.addTo(map);
 
+// Review-branch RFC FFG integration; durable data branch is separate from Pages.
+const rfcFFG = window.createRFCFFGLayers({map,
+    metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rfc-ffg-review/public/metadata.json',
+    onChange: () => updateLegends()
+});
+window.RFCFFG = rfcFFG;
+
 // --- AUTO-TOGGLING GEOJSON STATE BORDERS ---
 const whiteBorders = L.geoJSON(null, {
     style: { color: 'rgba(255, 255, 255, 0.8)', weight: 1.5, fillOpacity: 0 },
@@ -874,7 +881,12 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
     .then(data => {
         whiteBorders.addData(data);
         blackBorders.addData(data);
-    });
+        rfcFFG.setBorders(data);
+    }).catch(() => fetch('review/vendor/us-states.json')
+        .then(response => { if (!response.ok) throw new Error('State reference unavailable'); return response.json(); })
+        .then(data => { whiteBorders.addData(data); blackBorders.addData(data); rfcFFG.setBorders(data); })
+        .catch(error => console.warn('State borders unavailable:', error)));
+
 
 whiteBorders.addTo(map); 
 
@@ -7316,6 +7328,9 @@ function updateLegends() {
         hasLegend = true;
     };
 
+    const ffgLegend = rfcFFG.legendHTML();
+    if (ffgLegend) addLegendBlock(ffgLegend);
+
     if (activeLayerNames.has('Active Hydro Warnings & Advisories')) addLegendBlock(hazardLegendHTML);
     if (activeLayerNames.has('Active Hydro Watches')) addLegendBlock(watchLegendHTML);
     if (activeLayerNames.has('WPC Active MPDs')) addLegendBlock(mpdLegendHTML);
@@ -7825,6 +7840,12 @@ const baseMapRegistry = [
     {id: 'none', label: 'No Basemap', layer: blankBase, borderTone: 'none'}
 ];
 
+function enforceExclusiveRFCFFGSelection(activeEntry) {
+    getAllDashboardLayerEntries().forEach(entry => {
+        if (entry !== activeEntry && entry.id?.startsWith('rfc-ffg-')) setDashboardLayerActive(entry, false);
+    });
+}
+
 function enforceExclusiveGLMSelection(activeEntry) {
     getAllDashboardLayerEntries().forEach(entry => {
         if (entry !== activeEntry && entry.id && entry.id.startsWith('glm-') && map.hasLayer(entry.layer)) {
@@ -7911,6 +7932,9 @@ const dashboardSections = [
         id: 'antecedent',
         title: 'Antecedent Hydrologic Conditions',
         layers: [
+            {id: 'rfc-ffg-1h', label: 'RFC 1-Hour Flash Flood Guidance', layer: rfcFFG.layers[1], kind: 'raster', onActivate: enforceExclusiveRFCFFGSelection},
+            {id: 'rfc-ffg-3h', label: 'RFC 3-Hour Flash Flood Guidance', layer: rfcFFG.layers[3], kind: 'raster', onActivate: enforceExclusiveRFCFFGSelection},
+            {id: 'rfc-ffg-6h', label: 'RFC 6-Hour Flash Flood Guidance', layer: rfcFFG.layers[6], kind: 'raster', onActivate: enforceExclusiveRFCFFGSelection},
             {id: 'nwm-soilsat', label: 'NWM Soil Saturation (0-40cm)', layer: nwmLayer, kind: 'raster'},
             {id: 'nldas-rsm-010', label: 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)', layer: nldasRsm010Layer, kind: 'raster'},
             {id: 'nldas-rsm-0100', label: 'NLDAS-2 Noah Relative Soil Moisture (0-100 cm)', layer: nldasRsm0100Layer, kind: 'raster'},
@@ -8664,3 +8688,4 @@ setTimeout(() => {
 
     refreshLegendDockSummary();
 }, 1500);
+

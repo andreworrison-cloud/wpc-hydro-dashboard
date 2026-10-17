@@ -36,7 +36,7 @@ errors = []
 
 # Current registry total includes all existing dashboard data/config entries,
 # basemaps, and the two validated NASA NLDAS-3 static land-surface layers.
-EXPECTED_LAYER_COUNT = 145
+EXPECTED_LAYER_COUNT = 148
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -1588,3 +1588,4 @@ print(
     "the GLM trend diagnostic/trend map, automatic GLM manifest refresh, "
     "LightningCast v1E integration/manifest refresh, and UFVS Geographic Domains utility preserved."
 )
+
