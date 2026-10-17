@@ -139,10 +139,11 @@ def download_latest_sport():
     )
 
 
-def read_and_reproject_geotiff():
+def read_and_reproject_geotiff(source_path=None, max_dimension=MAX_OUTPUT_DIMENSION,
+                               resampling=Resampling.bilinear, upscale=False, upper_tolerance=0.0):
     destination_crs = CRS.from_epsg(3857)
 
-    with rasterio.open(SPORT_FILE) as source:
+    with rasterio.open(source_path or SPORT_FILE) as source:
         if source.crs is None:
             raise RuntimeError("SPoRT GeoTIFF has no CRS.")
 
@@ -153,9 +154,15 @@ def read_and_reproject_geotiff():
         source_valid = (
             np.isfinite(source_data)
             & (source_data >= 0.0)
-            & (source_data <= 100.0)
+            & (source_data <= 100.0 + upper_tolerance)
         )
 
+        if upper_tolerance:
+            # Opt-in RSM float roundoff tolerance; preserve the legacy path.
+            source_valid &= source.read_masks(1) > 0
+            if source.nodata is not None:
+                source_valid &= source_data != source.nodata
+            source_data = np.minimum(source_data, 100.0)
         source_data[~source_valid] = np.nan
 
         (
@@ -171,12 +178,15 @@ def read_and_reproject_geotiff():
         )
 
         scale_factor = max(
-            destination_width / MAX_OUTPUT_DIMENSION,
-            destination_height / MAX_OUTPUT_DIMENSION,
+            destination_width / max_dimension,
+            destination_height / max_dimension,
             1.0,
         )
 
-        if scale_factor > 1.0:
+        if upscale:
+            scale_factor = max(destination_width, destination_height) / max_dimension
+
+        if scale_factor != 1.0:
             reduced_width = max(
                 1,
                 int(round(destination_width / scale_factor)),
@@ -217,7 +227,7 @@ def read_and_reproject_geotiff():
             dst_transform=destination_transform,
             dst_crs=destination_crs,
             dst_nodata=np.nan,
-            resampling=Resampling.bilinear,
+            resampling=resampling,
             init_dest_nodata=True,
             num_threads=2,
         )
@@ -272,12 +282,12 @@ def read_and_reproject_geotiff():
 
     if valid_values.size:
         print(
-            "SPoRT valid percentile range: "
+            ("SPoRT valid RSM (%) range: " if upper_tolerance else "SPoRT valid percentile range: ") +
             f"{float(np.nanmin(valid_values)):.1f} to "
             f"{float(np.nanmax(valid_values)):.1f}"
         )
         print(
-            "SPoRT fraction at or above 70th percentile: "
+            ("SPoRT fraction at or above 70% RSM: " if upper_tolerance else "SPoRT fraction at or above 70th percentile: ") +
             f"{100.0 * np.mean(valid_values >= 70.0):.1f}%"
         )
 
@@ -340,7 +350,7 @@ def compatible_previous_output_exists():
         return False
 
 
-def main():
+def legacy_main():
     OUTPUT_PNG.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -425,6 +435,24 @@ def main():
 
     finally:
         SPORT_FILE.unlink(missing_ok=True)
+
+
+DEPTHS = ("10", "40", "100", "200")
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="SPoRT-LIS legacy layer or isolated four-depth ingest")
+    parser.add_argument('--suite-dir', type=Path, help='Opt in to four-depth generation publishing')
+    parser.add_argument('--source-dir', type=Path, help='Use retained TIFFs for reproducible offline review')
+    parser.add_argument('--date', help='YYYYMMDD; required with --source-dir')
+    args = parser.parse_args()
+    if args.suite_dir:
+        from tools.sport_suite import ingest
+        return ingest(args.suite_dir, source_dir=args.source_dir, date=args.date)
+    if args.source_dir or args.date:
+        parser.error('--source-dir and --date require --suite-dir')
+    return legacy_main()
 
 
 if __name__ == "__main__":
