@@ -3,6 +3,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'app.js'
+      - 'index.html'
+      - 'sport_suite_layer.js'
+      - 'tools/test_sport_display.cjs'
       - 'fetch_sport.py'
       - 'tools/sport_suite.py'
       - 'tools/test_sport_suite.py'
@@ -22,6 +26,14 @@ jobs:
       - run: python -m pip install 'numpy>=2,<3' 'rasterio>=1.4,<2' requests pillow
       - name: Check whole-suite retention and expiry
         run: python -m unittest tools.test_sport_suite -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check dashboard depth, legend and freshness behavior
+        run: |
+          node --check app.js
+          node --check sport_suite_layer.js
+          node --test tools/test_sport_display.cjs
       - name: Retrieve and validate four current numerical fields
         run: python fetch_sport.py --suite-dir diagnostics/sport-suite
       - name: Preserve review evidence and original floats
@@ -30,4 +42,22 @@ jobs:
         with:
           name: sport-four-depths-${{ github.run_id }}
           path: diagnostics/sport-suite
+          retention-days: 14
+
+      - name: Assemble dashboard review bundle
+        run: |
+          mkdir -p diagnostics/dashboard-review
+          git archive HEAD | tar -x -C diagnostics/dashboard-review
+          mkdir -p diagnostics/dashboard-review/review/sport-suite
+          cp -R diagnostics/sport-suite/. diagnostics/dashboard-review/review/sport-suite/
+          python - <<'PYTHON'
+          from pathlib import Path
+          for path in Path('diagnostics/dashboard-review/review/sport-suite').rglob('*.tif'):
+              path.unlink()
+          PYTHON
+      - name: Preserve dashboard review bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: sport-dashboard-review-${{ github.run_id }}
+          path: diagnostics/dashboard-review
           retention-days: 14

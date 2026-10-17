@@ -865,6 +865,15 @@ const rfcFFG = window.createRFCFFGLayers({map,
 });
 window.RFCFFG = rfcFFG;
 
+// Review opt-in until the four-depth publisher and freshness policy are approved.
+const sportSuite = new URLSearchParams(location.search).get('sportReview') === '1'
+    ? window.SPoRTSuite.create({map,
+        metadataURL: 'review/sport-suite/metadata.json',
+        onChange: () => updateLegends()
+    }) : null;
+window.sportSuite = sportSuite;
+
+
 // --- AUTO-TOGGLING GEOJSON STATE BORDERS ---
 const whiteBorders = L.geoJSON(null, {
     style: { color: 'rgba(255, 255, 255, 0.8)', weight: 1.5, fillOpacity: 0 },
@@ -881,10 +890,10 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
     .then(data => {
         whiteBorders.addData(data);
         blackBorders.addData(data);
-        rfcFFG.setBorders(data);
+        rfcFFG.setBorders(data); sportSuite?.setBorders(data);
     }).catch(() => fetch('review/vendor/us-states.json')
         .then(response => { if (!response.ok) throw new Error('State reference unavailable'); return response.json(); })
-        .then(data => { whiteBorders.addData(data); blackBorders.addData(data); rfcFFG.setBorders(data); })
+        .then(data => { whiteBorders.addData(data); blackBorders.addData(data); rfcFFG.setBorders(data); sportSuite?.setBorders(data); })
         .catch(error => console.warn('State borders unavailable:', error)));
 
 
@@ -7330,6 +7339,8 @@ function updateLegends() {
 
     const ffgLegend = rfcFFG.legendHTML();
     if (ffgLegend) addLegendBlock(ffgLegend);
+    const suiteLegend = sportSuite?.legendHTML();
+    if (suiteLegend) addLegendBlock(suiteLegend);
 
     if (activeLayerNames.has('Active Hydro Warnings & Advisories')) addLegendBlock(hazardLegendHTML);
     if (activeLayerNames.has('Active Hydro Watches')) addLegendBlock(watchLegendHTML);
@@ -7840,6 +7851,14 @@ const baseMapRegistry = [
     {id: 'none', label: 'No Basemap', layer: blankBase, borderTone: 'none'}
 ];
 
+function enforceExclusiveSPoRTSelection(activeEntry) {
+    getAllDashboardLayerEntries().forEach(entry => {
+        if (entry !== activeEntry && (entry.id === 'sport-percentile' || entry.id?.startsWith('sport-suite-'))) {
+            setDashboardLayerActive(entry, false);
+        }
+    });
+}
+
 function enforceExclusiveRFCFFGSelection(activeEntry) {
     getAllDashboardLayerEntries().forEach(entry => {
         if (entry !== activeEntry && entry.id?.startsWith('rfc-ffg-')) setDashboardLayerActive(entry, false);
@@ -7938,7 +7957,13 @@ const dashboardSections = [
             {id: 'nwm-soilsat', label: 'NWM Soil Saturation (0-40cm)', layer: nwmLayer, kind: 'raster'},
             {id: 'nldas-rsm-010', label: 'NLDAS-2 Noah Relative Soil Moisture (0-10 cm)', layer: nldasRsm010Layer, kind: 'raster'},
             {id: 'nldas-rsm-0100', label: 'NLDAS-2 Noah Relative Soil Moisture (0-100 cm)', layer: nldasRsm0100Layer, kind: 'raster'},
-            {id: 'sport-percentile', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)', layer: sportLayer, kind: 'raster'}
+            {id: 'sport-percentile', label: 'NASA SPoRT-LIS VSM Percentile (0–100 cm)', layer: sportLayer, kind: 'raster', onActivate: enforceExclusiveSPoRTSelection},
+            ...(sportSuite ? window.SPoRTSuite.depths.map(depth => ({
+                id: `sport-suite-${depth}`, label: `NASA SPoRT-LIS VSM Percentile (0–${depth} cm) — Review`,
+                description: 'Four-depth review suite. Shared valid time; provisional age limits. Original numerical NASA SPoRT-LIS percentiles.',
+                layer: sportSuite.layers[depth], kind: 'raster', onActivate: enforceExclusiveSPoRTSelection,
+                keywords: 'soil moisture wet tail percentile depth SPoRT LIS hydrology'
+            })) : [])
         ]
     },
     {
@@ -8688,4 +8713,5 @@ setTimeout(() => {
 
     refreshLegendDockSummary();
 }, 1500);
+
 
