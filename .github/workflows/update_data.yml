@@ -34,44 +34,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install geopandas pandas requests
 
+      - name: Restore current WPC and FFD dashboard snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path wpc_data.geojson \
+            --path static/ffd_contours.txt
       - name: Run WPC Fetch Script
         run: python fetch_wpc.py
 
       - name: Run FFD Contour Fetch Script
         run: python fetch_ffd.py
 
-      - name: Commit and push changes
+      - name: Publish WPC and FFD products to pages-live
         env:
-          BRANCH_NAME: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-
-          git add wpc_data.geojson static/ffd_contours.txt
-
-          if git diff --cached --quiet; then
-            echo "WPC and FFD real-time products are unchanged."
-            exit 0
-          fi
-
-          git commit -m "Auto-update WPC and FFD real-time data"
-
-          for attempt in 1 2 3; do
-            echo "Sync/push attempt ${attempt}..."
-
-            if ! git pull --rebase origin "${BRANCH_NAME}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "WPC and FFD products committed successfully."
-              exit 0
-            fi
-
-            sleep $((attempt * 10))
-          done
-
-          echo "Unable to push WPC and FFD products after three attempts."
-          exit 1
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Auto-update WPC and FFD real-time data" \
+            --path wpc_data.geojson \
+            --path static/ffd_contours.txt
