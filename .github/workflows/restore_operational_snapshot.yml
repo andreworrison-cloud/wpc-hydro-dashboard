@@ -44,28 +44,46 @@ jobs:
           fi
           test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
 
-      - name: Replace seed repository with archived working tree
+      - name: Restore archived snapshot except workflow files
         shell: bash
         run: |
           set -euo pipefail
           archive="${RUNNER_TEMP}/archive"
+          restore_workflow=".github/workflows/restore_operational_snapshot.yml"
 
-          # Remove every tracked/untracked working-tree item except the destination .git directory.
+          # Preserve this temporary workflow unchanged so the job token does not
+          # attempt to create/update workflow files in its own push.
+          cp "${restore_workflow}" "${RUNNER_TEMP}/restore_operational_snapshot.yml"
+
+          # Replace the working tree while preserving only .git.
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 
-          # Copy only the current archived working tree. Never copy source .git history.
-          rsync -a --delete --exclude='.git/' "${archive}/" ./
+          mkdir -p .github/workflows
+          cp "${RUNNER_TEMP}/restore_operational_snapshot.yml" "${restore_workflow}"
 
-          # Verify a byte-for-byte manifest of all regular files.
+          # Copy the archived current snapshot, but defer archived workflow YAML
+          # files to the GitHub connector, which has permission to write them.
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            "${archive}/" ./
+
+          # Verify every non-workflow file byte-for-byte.
           (
             cd "${archive}"
-            find . -type f ! -path './.git/*' -print0 |
+            find . -type f \
+              ! -path './.git/*' \
+              ! -path './.github/workflows/*' \
+              -print0 |
               sort -z |
               xargs -0 sha256sum
           ) > "${RUNNER_TEMP}/source.sha256"
 
           (
-            find . -type f ! -path './.git/*' -print0 |
+            find . -type f \
+              ! -path './.git/*' \
+              ! -path './.github/workflows/*' \
+              -print0 |
               sort -z |
               xargs -0 sha256sum
           ) > "${RUNNER_TEMP}/target.sha256"
@@ -74,7 +92,7 @@ jobs:
 
           source_count="$(wc -l < "${RUNNER_TEMP}/source.sha256")"
           target_count="$(wc -l < "${RUNNER_TEMP}/target.sha256")"
-          echo "Verified file manifest: ${target_count} files"
+          echo "Verified non-workflow file manifest: ${target_count} files"
           test "${source_count}" = "${target_count}"
 
       - name: Commit restored operational snapshot
@@ -86,7 +104,7 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "No changes detected; snapshot already restored."
+            echo "No non-workflow changes detected; snapshot already restored."
             exit 0
           fi
 
@@ -96,5 +114,6 @@ jobs:
       - name: Final status
         shell: bash
         run: |
-          echo "Operational dashboard snapshot restored from ${SOURCE_REPO}@${SOURCE_SHA}."
+          echo "Operational dashboard non-workflow snapshot restored from ${SOURCE_REPO}@${SOURCE_SHA}."
+          echo "Archived workflow YAML files are restored separately through the GitHub connector."
           echo "The archived repository history was not imported."
