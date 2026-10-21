@@ -62,44 +62,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests numpy scipy xarray cfgrib matplotlib
 
+      - name: Restore current CAM dashboard snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path 'static/cam_*.png' \
+            --path static/cam_metadata.json
       - name: Run CAM Fetch Script
         run: python fetch_cam.py
 
-      - name: Commit and push generated PNGs
+      - name: Publish CAM SuperEnsemble products to pages-live
         env:
-          BRANCH_NAME: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-
-          # Quote the Git pathspec so tracked files deleted by the generator
-          # are staged too. A shell-expanded glob cannot see deleted paths and
-          # previously left the worktree dirty, blocking git pull --rebase.
-          git add -A -- 'static/cam_*.png' static/cam_metadata.json
-
-          if git diff --cached --quiet; then
-            echo "CAM SuperEnsemble products are unchanged."
-            exit 0
-          fi
-
-          git commit -m "Automated CAM SuperEnsemble Update"
-
-          for attempt in 1 2 3; do
-            echo "Sync/push attempt ${attempt}..."
-
-            if ! git pull --rebase origin "${BRANCH_NAME}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "CAM SuperEnsemble products committed successfully."
-              exit 0
-            fi
-
-            sleep $((attempt * 10))
-          done
-
-          echo "Unable to push CAM SuperEnsemble products after three attempts."
-          exit 1
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Automated CAM SuperEnsemble Update" \
+            --path 'static/cam_*.png' \
+            --path static/cam_metadata.json
