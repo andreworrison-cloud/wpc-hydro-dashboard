@@ -106,13 +106,19 @@ jobs:
           cd wfigs-data
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          expected="$(git rev-parse HEAD 2>/dev/null || true)"
           git add README.md static/wfigs/ytd
-          if git diff --cached --quiet; then
-            echo "Generated YTD files are byte-identical; no commit required."
+          tree="$(git write-tree)"
+          if [[ -n "$expected" && "$tree" == "$(git rev-parse "${expected}^{tree}")" ]]; then
+            echo "Generated YTD files are byte-identical; no publication required."
             exit 0
           fi
-          git commit -m "Update WFIGS YTD wildfire perimeters"
-          git push origin HEAD:wfigs-data
+          commit="$(printf '%s\n' 'Update WFIGS YTD wildfire perimeters' | git commit-tree "$tree")"
+          if [[ -n "$expected" ]]; then
+            git push --force-with-lease=refs/heads/wfigs-data:"$expected" origin "$commit":refs/heads/wfigs-data
+          else
+            git push origin "$commit":refs/heads/wfigs-data
+          fi
 
       - name: Upload YTD build manifest
         if: steps.build.outputs.changed == 'true'
