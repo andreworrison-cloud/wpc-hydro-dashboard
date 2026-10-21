@@ -1,5 +1,5 @@
 name: Initialize Pages Live Snapshot
-# bootstrap-retry: empty-tree-safe
+# bootstrap-retry: clean-bytecode
 
 on:
   workflow_dispatch:
@@ -23,7 +23,9 @@ jobs:
           fetch-tags: false
 
       - name: Validate snapshot publisher
-        run: python -m py_compile tools/publish_pages_snapshot.py
+        run: |
+          python -m py_compile tools/publish_pages_snapshot.py
+          rm -rf tools/__pycache__
 
       - name: Publish complete non-workflow site snapshot
         env:
