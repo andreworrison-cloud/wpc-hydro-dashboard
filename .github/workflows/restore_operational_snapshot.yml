@@ -1,0 +1,100 @@
+name: One-time restore operational dashboard snapshot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore_operational_snapshot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: restore-operational-dashboard
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_REPO: andreworrison-cloud/wpc-hydro-dashboard-archive-20261021
+      SOURCE_SHA: ab6bbff766d445268ee9e7ba5962b12ad0e8d837
+
+    steps:
+      - name: Check out clean operational repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Fetch exact archived dashboard snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main "https://github.com/${SOURCE_REPO}.git" "${RUNNER_TEMP}/archive"
+          cd "${RUNNER_TEMP}/archive"
+          actual="$(git rev-parse HEAD)"
+          echo "Archived main HEAD: ${actual}"
+          if [[ "${actual}" != "${SOURCE_SHA}" ]]; then
+            echo "Archive main moved; fetching exact recovery SHA."
+            git fetch --depth 1 origin "${SOURCE_SHA}"
+            git checkout --detach "${SOURCE_SHA}"
+          fi
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+
+      - name: Replace seed repository with archived working tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/archive"
+
+          # Remove every tracked/untracked working-tree item except the destination .git directory.
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+
+          # Copy only the current archived working tree. Never copy source .git history.
+          rsync -a --delete --exclude='.git/' "${archive}/" ./
+
+          # Verify a byte-for-byte manifest of all regular files.
+          (
+            cd "${archive}"
+            find . -type f ! -path './.git/*' -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > "${RUNNER_TEMP}/source.sha256"
+
+          (
+            find . -type f ! -path './.git/*' -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > "${RUNNER_TEMP}/target.sha256"
+
+          diff -u "${RUNNER_TEMP}/source.sha256" "${RUNNER_TEMP}/target.sha256"
+
+          source_count="$(wc -l < "${RUNNER_TEMP}/source.sha256")"
+          target_count="$(wc -l < "${RUNNER_TEMP}/target.sha256")"
+          echo "Verified file manifest: ${target_count} files"
+          test "${source_count}" = "${target_count}"
+
+      - name: Commit restored operational snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes detected; snapshot already restored."
+            exit 0
+          fi
+
+          git commit -m "Restore operational dashboard snapshot from archive ${SOURCE_SHA}"
+          git push origin HEAD:main
+
+      - name: Final status
+        shell: bash
+        run: |
+          echo "Operational dashboard snapshot restored from ${SOURCE_REPO}@${SOURCE_SHA}."
+          echo "The archived repository history was not imported."
