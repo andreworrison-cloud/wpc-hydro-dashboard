@@ -60,6 +60,13 @@ jobs:
             Pillow \
             eccodes
 
+      - name: Restore current NLDAS-2 RSM snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path static/nldas_rsm_0_10cm.png \
+            --path static/nldas_rsm_0_100cm.png \
+            --path static/nldas_rsm_metadata.json
       - name: Generate NLDAS-2 RSM products
         run: python fetch_nldas_rsm.py
 
@@ -74,42 +81,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Commit generated products
-        shell: bash
+      - name: Publish NLDAS-2 RSM products to pages-live
         env:
-          BRANCH_NAME: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git add \
-            static/nldas_rsm_0_10cm.png \
-            static/nldas_rsm_0_100cm.png \
-            static/nldas_rsm_metadata.json
-
-          if git diff --cached --quiet; then
-            echo "NLDAS-2 RSM products are unchanged."
-            exit 0
-          fi
-
-          git commit -m "Automated update: NLDAS-2 Noah RSM"
-
-          for attempt in 1 2 3; do
-            echo "Sync/push attempt ${attempt}..."
-
-            if ! git pull --rebase origin "${BRANCH_NAME}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "NLDAS-2 RSM products committed successfully."
-              exit 0
-            fi
-
-            sleep $((attempt * 10))
-          done
-
-          echo "Unable to push NLDAS-2 RSM products after three attempts."
-          exit 1
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Automated update: NLDAS-2 Noah RSM" \
+            --path static/nldas_rsm_0_10cm.png \
+            --path static/nldas_rsm_0_100cm.png \
+            --path static/nldas_rsm_metadata.json
