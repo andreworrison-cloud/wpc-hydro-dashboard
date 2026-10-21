@@ -1,0 +1,30 @@
+name: Initialize Pages Live Snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out durable source branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Validate snapshot publisher
+        run: python -m py_compile tools/publish_pages_snapshot.py
+
+      - name: Publish complete non-workflow site snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --full-source \
+            --message "Initialize clean Pages live snapshot from main ${GITHUB_SHA}"
