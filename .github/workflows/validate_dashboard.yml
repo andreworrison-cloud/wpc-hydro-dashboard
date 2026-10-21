@@ -1,0 +1,100 @@
+name: Validate Dashboard Interface
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'app.js'
+      - 'gdi_layer.js'
+      - 'gdi_suite_layer.js'
+      - 'tools/publish_gdi_suite.py'
+      - '.github/workflows/publish_gdi.yml'
+      - '.github/workflows/publish_rap_gdi.yml'
+      - '.github/workflows/publish_gdi_guidance.yml'
+      - '.github/workflows/update_rap.yml'
+      - 'tools/gdi/**'
+      - 'tools/publish_gdi.py'
+      - 'index.html'
+      - 'style.css'
+      - 'tools/validate_dashboard.py'
+      - 'fetch_glm_mosaic.py'
+      - '.github/workflows/update_glm_mosaic.yml'
+      - 'fetch_lightningcast.py'
+      - '.github/workflows/update_lightningcast.yml'
+      - 'fetch_hrrr_tle.py'
+      - 'fetch_cam.py'
+      - 'fetch_cam_ero.py'
+      - '.github/workflows/update_hrrr_tle.yml'
+      - 'fetch_mrms_rala.py'
+      - 'fetch_mrms_rala_loop.py'
+      - 'tools/validate_mrms_rala.py'
+      - 'tools/validate_mrms_rala_loop.py'
+      - '.github/workflows/update_mrms_rala.yml'
+      - '.github/workflows/validate_dashboard.yml'
+  push:
+    paths:
+      - 'app.js'
+      - 'gdi_layer.js'
+      - 'gdi_suite_layer.js'
+      - 'tools/publish_gdi_suite.py'
+      - '.github/workflows/publish_gdi.yml'
+      - '.github/workflows/publish_rap_gdi.yml'
+      - '.github/workflows/publish_gdi_guidance.yml'
+      - '.github/workflows/update_rap.yml'
+      - 'tools/gdi/**'
+      - 'tools/publish_gdi.py'
+      - 'index.html'
+      - 'style.css'
+      - 'tools/validate_dashboard.py'
+      - 'fetch_glm_mosaic.py'
+      - '.github/workflows/update_glm_mosaic.yml'
+      - 'fetch_lightningcast.py'
+      - '.github/workflows/update_lightningcast.yml'
+      - 'fetch_hrrr_tle.py'
+      - 'fetch_cam.py'
+      - 'fetch_cam_ero.py'
+      - '.github/workflows/update_hrrr_tle.yml'
+      - 'fetch_mrms_rala.py'
+      - 'fetch_mrms_rala_loop.py'
+      - 'tools/validate_mrms_rala.py'
+      - 'tools/validate_mrms_rala_loop.py'
+      - '.github/workflows/update_mrms_rala.yml'
+      - '.github/workflows/validate_dashboard.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check app.js
+          node --check gdi_layer.js
+          node --check gdi_suite_layer.js
+          node tools/gdi/test_adapter.cjs
+
+      - name: Check MRMS RALA Python syntax
+        run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
+
+      - name: Check CAM Python syntax
+        run: python -m py_compile fetch_cam.py fetch_cam_ero.py
+
+      - name: Validate menu order and required layers
+        run: python tools/validate_dashboard.py

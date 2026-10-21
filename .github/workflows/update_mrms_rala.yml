@@ -1,0 +1,164 @@
+name: Update MRMS RALA Direct NOAA Loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_mode:
+        description: 'Official MRMS source mode (auto prefers NCEP with NODD fallback)'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - ncep
+          - nodd
+      rebuild_full_loop:
+        description: 'Ignore the rolling cache and rebuild the complete six-hour / 10-minute archive'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-mrms-rala-direct-loop
+  cancel-in-progress: false
+
+jobs:
+  update-mrms-rala-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      PYTHONUNBUFFERED: '1'
+      MRMS_RALA_OUTPUT_DIR: mrms_rala_loop_publish
+      MRMS_RALA_CACHE_DIR: mrms_rala_loop_cache
+      MRMS_RALA_DATA_BRANCH: mrms-rala-data
+
+    steps:
+      - name: Checkout dashboard code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install MRMS decoding and rendering dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub-hosted Ubuntu runners may include unrelated third-party apt
+          # sources (notably Google Chrome). This workflow does not need Chrome;
+          # disable that source before refreshing package metadata so a transient
+          # Chrome repository hash mismatch cannot block the meteorological job.
+          for source_file in /etc/apt/sources.list.d/*; do
+            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
+              echo "Disabling unused Google Chrome apt source: ${source_file}"
+              sudo rm -f "${source_file}"
+            fi
+          done
+
+          # Start from a clean apt-list snapshot and retry transient mirror failures.
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libeccodes0
+          python -m pip install --upgrade pip
+          python -m pip install numpy requests pillow pyproj rasterio eccodes
+          python -m eccodes selfcheck
+
+      - name: Validate MRMS loop code
+        run: |
+          python -m py_compile \
+            fetch_mrms_rala.py \
+            fetch_mrms_rala_loop.py \
+            tools/validate_mrms_rala_loop.py
+
+      - name: Restore prior rolling-loop package from data branch
+        env:
+          REBUILD_FULL_LOOP: ${{ inputs.rebuild_full_loop }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MRMS_RALA_CACHE_DIR"
+          mkdir -p "$MRMS_RALA_CACHE_DIR"
+
+          if [[ "${REBUILD_FULL_LOOP:-false}" == 'true' ]]; then
+            echo 'Full MRMS loop rebuild requested; prior data branch will not be used as a frame cache.'
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "$MRMS_RALA_DATA_BRANCH" >/dev/null 2>&1; then
+            git fetch --no-tags --depth=1 origin \
+              "refs/heads/$MRMS_RALA_DATA_BRANCH:refs/remotes/origin/$MRMS_RALA_DATA_BRANCH"
+            git archive "refs/remotes/origin/$MRMS_RALA_DATA_BRANCH" | \
+              tar -x -C "$MRMS_RALA_CACHE_DIR"
+            echo "Restored prior MRMS loop package from $MRMS_RALA_DATA_BRANCH."
+          else
+            echo 'No prior MRMS RALA data branch exists; the first run will build the complete loop.'
+          fi
+
+      - name: Run MRMS 10-minute archive selection self-test
+        run: python fetch_mrms_rala_loop.py --self-test
+
+      - name: Build rolling six-hour NOAA MRMS RALA archive
+        env:
+          SOURCE_MODE: ${{ inputs.source_mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MRMS_RALA_OUTPUT_DIR"
+          python fetch_mrms_rala_loop.py \
+            --output-dir "$MRMS_RALA_OUTPUT_DIR" \
+            --cache-dir "$MRMS_RALA_CACHE_DIR" \
+            --source-mode "${SOURCE_MODE:-auto}" \
+            --loop-minutes 360 \
+            --cadence-minutes 10 \
+            --slot-tolerance-minutes 4.5 \
+            --freshness-minutes 20 \
+            --output-width 7000
+
+      - name: Validate rolling MRMS RALA package
+        run: >-
+          python tools/validate_mrms_rala_loop.py "$MRMS_RALA_OUTPUT_DIR"
+          --minimum-frames 35
+          --minimum-span-minutes 350
+          --expected-cadence-minutes 10
+          --max-gap-minutes 20
+          --default-window-minutes 120
+          --minimum-default-window-frames 12
+
+      - name: Publish current loop to history-free data branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          valid_time=$(python -c "import json; print(json.load(open('$MRMS_RALA_OUTPUT_DIR/mrms_rala_loop_manifest.json'))['latest_valid_time_utc'])")
+          publish_tree="$RUNNER_TEMP/mrms-rala-data-worktree"
+          rm -rf "$publish_tree"
+
+          # Use a worktree so the checkout action's authenticated git configuration
+          # is preserved. Every update is a new orphan commit force-pushed to the
+          # dedicated data branch; the main dashboard branch never accumulates
+          # thousands of radar PNG revisions in git history.
+          git worktree add --detach "$publish_tree" HEAD
+          pushd "$publish_tree" >/dev/null
+          git switch --orphan mrms-rala-data-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -a "$GITHUB_WORKSPACE/$MRMS_RALA_OUTPUT_DIR/." .
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          git commit -m "MRMS RALA rolling loop through ${valid_time}"
+          git push --force origin HEAD:refs/heads/mrms-rala-data
+          popd >/dev/null
+
+          echo "MRMS RALA rolling loop through ${valid_time} published to branch ${MRMS_RALA_DATA_BRANCH}."

@@ -1,0 +1,83 @@
+name: Rehearse RFC FFG Durable Publishing
+# No production cron or publication until the reviewed displays are integrated.
+# Review data branch only. No Pages deployment and no cron.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'fetch_rfc_ffg.py'
+      - 'rfc_ffg_layer.js'
+      - 'app.js'
+      - 'index.html'
+      - 'style.css'
+      - 'tools/publish_rfc_ffg.py'
+      - 'tools/test_publish_rfc_ffg.py'
+      - 'review/**'
+      - 'tools/rfc_ffg_leaflet_template.html'
+      - 'tools/test_rfc_ffg_projection.py'
+      - 'tools/test_rfc_ffg_leaflet.cjs'
+      - 'tools/rfc_ffg_display.js'
+      - 'tools/test_rfc_ffg_display.cjs'
+      - 'tools/build_rfc_ffg_review.py'
+      - 'tools/rfc_ffg_review_template.html'
+      - 'tools/test_fetch_rfc_ffg.py'
+      - 'tools/rfc_ffg_coverage_baseline.json'
+      - 'tools/probe_rfc_ffg_numeric.py'
+      - 'tools/probe_rfc_ffg.py'
+      - '.github/workflows/update_rfc_ffg.yml'
+permissions:
+  contents: read
+concurrency:
+  group: rfc-ffg-durable-review
+  cancel-in-progress: false
+jobs:
+  ingest:
+    # Never execute a publishing job for a fork or an unrelated branch.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.head.ref == 'feature/h5-rfc-ffg-source-validation') ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref_name == 'feature/h5-rfc-ffg-source-validation')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical dependencies
+        run: python -m pip install "numpy>=2,<3" "rasterio>=1.4,<2"
+      - name: Validate failure and publication contracts
+        run: |
+          python -m unittest discover -s tools -p 'test_probe_rfc_ffg*.py' -v
+          python -m unittest discover -s tools -p 'test_fetch_rfc_ffg.py' -v
+          python -m unittest discover -s tools -p 'test_rfc_ffg_projection.py' -v
+          python -m unittest discover -s tools -p 'test_publish_rfc_ffg.py' -v
+      - name: Test browser freshness contract
+        run: node tools/test_rfc_ffg_display.cjs
+      - name: Restore durable last validated state
+        run: python tools/publish_rfc_ffg.py restore --data-dir diagnostics/rfc_ffg_ingest --state-file "$RUNNER_TEMP/ffg-restore.json"
+      - name: Ingest latest hourly WPC product
+        id: ingest
+        continue-on-error: true
+        run: python fetch_rfc_ffg.py --output-dir diagnostics/rfc_ffg_ingest/public --science-dir diagnostics/rfc_ffg_ingest/science
+      - name: Build offline display review
+        if: always() && steps.ingest.outcome == 'success'
+        run: python tools/build_rfc_ffg_review.py --public-dir diagnostics/rfc_ffg_ingest/public --output diagnostics/rfc_ffg_review.html
+      - name: Atomically publish validated review state
+        if: always() && steps.ingest.outcome != 'skipped'
+        run: python tools/publish_rfc_ffg.py publish --data-dir diagnostics/rfc_ffg_ingest --state-file "$RUNNER_TEMP/ffg-restore.json"
+      - name: Report upstream ingest failure after publishing retained status
+        if: always() && steps.ingest.outcome == 'failure'
+        run: exit 1
+      - name: Upload reviewable product and scientific provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfc-ffg-ingest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 14

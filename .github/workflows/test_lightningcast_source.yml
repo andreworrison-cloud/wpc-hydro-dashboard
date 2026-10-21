@@ -1,0 +1,125 @@
+name: Test LightningCast Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      east_url:
+        description: Optional GOES-East CONUS source URL; blank uses the diagnostic default
+        required: false
+        default: ''
+        type: string
+      west_url:
+        description: Optional GOES-West CONUS source URL; blank uses the diagnostic default
+        required: false
+        default: ''
+        type: string
+      maximum_age_minutes:
+        description: Age threshold used to flag a source as stale
+        required: false
+        default: '45'
+        type: string
+      sync_tolerance_minutes:
+        description: Maximum acceptable difference between East and West latest frame times
+        required: false
+        default: '15'
+        type: string
+      enforce_realtime:
+        description: Fail the workflow when data are stale or East/West times exceed tolerance
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-lightningcast-source
+  cancel-in-progress: true
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: '1'
+      DIAGNOSTIC_OUTPUT_DIR: lightningcast_diagnostic
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Validate diagnostic script
+        run: |
+          python -m py_compile fetch_lightningcast_diagnostic.py
+          python fetch_lightningcast_diagnostic.py --self-test
+
+      - name: Run test-only LightningCast source diagnostic
+        id: run-diagnostic
+        env:
+          EAST_URL_INPUT: ${{ inputs.east_url }}
+          WEST_URL_INPUT: ${{ inputs.west_url }}
+          MAXIMUM_AGE_MINUTES: ${{ inputs.maximum_age_minutes }}
+          SYNC_TOLERANCE_MINUTES: ${{ inputs.sync_tolerance_minutes }}
+          ENFORCE_REALTIME: ${{ inputs.enforce_realtime }}
+        shell: bash
+        run: |
+          set +e
+          args=(
+            --output-dir "$DIAGNOSTIC_OUTPUT_DIR"
+            --maximum-age-minutes "${MAXIMUM_AGE_MINUTES:-45}"
+            --sync-tolerance-minutes "${SYNC_TOLERANCE_MINUTES:-15}"
+          )
+          if [[ -n "${EAST_URL_INPUT:-}" ]]; then
+            args+=(--east-url "$EAST_URL_INPUT")
+          fi
+          if [[ -n "${WEST_URL_INPUT:-}" ]]; then
+            args+=(--west-url "$WEST_URL_INPUT")
+          fi
+          if [[ "${ENFORCE_REALTIME:-false}" == 'true' ]]; then
+            args+=(--enforce-realtime)
+          fi
+
+          python fetch_lightningcast_diagnostic.py "${args[@]}"
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Add diagnostic report to workflow summary
+        if: ${{ always() && hashFiles('lightningcast_diagnostic/lightningcast_source_diagnostic.md') != '' }}
+        shell: bash
+        run: cat "$DIAGNOSTIC_OUTPUT_DIR/lightningcast_source_diagnostic.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compact diagnostic report
+        if: ${{ always() && hashFiles('lightningcast_diagnostic/*') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lightningcast-source-diagnostic-${{ github.run_id }}
+          path: |
+            lightningcast_diagnostic/lightningcast_source_diagnostic.json
+            lightningcast_diagnostic/lightningcast_source_diagnostic.md
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 9
+
+      - name: Apply diagnostic result
+        if: ${{ always() }}
+        env:
+          DIAGNOSTIC_EXIT_CODE: ${{ steps.run-diagnostic.outputs.exit_code }}
+        shell: bash
+        run: |
+          code="${DIAGNOSTIC_EXIT_CODE:-1}"
+          if [[ "$code" != '0' ]]; then
+            echo "LightningCast source diagnostic failed with exit code $code." >&2
+            exit "$code"
+          fi
+          echo "LightningCast source diagnostic completed without a hard failure."

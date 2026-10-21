@@ -1,0 +1,68 @@
+name: Publish Official RFC FFG
+# cron-job.org calls workflow_dispatch. No second GitHub cron is enabled.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish_rfc_ffg.yml'
+      - '.github/workflows/publish_ffg_tendency.yml'
+      - 'tools/ingest_ffg_tendency.py'
+      - 'tools/publish_ffg_tendency.py'
+      - 'fetch_rfc_ffg.py'
+      - 'tools/publish_rfc_ffg.py'
+      - 'tools/probe_rfc_ffg_numeric.py'
+      - 'tools/rfc_ffg_coverage_baseline.json'
+permissions:
+  contents: read
+concurrency:
+  group: rfc-ffg-production
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical dependencies
+        run: python -m pip install "numpy>=2,<3" "rasterio>=1.4,<2"
+      - name: Validate failure and publication contracts
+        run: |
+          python -m unittest discover -s tools -p 'test_probe_rfc_ffg*.py' -v
+          python -m unittest discover -s tools -p 'test_fetch_rfc_ffg.py' -v
+          python -m unittest discover -s tools -p 'test_rfc_ffg_projection.py' -v
+          python -m unittest discover -s tools -p 'test_publish_rfc_ffg.py' -v
+      - name: Test browser freshness contract
+        run: node tools/test_rfc_ffg_display.cjs
+      - name: Restore durable last validated state
+        run: python tools/publish_rfc_ffg.py restore --production --data-dir diagnostics/rfc_ffg_ingest --state-file "$RUNNER_TEMP/ffg-restore.json"
+      - name: Ingest latest hourly WPC product
+        id: ingest
+        continue-on-error: true
+        run: python fetch_rfc_ffg.py --output-dir diagnostics/rfc_ffg_ingest/public --science-dir diagnostics/rfc_ffg_ingest/science
+      - name: Atomically publish validated production state
+        if: always() && steps.ingest.outcome != 'skipped'
+        run: python tools/publish_rfc_ffg.py publish --production --data-dir diagnostics/rfc_ffg_ingest --state-file "$RUNNER_TEMP/ffg-restore.json"
+      - name: Report upstream ingest failure after publishing retained status
+        if: always() && steps.ingest.outcome == 'failure'
+        run: exit 1
+      - name: Upload reviewable product and scientific provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfc-ffg-ingest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+  tendency:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish_ffg_tendency.yml

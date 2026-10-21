@@ -1,0 +1,272 @@
+name: Update LightningCast
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Update GOES GLM Mosaic"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-lightningcast
+  cancel-in-progress: true
+
+jobs:
+  update:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: '1'
+      LIGHTNINGCAST_OUTPUT_DIR: lightningcast_output
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install rendering dependency
+        run: python -m pip install 'Pillow>=10,<13'
+
+      - name: Validate LightningCast generator
+        run: |
+          python -m py_compile fetch_lightningcast.py
+          python fetch_lightningcast.py --self-test
+
+      - name: Build latest LightningCast product
+        run: |
+          python fetch_lightningcast.py \
+            --output-dir "$LIGHTNINGCAST_OUTPUT_DIR" \
+            --maximum-age-minutes 20 \
+            --maximum-frame-offset-minutes 5 \
+            --reuse-existing-on-transient-pair-gap \
+            --existing-package-dir static
+
+      - name: Validate generated package
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path('lightningcast_output')
+          png = root / 'lightningcast_conus_probability_60min.png'
+          meta_path = root / 'lightningcast_conus_probability_60min_metadata.json'
+          manifest_path = root / 'lightningcast_manifest.json'
+          for path in (png, meta_path, manifest_path):
+              if not path.exists() or path.stat().st_size == 0:
+                  raise SystemExit(f'Missing or empty LightningCast output: {path}')
+
+          meta = json.loads(meta_path.read_text())
+          manifest = json.loads(manifest_path.read_text())
+          if meta.get('metadata_mode') != 'lightningcast_dashboard_v1e':
+              raise SystemExit('LightningCast metadata contract failed')
+          if meta.get('generator_revision') != 'v1i_realearth_v2_live_ingest':
+              raise SystemExit('LightningCast generator-revision contract failed')
+          selection = meta.get('frame_selection') or {}
+          if selection.get('selected_frame_clean') is not True:
+              raise SystemExit('LightningCast selected-frame integrity contract failed')
+          source_times = meta.get('source_scan_times_utc') or {}
+          if not source_times.get('GOES-East') or not source_times.get('GOES-West'):
+              raise SystemExit('LightningCast source scan-time contract failed')
+          offset = float(selection.get('selected_frame_offset_minutes', 999.0))
+          if offset > 5.0:
+              raise SystemExit(f'LightningCast source frame offset too large: {offset} minutes')
+          if meta.get('product_role') != 'probability_of_lightning_next_60_minutes':
+              raise SystemExit('LightningCast product-role contract failed')
+          if meta.get('probability_thresholds_percent') != [10, 30, 50, 70, 90]:
+              raise SystemExit('LightningCast threshold contract failed')
+          ownership = meta.get('satellite_ownership') or {}
+          if ownership.get('method') != 'fixed whole-storm-object representative-longitude ownership with completeness-based overlap swaps':
+              raise SystemExit('LightningCast source-ownership method contract failed')
+          if ownership.get('ownership_longitude') != -106.1:
+              raise SystemExit('LightningCast fixed ownership-longitude contract failed')
+          if ownership.get('cross_boundary_geometry_clipping') is not False:
+              raise SystemExit('LightningCast geometry-clipping safeguard failed')
+          if ownership.get('cross_threshold_family_splitting') is not False:
+              raise SystemExit('LightningCast object-family splitting safeguard failed')
+          if ownership.get('cross_satellite_family_splitting') is not False:
+              raise SystemExit('LightningCast cross-satellite family splitting safeguard failed')
+          if any(ownership.get(key) is not False for key in ('summation', 'averaging', 'blending', 'gap_fill')):
+              raise SystemExit('LightningCast source-ownership safeguards failed')
+          rendering = meta.get('rendering') or {}
+          if rendering.get('image_crs') != 'EPSG:3857':
+              raise SystemExit('LightningCast image CRS contract failed')
+          if len(rendering.get('threshold_rgba') or []) != 5:
+              raise SystemExit('LightningCast rendering-color contract failed')
+          if rendering.get('contour_lines_only') is not True or rendering.get('polygon_fill_inference') is not False:
+              raise SystemExit('LightningCast contour-rendering contract failed')
+          if manifest.get('scan_time_utc') != meta.get('scan_time_utc'):
+              raise SystemExit('LightningCast manifest/metadata scan-time mismatch')
+
+          with Image.open(png) as image:
+              if image.mode != 'RGBA':
+                  raise SystemExit(f'LightningCast PNG must be RGBA, found {image.mode}')
+              if image.width < 1000 or image.height < 500:
+                  raise SystemExit(f'LightningCast PNG unexpectedly small: {image.size}')
+
+          print('LightningCast package validation passed.')
+          print('Scan:', meta['scan_time_utc'])
+          print('Forecast through:', meta['forecast_window_end_utc'])
+          PY
+
+      - name: Check whether scan is new
+        id: freshness
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          new = json.loads(Path('lightningcast_output/lightningcast_conus_probability_60min_metadata.json').read_text())
+          old_path = Path('static/lightningcast_conus_probability_60min_metadata.json')
+          old = {}
+          if old_path.exists():
+              try:
+                  old = json.loads(old_path.read_text())
+              except Exception:
+                  old = {}
+
+          new_scan = new.get('scan_time_utc')
+          old_scan = old.get('scan_time_utc')
+          new_sources = new.get('source_scan_times_utc') or {}
+          old_sources = old.get('source_scan_times_utc') or {}
+
+          # v1g publishes whenever either satellite source frame changes. For the
+          # legacy v1f metadata already on main, fall back to the composite scan.
+          if old_sources:
+              publish = new_sources != old_sources
+          else:
+              publish = new_scan != old_scan
+
+          print(f'new_scan={new_scan}')
+          print(f'old_scan={old_scan or "none"}')
+          print(f'new_east={new_sources.get("GOES-East") or "none"}')
+          print(f'new_west={new_sources.get("GOES-West") or "none"}')
+          print(f'publish={str(publish).lower()}')
+          PY
+
+      - name: Publish LightningCast files
+        if: steps.freshness.outputs.publish == 'true'
+        shell: bash
+        run: |
+          mkdir -p static
+          publish=(
+            lightningcast_conus_probability_60min.png
+            lightningcast_conus_probability_60min_metadata.json
+            lightningcast_manifest.json
+          )
+          for name in "${publish[@]}"; do
+            cp "$LIGHTNINGCAST_OUTPUT_DIR/$name" "static/$name"
+          done
+
+      - name: Commit LightningCast update
+        if: steps.freshness.outputs.publish == 'true'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            static/lightningcast_conus_probability_60min.png \
+            static/lightningcast_conus_probability_60min_metadata.json \
+            static/lightningcast_manifest.json
+          if git diff --cached --quiet; then
+            echo 'No LightningCast file changes to commit.'
+            exit 0
+          fi
+          scan='${{ steps.freshness.outputs.new_scan }}'
+          git commit -m "Update LightningCast ${scan}"
+
+          branch="${GITHUB_REF_NAME}"
+          for attempt in 1 2 3; do
+            echo "LightningCast sync/push attempt ${attempt}..."
+            if ! git pull --rebase origin "${branch}"; then
+              git rebase --abort || true
+              sleep $((attempt * 10))
+              continue
+            fi
+            if git push origin "HEAD:${branch}"; then
+              echo 'LightningCast products committed successfully.'
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+
+          echo 'Unable to push LightningCast products after three attempts.' >&2
+          exit 1
+
+      - name: Upload LightningCast preview artifact
+        if: ${{ github.event_name == 'workflow_dispatch' || failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lightningcast-preview-${{ github.run_id }}
+          path: |
+            lightningcast_output/lightningcast_conus_probability_60min.png
+            lightningcast_output/lightningcast_conus_probability_60min_metadata.json
+            lightningcast_output/lightningcast_manifest.json
+            lightningcast_output/lightningcast_source_diagnostics.json
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 9
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          echo '## LightningCast backend update' >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$LIGHTNINGCAST_OUTPUT_DIR/lightningcast_conus_probability_60min_metadata.json" ]]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          meta = json.loads(Path('lightningcast_output/lightningcast_conus_probability_60min_metadata.json').read_text())
+          print(f"- Composite scan time: **{meta.get('scan_time_utc')}**")
+          selection = meta.get('frame_selection') or {}
+          source_times = meta.get('source_scan_times_utc') or {}
+          print(f"- GOES-East source scan: **{source_times.get('GOES-East')}**")
+          print(f"- GOES-West source scan: **{source_times.get('GOES-West')}**")
+          print(f"- East/West source offset: **{selection.get('selected_frame_offset_minutes')} min**")
+          print(f"- Frame policy: **{selection.get('policy')}**")
+          dirty = selection.get('skipped_dirty_frames') or {}
+          print(f"- Dirty recent East frames skipped: **{len(dirty.get('GOES-East') or [])}**")
+          print(f"- Dirty recent West frames skipped: **{len(dirty.get('GOES-West') or [])}**")
+          print(f"- Probability common window ends: **{meta.get('forecast_window_end_utc')}**")
+          sources = meta.get('source_summary') or {}
+          east_fetch = ((sources.get('GOES-East') or {}).get('fetch') or {})
+          west_fetch = ((sources.get('GOES-West') or {}).get('fetch') or {})
+          print(f"- GOES-East transport: **{east_fetch.get('source_transport')}**")
+          print(f"- GOES-West transport: **{west_fetch.get('source_transport')}**")
+          print(f"- GOES-East RealEarth product: **{east_fetch.get('product_id')}**")
+          print(f"- GOES-West RealEarth product: **{west_fetch.get('product_id')}**")
+          print('- Standard thresholds: **10 / 30 / 50 / 70 / 90%**')
+          render = meta.get('render_summary') or {}
+          print(f"- Image: **{render.get('width')} × {render.get('height')} px**")
+          ownership = meta.get('satellite_ownership') or {}
+          print(f"- Ownership method: **{ownership.get('method')}**")
+          print(f"- Swap padding: **{ownership.get('swap_padding_degrees')}°**")
+          print(f"- Fixed ownership longitude: **{ownership.get('ownership_longitude')}°**")
+          print('- Rendering: **source probability contours only; no inferred polygon fills**')
+          PY
+          else
+            echo '- Generator did not produce metadata.' >> "$GITHUB_STEP_SUMMARY"
+            if [[ -f "$LIGHTNINGCAST_OUTPUT_DIR/lightningcast_source_diagnostics.json" ]]; then
+              python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          diag = json.loads(Path('lightningcast_output/lightningcast_source_diagnostics.json').read_text())
+          for sat in ('GOES-East', 'GOES-West'):
+              item = diag.get(sat) or {}
+              print(f"- {sat} newest frame: **{item.get('newest_frame_utc')}**; invalid loop lines: **{item.get('invalid_coordinate_lines_total')}**")
+          PY
+            fi
+          fi
