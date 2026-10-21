@@ -45,7 +45,9 @@ def git(repo: Path, *args, check=True):
 
 
 def safe_rel(value: str) -> str:
-    value = value.replace("\\", "/").lstrip("./")
+    value = value.replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
     path = Path(value)
     if not value or path.is_absolute() or ".." in path.parts:
         raise ValueError(f"Unsafe repository path: {value!r}")
