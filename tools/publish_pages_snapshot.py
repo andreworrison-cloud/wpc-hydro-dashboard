@@ -121,6 +121,11 @@ def extract_remote(repo: Path, branch: str, destination: Path) -> str | None:
         # The branch moved between ls-remote and fetch. Use the exact fetched tip
         # as the lease expectation and snapshot base.
         expected = fetched
+    names = git(repo, "ls-tree", "-r", "--name-only", expected).stdout.splitlines()
+    if not names:
+        # git archive emits zero bytes for an empty tree. That is a valid
+        # bootstrap snapshot, not a corrupt archive.
+        return expected
     archive = subprocess.run(
         ["git", "-C", str(repo), "archive", expected],
         check=True,
