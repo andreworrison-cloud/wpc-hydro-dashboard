@@ -64,6 +64,13 @@ jobs:
           restore-keys: |
             hrrr-tle-${{ runner.os }}-
 
+      - name: Restore current HRRR / HRRR-TLE dashboard snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path static/hrrr_latest_12h_max_ffg_ratio.png \
+            --path static/hrrr_latest_12h_ffg_exceedance_coverage.png \
+            --path 'static/hrrr_tle_*'
       - name: Build newest complete HRRR / HRRR-TLE package
         shell: bash
         run: |
@@ -129,45 +136,13 @@ jobs:
           )
           PY
 
-      - name: Commit updated dashboard products
-        shell: bash
+      - name: Publish HRRR / HRRR-TLE products to pages-live
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-
-          # fetch_hrrr_tle.py publishes two standalone deterministic HRRR
-          # diagnostics in addition to the 18 HRRR-TLE layers.  Stage both
-          # families so the synchronized package cannot partially update.
-          products=(
-            static/hrrr_latest_12h_max_ffg_ratio.png
-            static/hrrr_latest_12h_ffg_exceedance_coverage.png
-            static/hrrr_tle_*
-          )
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- "${products[@]}"
-
-          if git diff --cached --quiet; then
-            echo "No HRRR / HRRR-TLE product changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update HRRR / HRRR-TLE flash flood guidance"
-
-          branch="${GITHUB_REF_NAME}"
-          for attempt in 1 2 3; do
-            echo "HRRR-TLE sync/push attempt ${attempt}..."
-            if ! git pull --rebase origin "${branch}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-            if git push origin "HEAD:${branch}"; then
-              echo 'HRRR-TLE products committed successfully.'
-              exit 0
-            fi
-            sleep $((attempt * 10))
-          done
-
-          echo 'Unable to push HRRR-TLE products after three attempts.' >&2
-          exit 1
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Update HRRR / HRRR-TLE flash flood guidance" \
+            --path static/hrrr_latest_12h_max_ffg_ratio.png \
+            --path static/hrrr_latest_12h_ffg_exceedance_coverage.png \
+            --path 'static/hrrr_tle_*'
