@@ -44,6 +44,11 @@ jobs:
           python -m py_compile fetch_lightningcast.py
           python fetch_lightningcast.py --self-test
 
+      - name: Restore current LightningCast dashboard snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path 'static/lightningcast_*'
       - name: Build latest LightningCast product
         run: |
           python fetch_lightningcast.py \
@@ -171,41 +176,17 @@ jobs:
             cp "$LIGHTNINGCAST_OUTPUT_DIR/$name" "static/$name"
           done
 
-      - name: Commit LightningCast update
+      - name: Publish LightningCast update to pages-live
         if: steps.freshness.outputs.publish == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            static/lightningcast_conus_probability_60min.png \
-            static/lightningcast_conus_probability_60min_metadata.json \
-            static/lightningcast_manifest.json
-          if git diff --cached --quiet; then
-            echo 'No LightningCast file changes to commit.'
-            exit 0
-          fi
           scan='${{ steps.freshness.outputs.new_scan }}'
-          git commit -m "Update LightningCast ${scan}"
-
-          branch="${GITHUB_REF_NAME}"
-          for attempt in 1 2 3; do
-            echo "LightningCast sync/push attempt ${attempt}..."
-            if ! git pull --rebase origin "${branch}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-            if git push origin "HEAD:${branch}"; then
-              echo 'LightningCast products committed successfully.'
-              exit 0
-            fi
-            sleep $((attempt * 10))
-          done
-
-          echo 'Unable to push LightningCast products after three attempts.' >&2
-          exit 1
-
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Update LightningCast ${scan}" \
+            --path 'static/lightningcast_*'
       - name: Upload LightningCast preview artifact
         if: ${{ github.event_name == 'workflow_dispatch' || failure() }}
         uses: actions/upload-artifact@v7
