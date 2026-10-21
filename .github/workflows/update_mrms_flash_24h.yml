@@ -78,6 +78,12 @@ jobs:
           python fetch_mrms_crest_24h.py --self-test
           python fetch_mrms_ffd_24h.py --self-test
 
+      - name: Restore current MRMS FLASH dashboard snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path 'static/mrms_crest_unitq_max24h*' \
+            --path 'static/mrms_ffd_max24h*'
       - name: Resolve one common MRMS FLASH ending cycle
         id: cycle
         run: |
@@ -207,42 +213,13 @@ jobs:
             static/mrms_ffd_max24h.png \
             static/mrms_ffd_max24h_metadata.json
 
-      - name: Commit synchronized MRMS FLASH products
+      - name: Publish synchronized MRMS FLASH products to pages-live
         env:
           END_TIME: ${{ steps.cycle.outputs.end_time }}
-          BRANCH_NAME: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            static/mrms_crest_unitq_max24h.png \
-            static/mrms_crest_unitq_max24h_metadata.json \
-            static/mrms_ffd_max24h.png \
-            static/mrms_ffd_max24h_metadata.json
-
-          if git diff --cached --quiet; then
-            echo "No MRMS FLASH product changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update MRMS FLASH 24h maxima ${END_TIME}"
-
-          for attempt in 1 2 3; do
-            echo "Sync/push attempt ${attempt}..."
-            if ! git pull --rebase origin "${BRANCH_NAME}"; then
-              git rebase --abort || true
-              sleep $((attempt * 10))
-              continue
-            fi
-
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "MRMS FLASH products committed successfully."
-              exit 0
-            fi
-
-            sleep $((attempt * 10))
-          done
-
-          echo "Unable to push MRMS FLASH products after three attempts."
-          exit 1
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Update MRMS FLASH 24h maxima ${END_TIME}" \
+            --path 'static/mrms_crest_unitq_max24h*' \
+            --path 'static/mrms_ffd_max24h*'
