@@ -1,5 +1,5 @@
 name: Pages Live Publisher Smoke Test
-# retry: fixed-hidden-path-normalization
+# retry: sync-current-helper
 
 on:
   push:
@@ -62,3 +62,12 @@ jobs:
           test "$parents" = "0"
 
           echo "pages-live smoke test passed: ${before} -> ${added} -> ${after}"
+
+      - name: Synchronize current publisher helper into pages-live
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Sync current Pages snapshot publisher helper" \
+            --path tools/publish_pages_snapshot.py
