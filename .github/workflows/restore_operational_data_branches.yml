@@ -1,0 +1,102 @@
+name: One-time restore operational data branches
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore_operational_data_branches.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: restore-operational-data-branches
+  cancel-in-progress: false
+
+jobs:
+  restore-data-branch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - branch: data/ero-gdi
+            sha: cc2ad6974e5eb739ce72355f9e4ab5212131fd33
+          - branch: data/ffg-tendency
+            sha: 31c0bc30def66fd9be3161898794dff3ca483c74
+          - branch: data/gdi
+            sha: 00b06b40496a40a1864a3550385aedacc16f5917
+          - branch: data/guidance-gdi
+            sha: 434c3fcc46fb4bc906035e51f2e34559b38aafde
+          - branch: data/qpe-ffg
+            sha: d47c5280c86c02aa9ee2ccd0b214e4497314871d
+          - branch: data/qpe-ffg-review
+            sha: 73135bcbbfe54fe87df7b6b68c75f0451e8b296e
+          - branch: data/rap-gdi
+            sha: a69147c573b15234d159f52c740350667071a362
+          - branch: data/rfc-ffg
+            sha: 6e2d3978dd9d223fd5cec5f59b2a281b8a63f821
+          - branch: data/rfc-ffg-review
+            sha: a866fa7e78143df93b97ba120013e38a81a7fb01
+          - branch: data/sport-lis
+            sha: 1e7e68a5227d25433ded5b3063785d066e24018e
+          - branch: mrms-rala-data
+            sha: a48e832ed82e03a6383d5aba88a88d858672ce51
+          - branch: wfigs-data
+            sha: acf837f07438ba6ec33d274fa00616359c80d127
+
+    env:
+      SOURCE_REPO: andreworrison-cloud/wpc-hydro-dashboard-archive-20261021
+      SOURCE_BRANCH: ${{ matrix.branch }}
+      SOURCE_SHA: ${{ matrix.sha }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Fetch exact archived branch snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/snapshot"
+          git clone --depth 1 --single-branch --branch "${SOURCE_BRANCH}" \
+            "https://github.com/${SOURCE_REPO}.git" "${work}"
+          actual="$(git -C "${work}" rev-parse HEAD)"
+          echo "Source ${SOURCE_BRANCH} HEAD: ${actual}"
+          test "${actual}" = "${SOURCE_SHA}"
+
+      - name: Re-root snapshot with no parents
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/snapshot"
+          cd "${work}"
+          rm -rf .git
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan snapshot-root
+          git add -A
+          git commit -m "Seed clean snapshot of ${SOURCE_BRANCH} from archive ${SOURCE_SHA}"
+
+          parent_fields="$(git rev-list --parents -n 1 HEAD | awk '{print NF}')"
+          test "${parent_fields}" = "1"
+
+          file_count="$(find . -type f ! -path './.git/*' | wc -l)"
+          byte_count="$(du -sb . --exclude=.git | awk '{print $1}')"
+          echo "Snapshot files=${file_count} bytes=${byte_count}"
+
+      - name: Publish clean snapshot branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/snapshot"
+          cd "${work}"
+          git remote add dest "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force dest HEAD:"refs/heads/${SOURCE_BRANCH}"
+
+          local_head="$(git rev-parse HEAD)"
+          remote_head="$(git ls-remote dest "refs/heads/${SOURCE_BRANCH}" | awk '{print $1}')"
+          echo "Published ${SOURCE_BRANCH}: ${remote_head}"
+          test "${local_head}" = "${remote_head}"
