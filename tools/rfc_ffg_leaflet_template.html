@@ -1,0 +1,60 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>H5 RFC FFG • Display review</title>
+<style>/*LEAFLET_CSS*/</style><style>
+*{box-sizing:border-box}body{margin:0;background:#0b1621;color:#edf5fb;font:15px/1.5 Arial,sans-serif}main{max-width:1500px;margin:auto;padding:24px}h1{font-size:28px;margin:6px 0}h2{font-size:18px;margin:0 0 10px}p{margin:8px 0;color:#b9cbd9}.kicker{color:#78caff;font-weight:bold;letter-spacing:.09em;font-size:12px}.controls{display:flex;gap:18px;flex-wrap:wrap;margin:22px 0}label{display:block}button{padding:10px 16px;background:#1b3043;border:1px solid #627e94;border-radius:6px;color:white;cursor:pointer}select{display:block;padding:10px;background:#1b3043;border:1px solid #627e94;color:white;border-radius:6px;font:inherit;max-width:100%}#leaflet-map{height:580px;width:100%;background:#25282b}.ffg-raster{image-rendering:pixelated}.leaflet-container{color:#111}.leaflet-control-attribution{font-size:10px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:20px}.card{border:1px solid #415668;background:#102131;border-radius:9px;padding:16px}.status{padding:12px;border:1px solid #69caa5;background:#193b36;border-radius:6px;margin-bottom:14px;font-weight:bold}.status.retained{background:#49371a;border-color:#ffca66}.status.expired,.status.unavailable{background:#4a252a;border-color:#ff939c}.row{display:flex;align-items:center;gap:9px;font-variant-numeric:tabular-nums}.swatch{width:28px;height:16px;display:inline-block;border:1px solid #a9b8c2}.nodata{background:repeating-conic-gradient(#203446 0% 25%,#768594 0% 50%) 50%/12px 12px}dl{margin:12px 0;font-size:13px}dt{color:#a7bece;margin-top:10px}dd{margin:0;font-variant-numeric:tabular-nums}.small{font-size:12px}details{margin-top:20px}code{overflow-wrap:anywhere}@media(max-width:800px){#leaflet-map{height:400px}main{padding:14px}.layout{grid-template-columns:1fr}h1{font-size:23px}.controls{display:block}.controls label{margin:12px 0}}
+</style>
+<main><div class="kicker">WPC HYDROMETEOROLOGICAL DASHBOARD · PHASE H5</div>
+<h1>RFC Flash Flood Guidance</h1><p><strong>Frozen display review — not a live operational layer.</strong> Real validated raster; selectable freshness scenarios.</p>
+<div class="controls"><label>Rainfall duration<select id="duration"><option value="1">1 hour</option><option value="3" selected>3 hours</option><option value="6">6 hours</option></select></label>
+<label>Freshness review<select id="scenario"><option value="clock">Current clock · frozen product</option><option value="current">Simulate successful refresh</option><option value="retained">Simulate failed refresh · retain product</option><option value="expired">Simulate expiry · hide product</option><option value="unavailable">Simulate no validated product</option></select></label></div>
+<div class="controls"><label>Map background<select id="basemap"></select></label><label>Raster opacity<input id="opacity" type="range" min="0" max="100" value="85"></label><button id="reset" type="button">CONUS view</button></div><div class="layout"><section class="card"><h2 id="map-title"></h2><div id="status" class="status" role="status"></div>
+<div id="leaflet-map" aria-label="RFC guidance map with state borders"></div>
+<p class="small">Web Mercator (EPSG:3857); nominal 5-km source grid. State borders remain above guidance on every background. Zooming does not add source detail. Basemap tiles require internet access; raster and state borders are embedded.</p>
+<p class="small">Transparent areas contain no displayed guidance; they do not mean zero rainfall threshold or no flood threat. Coverage checks compare with the observed baseline, not an independently verified expected-coverage mask.</p>
+</section><aside class="card"><h2>Rainfall threshold · inches</h2><div id="legend"></div><div class="row"><i class="swatch nodata"></i>NoData / outside coverage</div>
+<p class="small">Lower thresholds use warmer colors. These are rainfall amounts, not flood-risk categories. Proposed display palette; not the official RFC color scale.</p>
+<dl id="times"></dl><p class="small">Individual RFC issuance times are unavailable in this mosaic. Encoded duration endpoints are not product expiration times.</p></aside></div>
+<details><summary>Source and review notes</summary><p>WPC national mosaic of RFC-issued guidance. Scientific values remain in the native numerical grid; no values are recovered from these colors.</p><p id="source"></p><p id="hash" class="small"></p><p>The freshness limits (3-hour snapshot age; 9-hour reference age) are proposed application policy. The clock is rechecked every 30 seconds, including when upstream updates stop.</p></details></main>
+<script>/*LEAFLET_JS*/</script><script>
+/*DISPLAY_CONTRACT*/
+/*REVIEW_DATA*/
+const $ = id => document.getElementById(id);
+const m = review.metadata, a = m.active;
+const utc = value => Number.isFinite(Date.parse(value)) ? new Date(value).toISOString().replace('T',' ').replace(/\.\d{3}Z$/, ' UTC') : 'Unavailable';
+const legend = a.legend;
+legend.colors_rgb.forEach((color,i) => {const row = document.createElement('div');row.className='row';const swatch=document.createElement('i');swatch.className='swatch';swatch.style.background=`rgb(${color.join(',')})`;row.append(swatch);const e=legend.class_upper_edges;row.append(document.createTextNode(i===0?`< ${e[0]}`:i===e.length?`≥ ${e[i-1]}`:`${e[i-1]} to < ${e[i]}`));$('legend').append(row)});
+const map = L.map('leaflet-map', {zoomControl:true,zoomSnap:.25}).fitBounds([[24,-126],[50,-66]]);
+map.createPane('ffg');map.getPane('ffg').style.zIndex=350;
+map.createPane('stateBorders');map.getPane('stateBorders').style.zIndex=610;map.getPane('stateBorders').style.pointerEvents='none';
+const b=a.legend.bounds_wsen;
+if(a.legend.crs!=='EPSG:3857')throw Error('Leaflet review requires Mercator derivative');
+const raster=L.imageOverlay(review.images['3'],[[b[1],b[0]],[b[3],b[2]]],{pane:'ffg',opacity:.85,className:'ffg-raster',interactive:false});
+const conusStates={...review.states,features:review.states.features.filter(f=>!['Alaska','Hawaii','Puerto Rico'].includes(f.properties.name))};
+map.attributionControl.addAttribution('State boundaries: dashboard reference GeoJSON');
+const stateHalo=L.geoJSON(conusStates,{pane:'stateBorders',interactive:false,style:{color:'#101820',weight:2.6,opacity:.85,fill:false}}).addTo(map);
+const stateLines=L.geoJSON(conusStates,{pane:'stateBorders',interactive:false,style:{color:'#fff',weight:1,opacity:.9,fill:false}}).addTo(map);
+const baseConfigs=review.basemaps;let baseLayer=null;
+for(const c of baseConfigs){const o=document.createElement('option');o.value=c.id;o.textContent=c.label;$('basemap').append(o)}
+function switchBase(){const c=baseConfigs.find(c=>c.id===$('basemap').value);if(baseLayer)map.removeLayer(baseLayer);baseLayer=null;map.getContainer().style.background=c.color||'#ddd';
+ if(c.url)baseLayer=L.tileLayer(c.url,{maxZoom:19,attribution:c.attribution}).addTo(map);
+ if(c.id==='wpc-dark-reference'){baseLayer=L.geoJSON(null,{pane:'tilePane',interactive:false,style:f=>({fillColor:f.properties.ADM0_A3==='USA'?'#050608':'#17191c',color:'#5e6670',weight:.7,fillOpacity:1})}).addTo(map);const target=baseLayer;fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson').then(r=>{if(!r.ok)throw Error(r.status);return r.json()}).then(d=>target.addData(d)).catch(()=>{});}
+}
+$('basemap').addEventListener('change',switchBase);switchBase();
+$('opacity').addEventListener('input',()=>raster.setOpacity(Number($('opacity').value)/100));
+$('reset').addEventListener('click',()=>map.fitBounds([[24,-126],[50,-66]],{animate:false}));
+window.h5Review={map,raster,stateLines,stateHalo,baseConfigs};
+$('source').textContent=a.source_url;$('hash').textContent='Source SHA-256: '+a.source_sha256;
+function render(){let sample=JSON.parse(JSON.stringify(m)),now=Date.now();const mode=$('scenario').value;
+ if(mode!=='clock'){now=Date.parse(a.snapshot_time)+2*3600000;sample.usable=true;sample.stale=false;sample.state='updated';sample.last_attempt={at:new Date(now).toISOString(),ok:true};
+ if(mode==='retained'){sample.state='retained';sample.last_attempt.ok=false;sample.stale=true}
+ if(mode==='expired')now=Math.min(Date.parse(a.snapshot_time)+m.policy.max_snapshot_age_hours*3600000,Date.parse(a.reference_time)+m.policy.max_reference_age_hours*3600000);
+ if(mode==='unavailable')sample.active=null;}
+ const state=ffgDisplayState(sample,now),hour=$('duration').value;
+ $('map-title').textContent=`RFC ${hour}-hour Flash Flood Guidance`;
+ $('status').className='status '+state.state;$('status').textContent=(mode==='clock'?'Frozen product · ':'SIMULATION · ')+state.label;
+ raster.setUrl(review.images[hour]);if(state.visible&&!map.hasLayer(raster))raster.addTo(map);if(!state.visible&&map.hasLayer(raster))map.removeLayer(raster);
+ const entries=[['Review clock',utc(new Date(now).toISOString())],['Mosaic snapshot',utc(a.snapshot_time)],['GRIB reference cycle',utc(a.reference_time)],['Source file modified',utc(a.http_modified_time)],['Last actual check',utc(m.last_attempt.at)],['Application freshness cutoff',state.expires?utc(new Date(state.expires).toISOString()):'Unavailable']];
+ $('times').replaceChildren();for(const [key,value] of entries){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=key;dd.textContent=value;$('times').append(dt,dd)}
+}
+$('duration').addEventListener('change',render);$('scenario').addEventListener('change',render);render();setInterval(render,30000);
+</script></html>

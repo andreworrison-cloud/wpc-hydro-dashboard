@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>WPC Real-Time Hydrologic Dashboard</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.control.min.css" />
+
+    <link rel="stylesheet" href="style.css?gdi-spacing=v2&amp;hydro-menu=ffg-tendency-v2&amp;v=h5-production-v1-legend-dock-v1-mobile-viewport-v1-nldas-rsm-v1-glm-v2">
+
+<style>
+    img.qpe-ffg-raster, img.sport-suite-raster, img.sport-rsm-raster, img.sport-change-raster { image-rendering: pixelated; }
+    .sport-suite-card { background: white; color: #17202a; padding: 10px; border-radius: 5px; max-width: 310px; font: 12px/1.4 sans-serif; }
+    .sport-suite-card p { margin: 7px 0; }
+    .sport-suite-swatch { display: inline-block; width: 26px; height: 12px; margin-right: 8px; border: 1px solid #888; vertical-align: middle; }
+</style>
+</head>
+<body>
+    <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="dashboard-sidebar" aria-expanded="true">
+        <span aria-hidden="true">☰</span>
+        <span>Layers</span>
+    </button>
+
+    <aside id="dashboard-sidebar" class="dashboard-sidebar" aria-label="Dashboard data controls">
+        <header class="sidebar-header">
+            <div>
+                <div class="sidebar-kicker">WPC Hydrometeorological Dashboard</div>
+                <h1>Data Layers</h1>
+            </div>
+            <button id="sidebar-close" class="sidebar-close" type="button" aria-label="Close data-layer sidebar">×</button>
+        </header>
+
+        <div class="sidebar-search-wrap">
+            <label for="layer-search">Search layers</label>
+            <div class="sidebar-search-row">
+                <input id="layer-search" type="search" placeholder="Search RAP, MRMS, wildfire, soil moisture…" autocomplete="off">
+                <button id="clear-layer-search" type="button" aria-label="Clear layer search">×</button>
+            </div>
+            <div class="sidebar-status-row">
+                <span id="active-layer-count">0 active layers</span>
+                <span id="selected-layer-name">No layer selected</span>
+            </div>
+        </div>
+
+        <div id="sidebar-sections" class="sidebar-sections"></div>
+    </aside>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/iso8601-js-period@0.2.1/iso8601.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.1/dist/leaflet.timedimension.min.js"></script>
+    <script src="tools/rfc_ffg_display.js?v=h5-v1"></script>
+    <script src="ffg_tendency_layer.js?v=toggle-fix-v2"></script>
+    <script src="rfc_ffg_layer.js?v=h5-v1"></script>
+    <script src="qpe_ffg_layer.js?v=h8-pass2-timing-v4"></script>
+    <script src="sport_change_layer.js?v=h7-production-v1"></script>
+    <script src="sport_rsm_layer.js?v=h6-rsm-production-v1"></script>
+    <script src="sport_suite_layer.js?v=h6-production-v1"></script>
+    <script src="gdi_display.js?v=gdi-display-v2"></script>
+    <script src="gdi_suite_layer.js?v=gdi-display-v2"></script>
+    <script src="gdi_layer.js?v=gdi-display-v2"></script>
+    <script src="nwm_freshness.js?v=1"></script>
+    <script src="app.js?nwm=freshness-v1&amp;gdi=guidance-v3&amp;hydro-menu=ffg-tendency-v2&amp;h8=window-fixed-v1&amp;h7=production-v1&amp;h6=production-v2-retire-nldas2&amp;v=h5-production-v1-legend-dock-v1-mobile-viewport-v1-nldas-rsm-v1-glm-v2-mrms-rala-loop-v2-3-speed-crisp-mrms-rala-loop-v2-6-speed-tuning-mrms-rala-loop-v2-7-adaptive-speed-mrms-rala-loop-v2-8-effective-speed-mrms-rala-loop-v2-9-split-speed-controls-mrms-rala-loop-v2-10-viewer-style-speed-wfigs-dashboard-v2-history-v1-3-conus-overview-wfigs-seasonal-trends-v1-1-nrcs-hsg-native30m-h1-v2-3-mrms-rala-loop-v2-11-10min-windows-annual-nlcd-fctimp-2025-h2-v1-1-clarified"></script>
+</body>
+</html>
+
+
