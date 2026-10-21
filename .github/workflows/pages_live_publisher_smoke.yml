@@ -1,0 +1,63 @@
+name: Pages Live Publisher Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pages_live_publisher_smoke.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-live-publisher-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out durable source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Exercise add and remove publication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(git ls-remote --heads origin refs/heads/pages-live | awk '{print $1}')"
+          test -n "$before"
+          git fetch --no-tags --depth=1 origin refs/heads/pages-live
+          before_tree="$(git rev-parse "${before}^{tree}")"
+
+          printf 'pages-live publisher smoke %s\n' "${GITHUB_RUN_ID}" > .publisher-smoke-test.txt
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Pages live publisher smoke add" \
+            --path .publisher-smoke-test.txt
+
+          added="$(git ls-remote --heads origin refs/heads/pages-live | awk '{print $1}')"
+          test "$added" != "$before"
+
+          rm -f .publisher-smoke-test.txt
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Pages live publisher smoke remove" \
+            --path .publisher-smoke-test.txt
+
+          after="$(git ls-remote --heads origin refs/heads/pages-live | awk '{print $1}')"
+          test "$after" != "$added"
+
+          git fetch --no-tags --depth=1 origin refs/heads/pages-live
+          after_tree="$(git rev-parse "${after}^{tree}")"
+          test "$after_tree" = "$before_tree"
+
+          parents="$(git cat-file -p "$after" | grep -c '^parent ' || true)"
+          test "$parents" = "0"
+
+          echo "pages-live smoke test passed: ${before} -> ${added} -> ${after}"
