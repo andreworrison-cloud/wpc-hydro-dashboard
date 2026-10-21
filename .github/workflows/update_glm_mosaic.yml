@@ -88,6 +88,11 @@ jobs:
       - name: Validate generator syntax
         run: python -m py_compile fetch_glm_mosaic.py
 
+      - name: Restore current GLM dashboard snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path 'static/glm_*'
       - name: Generate operational GLM mosaics
         env:
           ANALYSIS_TIME: ${{ inputs.analysis_time }}
@@ -243,19 +248,15 @@ jobs:
           retention-days: 3
           compression-level: 0
 
-      - name: Publish dashboard GLM files and push with retry
+      - name: Publish dashboard GLM files to pages-live
         env:
           PUBLISH_DEBUG_LAYERS: ${{ inputs.publish_debug_layers }}
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           publish_start=$(date +%s)
-          branch="${GITHUB_REF_NAME}"
           root="$GLM_OUTPUT_DIR"
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git pull --rebase origin "$branch"
           mkdir -p static
 
           publish=(
@@ -278,38 +279,22 @@ jobs:
             publish+=("${debug_publish[@]}")
           else
             for file in "${debug_publish[@]}"; do
-              git rm -f --ignore-unmatch "static/$file"
+              rm -f "static/$file"
             done
           fi
 
           for file in "${publish[@]}"; do
             cp -f "$root/$file" "static/$file"
           done
-          printf 'static/%s\n' "${publish[@]}" | xargs git add --
 
-          if git diff --cached --quiet; then
-            echo 'No GLM product changes to commit.'
-            elapsed=$(( $(date +%s) - publish_start ))
-            printf 'publish_seconds=%s\n' "$elapsed" >> "$RUNNER_TEMP/glm_workflow_timings.env"
-            exit 0
-          fi
           valid_end=$(python -c "import json; print(json.load(open('$root/glm_mosaic_manifest.json'))['window_end_utc'])")
-          git commit -m "Update GOES GLM mosaic through ${valid_end}"
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Update GOES GLM mosaic through ${valid_end}" \
+            --path 'static/glm_*'
 
-          for attempt in 1 2 3; do
-            if git push origin "HEAD:${branch}"; then
-              elapsed=$(( $(date +%s) - publish_start ))
-              printf 'publish_seconds=%s\n' "$elapsed" >> "$RUNNER_TEMP/glm_workflow_timings.env"
-              exit 0
-            fi
-            if [[ "$attempt" -eq 3 ]]; then
-              echo 'GLM push failed after three attempts.' >&2
-              exit 1
-            fi
-            sleep $((attempt * 10))
-            git pull --rebase origin "$branch"
-          done
-
+          elapsed=$(( $(date +%s) - publish_start ))
+          printf 'publish_seconds=%s\n' "$elapsed" >> "$RUNNER_TEMP/glm_workflow_timings.env"
       - name: Write workflow summary
         if: ${{ always() && hashFiles('glm_operational_staging/glm_mosaic_manifest.json') != '' }}
         shell: bash
