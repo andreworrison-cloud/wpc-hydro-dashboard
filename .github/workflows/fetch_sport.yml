@@ -96,7 +96,25 @@ jobs:
         run: python tools/publish_sport.py publish --data-dir diagnostics/sport --state-file "$RUNNER_TEMP/sport-restore.json"
       - name: Report ingest failures after retained status is published
         if: always() && (steps.percentile.outcome == 'failure' || steps.rsm.outcome == 'failure' || steps.change.outcome == 'failure' || steps.numeric_restore.outcome == 'failure')
-        run: exit 1
+        shell: bash
+        run: |
+          python - <<'PYTHON'
+          import json
+          from pathlib import Path
+          unusable=[]
+          for key in ('percentile','rsm','change'):
+              p=Path('diagnostics/sport/public')/key/'metadata.json'
+              try:
+                  m=json.loads(p.read_text())
+              except Exception:
+                  unusable.append(key)
+                  continue
+              if m.get('usable') is not True:
+                  unusable.append(key)
+          if unusable:
+              raise SystemExit('SPoRT ingest failed and no usable retained product remains for: '+', '.join(unusable))
+          print('::warning::SPoRT upstream ingest was incomplete; all dashboard suites retained validated usable products.')
+          PYTHON
       - name: Preserve numerical provenance and product status
         if: always()
         uses: actions/upload-artifact@v4

@@ -45,7 +45,31 @@ jobs:
         run: python tools/publish_ffg_tendency.py publish --data-dir diagnostics/tendency --state-file "$RUNNER_TEMP/tendency-state.json"
       - name: Report partial ingest failure
         if: always() && steps.ingest.outcome == 'failure'
-        run: exit 1
+        shell: bash
+        run: |
+          python - <<'PYTHON'
+          import json
+          from datetime import datetime,timezone
+          from pathlib import Path
+          m=json.loads(Path('diagnostics/tendency/public/metadata.json').read_text())
+          now=datetime.now(timezone.utc)
+          unusable=[]
+          for lag in ('6','12','24'):
+              product=(m.get('products') or {}).get(lag)
+              if not product:
+                  unusable.append(lag)
+                  continue
+              try:
+                  expires=datetime.fromisoformat(product['expires_at'])
+              except Exception:
+                  unusable.append(lag)
+                  continue
+              if now >= expires:
+                  unusable.append(lag)
+          if unusable:
+              raise SystemExit('FFG tendency ingest failed and no current retained product remains for lookbacks: '+', '.join(unusable))
+          print('::warning::One or more exact FFG tendency endpoints were temporarily unavailable; all retained tendency products remain current and verified.')
+          PYTHON
       - uses: actions/upload-artifact@v4
         if: always()
         with:

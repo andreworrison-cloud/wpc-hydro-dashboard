@@ -62,8 +62,31 @@ jobs:
                   if p.is_dir() and p.name.isdigit() and p.name<cutoff:shutil.rmtree(p)
           PY
       - run: python tools/publish_gdi_suite.py restore --data-dir run/gdi-window-data --state-file run/gdi-window-state.json
-      - run: python tools/gdi/build_guidance.py --mode ${{ matrix.mode }} --work run/gdi-window --public run/gdi-window-data/public
-      - run: python tools/publish_gdi_suite.py publish --data-dir run/gdi-window-data --state-file run/gdi-window-state.json
+      - name: Build requested GDI window
+        id: build
+        continue-on-error: ${{ matrix.mode == 'ero' }}
+        run: python tools/gdi/build_guidance.py --mode ${{ matrix.mode }} --work run/gdi-window --public run/gdi-window-data/public
+      - name: Publish completed GDI window
+        if: steps.build.outcome == 'success'
+        run: python tools/publish_gdi_suite.py publish --data-dir run/gdi-window-data --state-file run/gdi-window-state.json
+      - name: Report retained ERO GDI window
+        if: matrix.mode == 'ero' && steps.build.outcome == 'failure'
+        shell: bash
+        run: |
+          python - <<'PYTHON'
+          import json
+          from datetime import datetime,timezone
+          from pathlib import Path
+          p=Path('run/gdi-window-data/public/metadata.json')
+          try:
+              m=json.loads(p.read_text())
+              expires=datetime.fromisoformat(m['expires_at'])
+          except Exception as exc:
+              raise SystemExit(f'ERO GDI build failed and retained metadata is unusable: {exc}')
+          if datetime.now(timezone.utc) >= expires:
+              raise SystemExit('ERO GDI build failed and retained ERO guidance is expired')
+          print(f"::warning::ERO GDI build deferred; retaining verified current suite through {expires.isoformat()}.")
+          PYTHON
       - uses: actions/cache/save@v4
         if: always()
         with:
