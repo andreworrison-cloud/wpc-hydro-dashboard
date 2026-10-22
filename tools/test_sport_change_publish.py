@@ -11,10 +11,13 @@ class H7PublishTests(PublishTests):
         m=json.loads(Path('review/h7/change_ingest_evidence.json').read_text());m['policy']=h.POLICY
         for product in m['active']['products'].values():
             path=root/product['image']['path'];path.parent.mkdir(parents=True,exist_ok=True);Image.new('RGBA',(4000,2538),(152,84,31,235)).save(path);product['image']['sha256']=h.digest(path)
-        (root/'metadata.json').write_text(json.dumps(m));(root/'numeric-cache').mkdir();(root/'numeric-cache/source.tif').write_bytes(b'must not enter git')
+        (root/'metadata.json').write_text(json.dumps(m))
+        cache=root/'numeric-cache';cache.mkdir();raw=b'versioned numeric bytes';sha=hashlib.sha256(raw).hexdigest()
+        (cache/(sha+'.tif')).write_bytes(raw)
+        (cache/'index.json').write_text(json.dumps({sha:{'sha256':sha,'last_verified_at':'2026-10-18T00:00:00Z','valid_time':'2026-10-17T00:00:00Z'}}))
     def test_atomic_roundtrip_and_source_exclusion(self):
         head=p.publish(self.repo,self.data,self.state);root,state=self.restored();p.verify(root)
-        self.assertFalse(list(root.rglob('*.tif')));self.assertEqual(len(list(root.rglob('*.png'))),9);self.assertFalse((root/'public/change/numeric-cache').exists())
+        self.assertEqual(len(list(root.rglob('*.tif'))),1);self.assertEqual(len(list(root.rglob('*.png'))),9);self.assertTrue((root/'public/change/numeric-cache/index.json').exists());self.assertTrue(p.verify_numeric_cache(root/'public/change'))
         self.assertEqual(p.publish(self.repo,root,state),head)
     def test_h7_failure_survives_durable_restore(self):
         p.publish(self.repo,self.data,self.state);root,state=self.restored();suite=root/'public/change';before=json.loads((suite/'metadata.json').read_text())['active']

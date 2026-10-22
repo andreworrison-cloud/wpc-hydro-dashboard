@@ -27,7 +27,7 @@ def extract_verified(raw,target):
         for p in stage.iterdir():os.replace(p,target/p.name)
     return len(index)
 
-def restore(target,required,repo,token):
+def restore(target,required,repo,token,allow_bootstrap=False):
     api=f'https://api.github.com/repos/{repo}'
     session=requests.Session();session.headers.update({'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
     candidates=[]
@@ -38,8 +38,12 @@ def restore(target,required,repo,token):
         candidates.extend(a for a in r.json()['artifacts'] if a['name'].startswith(PREFIX) and not a['expired'])
         if candidates:break
     if not candidates:
-        if required:raise ValueError('Existing H7 generation requires its retained numeric archive; refusing silent history reset')
-        print('H7 numeric restore: first production bootstrap');return
+        if required and not allow_bootstrap:raise ValueError('Existing H7 generation requires its retained numeric archive; refusing silent history reset')
+        if required:
+            print('H7 numeric restore: prior active map retained; numeric cache will be rebuilt from current audited NASA sources')
+        else:
+            print('H7 numeric restore: first production bootstrap')
+        return
     item=max(candidates,key=lambda x:x['created_at'])
     response=session.get(item['archive_download_url'],timeout=180);response.raise_for_status()
     expected=item.get('digest')
@@ -48,6 +52,6 @@ def restore(target,required,repo,token):
     print(f"H7 numeric restore: artifact {item['id']}, {count} verified source versions")
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--suite-dir',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--suite-dir',type=Path,required=True);p.add_argument('--allow-bootstrap',action='store_true');a=p.parse_args()
     pointer=a.suite_dir/'metadata.json';required=pointer.exists() and bool(json.loads(pointer.read_text()).get('active'))
-    restore(a.suite_dir/'numeric-cache',required,os.environ['GITHUB_REPOSITORY'],os.environ['GH_TOKEN'])
+    restore(a.suite_dir/'numeric-cache',required,os.environ['GITHUB_REPOSITORY'],os.environ['GH_TOKEN'],a.allow_bootstrap)

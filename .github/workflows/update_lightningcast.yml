@@ -53,6 +53,8 @@ jobs:
         run: |
           python fetch_lightningcast.py \
             --output-dir "$LIGHTNINGCAST_OUTPUT_DIR" \
+            --timeout-seconds 20 \
+            --retries 2 \
             --maximum-age-minutes 20 \
             --maximum-frame-offset-minutes 5 \
             --reuse-existing-on-transient-pair-gap \

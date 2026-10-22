@@ -3,7 +3,7 @@
 
 Never writes the code branch or main. Each data branch is a single snapshot.
 An exact-head force-with-lease prevents concurrent writers from losing updates.
-GitHub controls garbage collection of unreachable historical objects. Original floats are excluded from Git history.
+GitHub controls garbage collection of unreachable historical objects. H7 numeric inputs are retained only in this bounded history-free snapshot.
 """
 import argparse
 import hashlib
@@ -54,6 +54,22 @@ def restore(repo,target,state_file):
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 
+def verify_numeric_cache(root):
+    index_path=root/'numeric-cache'/'index.json'
+    if not index_path.exists():return False
+    index=json.loads(index_path.read_text())
+    if not isinstance(index,dict) or not index:raise ValueError('Invalid SPoRT H7 numeric cache index')
+    expected={'index.json'}
+    for digest_value,entry in index.items():
+        if not isinstance(digest_value,str) or len(digest_value)!=64 or entry.get('sha256')!=digest_value:raise ValueError('Invalid SPoRT H7 numeric cache hash')
+        sport_change_suite.parse(entry['valid_time']);sport_change_suite.parse(entry['last_verified_at'])
+        tif=root/'numeric-cache'/(digest_value+'.tif')
+        if not tif.exists() or sport_change_suite.digest(tif)!=digest_value:raise ValueError('Missing or corrupt SPoRT H7 numeric cache file')
+        expected.add(tif.name)
+    actual={p.name for p in (root/'numeric-cache').iterdir() if p.is_file()}
+    if actual!=expected:raise ValueError('Unindexed SPoRT H7 numeric cache content')
+    return True
+
 def verify(target):
     for key,module in [('percentile',sport_suite),('rsm',sport_rsm_suite),('change',sport_change_suite)]:
         root=target/'public'/key
@@ -62,7 +78,9 @@ def verify(target):
         if m.get('schema_version')!=1 or m.get('policy')!=module.POLICY:raise ValueError('Invalid SPoRT policy/schema')
         a=m.get('active')
         if not a:continue
-        if key=='change':module.verify(root,a)
+        if key=='change':
+            module.verify(root,a)
+            verify_numeric_cache(root)
         else:module.verify(root,a,require_sources=False)
         for p in a['products'].values():
             i=p['image']
@@ -73,7 +91,7 @@ def verify(target):
 
 
 def export_public(target,destination):
-    """Keep active plus one preceding generation per suite; originals stay in artifacts."""
+    """Keep active plus one preceding generation per suite; H7 numeric cache stays in the bounded snapshot."""
     verify(target)
     for key in ('percentile','rsm','change'):
         source=target/'public'/key
@@ -89,6 +107,10 @@ def export_public(target,destination):
             for p in folder.glob('*.png'):
                 if p.is_symlink():raise ValueError('Symlink in publication')
                 shutil.copyfile(p,dest/p.name)
+        if key=='change' and (source/'numeric-cache'/'index.json').exists():
+            cache_out=out/'numeric-cache'
+            shutil.copytree(source/'numeric-cache',cache_out)
+            verify_numeric_cache(out)
     (destination/MARKER).write_text(json.dumps(IDENTITY,indent=2)+'\n')
     verify(destination)
 

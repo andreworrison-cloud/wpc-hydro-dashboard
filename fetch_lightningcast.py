@@ -182,7 +182,7 @@ class ParsedPlacefile:
 
 
 class FramePairNotReadyError(RuntimeError):
-    """Both sources are fresh, but no pair meets the synchronization limit."""
+    """Live source frames are temporarily unusable or not synchronized enough to replace the last good package."""
 
 
 def utc_now() -> datetime:
@@ -1229,7 +1229,7 @@ def select_clean_frame_pair(
             f"newest East={iso_z(newest_east)}, newest West={iso_z(newest_west)}, "
             f"clean fresh East={len(east_clean)}, clean fresh West={len(west_clean)}"
         )
-        raise RuntimeError(
+        raise FramePairNotReadyError(
             f"no clean fresh LightningCast frame pair within {maximum_age_minutes:.1f} minutes; {details}"
         )
 
@@ -1352,11 +1352,11 @@ def write_source_diagnostics(
     )
 
 
-def reuse_existing_package(existing_dir: Path, output_dir: Path) -> bool:
+def reuse_existing_package(existing_dir: Path, output_dir: Path, fetched_at: datetime | None = None) -> bool:
     """
-    Copy the last validated dashboard package into the working output directory.
-    This is used only when both live sources are fresh but temporarily outside
-    the synchronization tolerance. It does not create or publish a new frame.
+    Copy the last validated dashboard package into the working output directory
+    only while its own forecast window remains valid. This handles transient
+    source timing/quality gaps without publishing a stale replacement frame.
     """
     names = (
         "lightningcast_conus_probability_60min.png",
@@ -1377,6 +1377,13 @@ def reuse_existing_package(existing_dir: Path, output_dir: Path) -> bool:
         return False
     if manifest.get("scan_time_utc") != metadata.get("scan_time_utc"):
         return False
+    if fetched_at is not None:
+        try:
+            forecast_end=parse_iso_z(str(metadata.get("forecast_window_end_utc") or ""))
+        except Exception:
+            return False
+        if fetched_at >= forecast_end:
+            return False
 
     output_dir.mkdir(parents=True, exist_ok=True)
     for source in paths:
@@ -1819,16 +1826,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except FramePairNotReadyError as exc:
         if args.reuse_existing_on_transient_pair_gap:
             existing_dir = Path(args.existing_package_dir)
-            if reuse_existing_package(existing_dir, output_dir):
+            if reuse_existing_package(existing_dir, output_dir, fetched_at):
                 print(
-                    "LightningCast timing gap deferred without error; "
+                    "LightningCast transient source gap deferred without error; "
                     "retaining the last validated dashboard package. "
                     f"Reason: {exc}",
                     file=sys.stderr,
                 )
                 return 0
             print(
-                "ERROR: transient LightningCast timing gap occurred, but no "
+                "ERROR: transient LightningCast source gap occurred, but no "
                 "compatible existing package was available to retain.",
                 file=sys.stderr,
             )

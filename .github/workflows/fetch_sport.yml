@@ -46,7 +46,15 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python -m tools.restore_sport_change_cache --suite-dir diagnostics/sport/public/change
+        shell: bash
+        run: |
+          if [[ -s diagnostics/sport/public/change/numeric-cache/index.json ]]; then
+            echo 'H7 numeric restore: durable data/sport-lis cache already present.'
+          else
+            python -m tools.restore_sport_change_cache \
+              --suite-dir diagnostics/sport/public/change \
+              --allow-bootstrap
+          fi
       - name: Ingest percentile suite
         id: percentile
         continue-on-error: true
@@ -74,7 +82,7 @@ jobs:
           m.update(state='retained' if f['usable'] else 'expired' if m['active'] else 'unavailable',usable=f['usable'],freshness=f,last_attempt={'at':iso(now),'ok':False,'error':'Numeric history restore failed; retained prior generation'})
           atomic_json(p,m)
           PYTHON
-      - name: Durably retain H7 numeric versions before map publication
+      - name: Retain secondary H7 numeric artifact backup
         id: numeric_save
         if: steps.numeric_restore.outcome == 'success' && hashFiles('diagnostics/sport/public/change/numeric-cache/index.json') != ''
         uses: actions/upload-artifact@v4
