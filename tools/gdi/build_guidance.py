@@ -1,115 +1,233 @@
-"""Valid-time-aligned two-model/two-lag GDI guidance, with complete windows only."""
-import argparse,datetime as dt,hashlib,json,pathlib,subprocess,sys,urllib.request
+"""Produce model forecasts, merged GDI TLE, and CAM-aligned Day 1 maxima."""
+import argparse
+import datetime as dt
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+import urllib.request
 import numpy as np
-from scipy.ndimage import convolve
-SCRIPTS=pathlib.Path(__file__).parent
-THRESHOLDS=(30,40,50)
-from render import COVERAGE as SUPPORT_COLORS
+from guidance_contract import (UTC, RECIPE, THRESHOLDS, TLE_RUNS_PER_MODEL,
+    TLE_HOURS, NEIGHBORHOOD_KM, MIN_VALID_FRACTION, PERCENT_COLORS,
+    PERCENT_EDGES, MemberAccumulator, cam_ero_contract, hourly_times,
+    check_grids, equal_model_mean, tle_fields, verify_spec)
 
-def ero_window(now):
- url='https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=false&f=json'
- payload=json.load(urllib.request.urlopen(url,timeout=25));rows=[x['attributes'] for x in payload.get('features',[])]
- if not rows:raise ValueError('No issued Day 1 ERO time metadata; do not invent a window')
- windows={(r['start_time'],r['end_time']) for r in rows}
- if len(windows)!=1:raise ValueError('Inconsistent Day 1 ERO periods')
- start,end=[dt.datetime.strptime(s,'%Y-%m-%d %H:%M:%S').replace(tzinfo=dt.timezone.utc) for s in windows.pop()]
- if not start<=now<end:raise ValueError('Issued Day 1 ERO is not current')
- remaining=max(start,now.replace(minute=0,second=0,microsecond=0)+dt.timedelta(hours=bool(now.minute or now.second or now.microsecond)))
- if remaining>=end:raise ValueError('No remaining complete hourly samples')
- return remaining,end,{'source':url,'issued_start':start.isoformat(),'issued_end':end.isoformat(),'issue_time':rows[0].get('issue_time')}
+SCRIPTS = pathlib.Path(__file__).parent
+CAM_URL = ('https://raw.githubusercontent.com/andreworrison-cloud/'
+           'wpc-hydro-dashboard/pages-live/static/ero_cam_metadata.json')
 
-def frame(model,cycle,lead,cache,grids):
- path=cache/model/cycle.strftime('%Y%m%d%H')/f'F{lead:03d}.npz';meta=path.with_suffix('.json');path.parent.mkdir(parents=True,exist_ok=True)
- good=False
- if path.exists() and meta.exists():
-  m=json.loads(meta.read_text());good=m.get('model')==model and m.get('cycle')==cycle.isoformat() and m.get('lead')==lead and m.get('sha256')==hashlib.sha256(path.read_bytes()).hexdigest()
- if not good:
-  subprocess.run([sys.executable,str(SCRIPTS/'decode_model.py'),'--model',model,'--cycle',cycle.strftime('%Y%m%d%H'),'--lead',str(lead),'--out',str(path)],check=True)
- m=json.loads(meta.read_text());gridpath=cache/model/(m['grid_md5']+'-grid.npz')
- with np.load(path) as f:
-  a=f['gdi'].copy()
-  if 'latitude' in f:
-   if not gridpath.exists():np.savez_compressed(gridpath,latitude=f['latitude'],longitude=f['longitude'])
-   # Retain one grid per model, rather than duplicating 2 coordinate arrays/hour.
-   compact=True
-  else:compact=False
- if compact:
-  np.savez_compressed(path,gdi=a);m['sha256']=hashlib.sha256(path.read_bytes()).hexdigest();meta.write_text(json.dumps(m,indent=2))
- if not gridpath.exists():raise ValueError('Missing cached native grid')
- if model not in grids:
-  with np.load(gridpath) as f:grids[model]=(f['latitude'].copy(),f['longitude'].copy(),m['grid_md5'])
- elif grids[model][2]!=m['grid_md5']:raise ValueError('Model grid changed across members')
- return a,m
 
-def main(mode,work,public,now=None):
- now=now or dt.datetime.now(dt.timezone.utc)
- if now.tzinfo is None:raise ValueError('Use a timezone-aware time')
- start=now.replace(minute=0,second=0,microsecond=0)+dt.timedelta(hours=bool(now.minute or now.second or now.microsecond));end=start+dt.timedelta(hours=6);ero=None
- if mode=='ero':start,end,ero=ero_window(now)
- times=[start+dt.timedelta(hours=h) for h in range(int((end-start).total_seconds()/3600)+1)]
- if len(times)<2:raise ValueError('Incomplete window')
- from model_source import PressureSource
- cycles={}
- for model in ('hrrr','rrfs'):
-  candidates=[]
-  for age in range(19):
-   c=now.replace(minute=0,second=0,microsecond=0)-dt.timedelta(hours=age)
-   if mode=='ero' and c.hour%6:continue
-   lead0=int((start-c).total_seconds()/3600);lead1=int((end-c).total_seconds()/3600)
-   if lead0<0 or lead1>(48 if model=='hrrr' and c.hour%6==0 else 18 if model=='hrrr' else 84):continue
-   source=PressureSource(model,c.strftime('%Y%m%d%H'))
-   try:
-    # A complete last-lead inventory is the quick availability check; all
-    # intermediate decoded fields remain mandatory before publication.
-    source.tasks(lead1);source.tasks(lead0);candidates.append(c)
-    print('Selected candidate',model,c.isoformat(),lead0,lead1,flush=True)
-   except Exception as e:print('Unavailable candidate',model,c.isoformat(),str(e),flush=True)
-   if len(candidates)==2:break
-  if len(candidates)!=2:raise ValueError('Two complete model runs unavailable for '+model)
-  cycles[model]=candidates
- anchor=max(cycles['hrrr'][0],cycles['rrfs'][0])
- work=pathlib.Path(work);cache=work/'cache';grids={};members=[];selected={};source_metadata=[]
- for model in ('hrrr','rrfs'):
-  for lag,cycle in enumerate(cycles[model]):
-   maximum=None;complete=None;counts={t:None for t in THRESHOLDS};records=[]
-   for i,valid in enumerate(times):
-    lead=int((valid-cycle).total_seconds()/3600)
-    if lead<0 or lead>(48 if model=='hrrr' and cycle.hour%6==0 else 18 if model=='hrrr' else 84):raise ValueError('Requested valid time exceeds model horizon')
-    a,m=frame(model,cycle,lead,cache,grids);ok=np.isfinite(a)
-    if maximum is None:maximum=np.where(ok,a,-np.inf);complete=ok.copy();counts={t:(ok&(a>=t)).astype('uint8') for t in THRESHOLDS}
+def read_cam(now):
+    with urllib.request.urlopen(CAM_URL + '?gdi=' + str(int(now.timestamp())), timeout=30) as response:
+        return json.load(response)
+
+
+def horizon(model, cycle):
+    return 48 if model == 'hrrr' and cycle.hour % 6 == 0 else 18 if model == 'hrrr' else 84
+
+
+def probe(model, cycle, times, source_factory):
+    leads = [int((t - cycle).total_seconds() / 3600) for t in times]
+    if min(leads) < 0 or max(leads) > horizon(model, cycle):
+        raise ValueError('Valid window exceeds model horizon')
+    source = source_factory(model, cycle.strftime('%Y%m%d%H'))
+    for lead in sorted({leads[0], leads[-1]}):
+        source.tasks(lead)
+
+
+def latest_cycles(model, limit, upper, times, source_factory, lookback=48):
+    found = []
+    for age in range(lookback + 1):
+        cycle = upper - dt.timedelta(hours=age)
+        try:
+            probe(model, cycle, times, source_factory)
+        except Exception as exc:
+            print('Unavailable', model, cycle.isoformat(), str(exc)[:150], flush=True)
+            continue
+        found.append(cycle)
+        print('Selected', model, cycle.isoformat(), flush=True)
+        if len(found) == limit:
+            return found
+    raise ValueError(f'{limit} complete {model} runs unavailable')
+
+
+def select(mode, now, source_factory, cam=None):
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    if mode == 'ero':
+        cam = read_cam(now) if cam is None else cam
+        cycles, start, end, times = cam_ero_contract(cam, now)
+        for model, runs in cycles.items():
+            probe(model, runs[0], times, source_factory)
+        return 'day1', cycles, start, end, times, cam
+    if mode == 'forecast':
+        start = hour + dt.timedelta(hours=now != hour)
+        end = start + dt.timedelta(hours=6)
+        times = [start + dt.timedelta(hours=h) for h in (0, 3, 6)]
+        cycles = {model: latest_cycles(model, 1, hour, times, source_factory, 18)
+                  for model in ('hrrr', 'rrfs')}
+        return 'forecast', cycles, start, end, times, None
+    # The newest complete six-hourly-run HRRR anchor establishes one common
+    # twelve-hour valid-time window, exactly as in the HRRR-TLE dashboard.
+    for age in range(15):
+        anchor = hour - dt.timedelta(hours=age)
+        times = hourly_times(anchor, anchor + dt.timedelta(hours=TLE_HOURS), False)
+        if times[-1] <= now:
+            continue
+        hrrr = [anchor - dt.timedelta(hours=h) for h in range(TLE_RUNS_PER_MODEL)]
+        try:
+            for cycle in hrrr:
+                probe('hrrr', cycle, times, source_factory)
+            rrfs = latest_cycles('rrfs', TLE_RUNS_PER_MODEL, anchor, times, source_factory)
+        except Exception as exc:
+            print('Incomplete TLE anchor', anchor.isoformat(), str(exc)[:160], flush=True)
+            continue
+        if anchor - rrfs[0] > dt.timedelta(hours=6):
+            raise ValueError('Newest RRFS TLE run is too old for current guidance')
+        return 'tle', {'hrrr': hrrr, 'rrfs': rrfs}, anchor, times[-1], times, None
+    raise ValueError('No complete aligned HRRR/RRFS TLE window')
+
+
+def frame(model, cycle, lead, cache, grids):
+    path = cache / model / cycle.strftime('%Y%m%d%H') / f'F{lead:03d}.npz'
+    meta = path.with_suffix('.json')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    good = False
+    if path.exists() and meta.exists():
+        try:
+            m = json.loads(meta.read_text())
+            good = (m.get('model') == model and m.get('cycle') == cycle.isoformat()
+                    and m.get('lead') == lead
+                    and m.get('sha256') == hashlib.sha256(path.read_bytes()).hexdigest()
+                    and (cache / model / (m['grid_md5'] + '-grid.npz')).exists())
+        except (OSError, ValueError, KeyError):
+            pass
+    if not good:
+        subprocess.run([sys.executable, str(SCRIPTS / 'decode_model.py'), '--model', model,
+                        '--cycle', cycle.strftime('%Y%m%d%H'), '--lead', str(lead),
+                        '--out', str(path)], check=True, timeout=300)
+    m = json.loads(meta.read_text())
+    gridpath = cache / model / (m['grid_md5'] + '-grid.npz')
+    with np.load(path) as f:
+        a = f['gdi'].copy()
+        compact = 'latitude' in f
+        if compact:
+            if not gridpath.exists():
+                np.savez_compressed(gridpath, latitude=f['latitude'], longitude=f['longitude'])
+    if compact:
+        np.savez_compressed(path, gdi=a)
+        m['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+        meta.write_text(json.dumps(m, indent=2))
+    if model not in grids:
+        with np.load(gridpath) as f:
+            grids[model] = (f['latitude'].copy(), f['longitude'].copy(), m['grid_md5'])
+    elif grids[model][2] != m['grid_md5']:
+        raise ValueError('Model grid changed across source runs')
+    return a, m
+
+
+def main(mode, work, public, now=None, cam=None, cache_root=None):
+    now = now or dt.datetime.now(UTC)
+    if now.tzinfo is None:
+        raise ValueError('Use a timezone-aware time')
+    from model_source import PressureSource
+    kind, cycles, start, end, times, cam = select(mode, now, PressureSource, cam)
+    signature = hashlib.sha256(json.dumps({'recipe': RECIPE, 'kind': kind,
+        'cycles': {k: [c.isoformat() for c in v] for k, v in cycles.items()},
+        'times': [t.isoformat() for t in times]}, sort_keys=True).encode()).hexdigest()
+    public = pathlib.Path(public)
+    old_path = public / 'metadata.json'
+    if old_path.exists():
+        old = json.loads(old_path.read_text())
+        if old.get('selection_signature') == signature and old.get('recipe') == RECIPE:
+            print('Current complete selection already published', kind, flush=True)
+            return old
+        if dt.datetime.fromisoformat(old['cycle']) > max(cycles[m][0] for m in cycles):
+            raise ValueError('Refusing to regress to older source cycles')
+    work = pathlib.Path(work)
+    cache = pathlib.Path(cache_root) if cache_root else work / 'cache'
+    grids, records, members, selected = {}, [], [], {}
+    for model in ('hrrr', 'rrfs'):
+        for lag, cycle in enumerate(cycles[model]):
+            acc, samples = MemberAccumulator(), []
+            for index, valid in enumerate(times):
+                lead = int((valid - cycle).total_seconds() / 3600)
+                field, m = frame(model, cycle, lead, cache, grids)
+                acc.update(field)
+                if kind == 'forecast':
+                    selected[model, index * 3] = field
+                samples.append({'valid_time': valid.isoformat(), 'cycle': m['cycle'],
+                    'lead': lead, 'grid_md5': m['grid_md5'], 'sha256': m['sha256'],
+                    'humidity_inputs': m['humidity_inputs'], 'sources': m['sources']})
+            member = acc.finish(len(times))
+            members.append({**member, 'model': model, 'lag': lag, 'cycle': cycle.isoformat()})
+            records.append({'model': model, 'lag': lag, 'cycle': cycle.isoformat(), 'samples': samples})
+            print('Completed', kind, model, cycle.isoformat(), len(samples), 'samples', flush=True)
+    lat, lon = check_grids(grids)
+    arrays, products = {'latitude': lat, 'longitude': lon}, {}
+    source_label = ('HRRR ' + cycles['hrrr'][0].strftime('%m-%d %HZ') +
+                    ' / RRFS ' + cycles['rrfs'][0].strftime('%m-%d %HZ'))
+    def add(key, a, label, legend, valid=end, period=True, unit='GDI', **extra):
+        arrays[key] = a
+        products[key] = {'label': label, 'legend': legend, 'valid_time': valid.isoformat(),
+                         'source_label': source_label, 'unit': unit, **extra}
+        if period:
+            products[key]['window_start'] = start.isoformat()
+    if kind == 'forecast':
+        for h in (0, 3, 6):
+            for model in ('hrrr', 'rrfs'):
+                add(f'{model}{h}', selected[model, h], model.upper() + ' GDI',
+                    'Native GDI · 5-unit color bins', start + dt.timedelta(hours=h), False,
+                    cycle=cycles[model][0].isoformat())
+                products[f'{model}{h}']['source_label'] = model.upper() + ' cycle ' + cycles[model][0].strftime('%m-%d %HZ')
+            add(f'blend{h}', equal_model_mean(selected['hrrr', h], selected['rrfs', h]),
+                'HRRR/RRFS GDI Blend', 'Equal-weight model mean at the same valid time',
+                start + dt.timedelta(hours=h), False)
+    elif kind == 'day1':
+        h, r = members[0]['max'], members[1]['max']
+        add('hrrr_maximum', h, 'Day 1 ERO · Maximum HRRR GDI', 'Maximum HRRR GDI over the displayed ERO period')
+        add('rrfs_maximum', r, 'Day 1 ERO · Maximum RRFS GDI', 'Maximum RRFS GDI over the displayed ERO period')
+        add('blend_maximum', equal_model_mean(h, r), 'Day 1 ERO · HRRR/RRFS Maximum Blend',
+            'Equal-weight mean of the HRRR and RRFS period maxima · same cycle/window pairing as ERO CAMs')
     else:
-     maximum=np.maximum(maximum,np.where(ok,a,-np.inf));complete&=ok
-     for t in THRESHOLDS:counts[t]+=(ok&(a>=t)).astype('uint8')
-    if lag==0 and mode=='nowcast' and i in (0,3,6):selected[(model,i)]=a
-    records.append({'valid_time':valid.isoformat(),'cycle':m['cycle'],'lead':lead,'grid_md5':m['grid_md5'],'sha256':m['sha256'],'humidity_inputs':m['humidity_inputs'],'sources':m['sources']})
-   members.append({'model':model,'lag':lag,'max':np.where(complete,maximum,np.nan),'counts':{t:np.where(complete,c,np.nan) for t,c in counts.items()}})
-   source_metadata.append({'model':model,'lag':lag,'cycle':cycle.isoformat(),'samples':records})
-   print('Completed member',mode,model,cycle.isoformat(),len(times),'hourly samples',flush=True)
- lat,lon,_=grids['hrrr'];rlat,rlon,_=grids['rrfs']
- if lat.shape!=rlat.shape or not np.allclose(lat,rlat,atol=1e-6,rtol=0) or not np.allclose(lon,rlon,atol=1e-6,rtol=0):raise ValueError('HRRR/RRFS native grids do not align; explicit regridding required')
- arrays={'latitude':lat,'longitude':lon};products={}
- def product(key,a,label,legend,valid=end,**extra):
-  arrays[key]=a;products[key]={'label':label,'legend':legend,'window_start':start.isoformat(),'valid_time':valid.isoformat(),**extra}
- if mode=='nowcast':
-  for h in (0,3,6):
-   product(f'rrfs{h}',selected['rrfs',h],f'RRFS GDI · +{h}h from window start','GDI · 5-unit color bins',start+dt.timedelta(hours=h),cycle=cycles['rrfs'][0].isoformat())
-   products[f'rrfs{h}'].pop('window_start')
-   product(f'blend{h}',.5*selected['hrrr',h]+.5*selected['rrfs',h],f'HRRR/RRFS GDI · +{h}h from window start','Equal-model mean GDI · 5-unit color bins',start+dt.timedelta(hours=h),source_label='HRRR '+cycles['hrrr'][0].strftime('%d %HZ')+' / RRFS '+cycles['rrfs'][0].strftime('%d %HZ'))
-   products[f'blend{h}'].pop('window_start')
- label='Day 1 ERO remaining period' if mode=='ero' else 'Six-hour window'
- maxima=np.stack([m['max'] for m in members]);all_valid=np.isfinite(maxima).all(axis=0)
- product('maximum',np.where(all_valid,np.max(maxima,axis=0),np.nan),label+' · TLE maximum GDI','Maximum across 4 valid-time-aligned members; unsmoothed GDI')
- yy,xx=np.mgrid[-5:6,-5:6];kernel=(xx*xx+yy*yy<=25).astype('float32')
- for t in THRESHOLDS:
-  # Average neighborhood coverage within each equally weighted model/lag member.
-  support=[]
-  for m in members:
-   ok=np.isfinite(m['max']);den=convolve(ok.astype('float32'),kernel,mode='constant',cval=0);num=convolve((ok&(m['max']>=t)).astype('float32'),kernel,mode='constant',cval=0)
-   support.append(np.where(ok&(den>=.8*kernel.sum()),100*num/np.maximum(den,1),np.nan))
-  product(f'support{t}',np.mean(np.stack(support),axis=0),label+f' · GDI ≥{t} support','0–100% mean 15-km neighborhood coverage of member window maxima; 2 HRRR + 2 RRFS runs; not rainfall probability',colors=SUPPORT_COLORS,edges=list(np.linspace(0,100,7)),scale_labels=['0','16.7','33.3','50','66.7','83.3','100%'])
-  product(f'persistence{t}',np.mean(np.stack([m['counts'][t] for m in members]),axis=0),label+f' · GDI ≥{t} persistence',f'Ensemble-mean qualifying hourly samples (0–{len(times)}); not continuous hours',colors=SUPPORT_COLORS,edges=list(np.linspace(0,len(times),7)),decimals=1)
- target=work/'render';target.mkdir(parents=True,exist_ok=True);np.savez_compressed(target/'fields.npz',**arrays)
- spec={'cycle':anchor.isoformat(),'model':'hrrr_rrfs','native_spacing_km':3,'products':products,'window_start':start.isoformat(),'window_end':end.isoformat(),'expires_at':end.isoformat(),'sample_count':len(times),'member_count':4,'weighting':'Each model 1/2; each of its two lagged runs 1/2 within model','ero':ero,'source_metadata':source_metadata}
- (target/'suite.json').write_text(json.dumps(spec,indent=2));subprocess.run([sys.executable,str(SCRIPTS/'render_suite.py'),'--input',str(target),'--public',str(public)],check=True)
-if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--mode',choices=['nowcast','ero'],required=True);p.add_argument('--work',required=True);p.add_argument('--public',required=True);p.add_argument('--now');a=p.parse_args();main(a.mode,a.work,a.public,dt.datetime.fromisoformat(a.now) if a.now else None)
+        for key, value in tle_fields(members).items():
+            threshold = int(''.join(c for c in key if c.isdigit()))
+            persistent = key.startswith('persistence')
+            label = f'HRRR/RRFS TLE · GDI ≥{threshold} · ' + ('Persistence' if persistent else 'Neighborhood Coverage')
+            legend = ('Member frequency of GDI meeting the threshold in at least 2 of 3 successive hourly samples, somewhere within 40 km'
+                      if persistent else 'Mean 40-km spatial coverage of GDI reaching the threshold during the forecast window')
+            add(key, value, label, legend + ' · 6 HRRR + 6 RRFS runs; equal model weights',
+                unit='Persistence member frequency (%)' if persistent else 'Neighborhood coverage (%)',
+                colors=PERCENT_COLORS, edges=PERCENT_EDGES)
+    target = work / 'render'
+    target.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(target / 'fields.npz', **arrays)
+    spec = {'recipe': RECIPE, 'kind': kind, 'cycle': max(cycles[m][0] for m in cycles).isoformat(),
+        'model': 'hrrr_rrfs', 'native_spacing_km': 3, 'products': products,
+        'window_start': start.isoformat(), 'window_end': end.isoformat(), 'expires_at': end.isoformat(),
+        'sample_times': [t.isoformat() for t in times], 'sample_count': len(times),
+        'member_count': len(members), 'weighting': 'Each model 1/2; equal lag weights within each model',
+        'source_metadata': records, 'built_at': now.isoformat(), 'selection_signature': signature}
+    if kind == 'tle':
+        spec.update(neighborhood_km=NEIGHBORHOOD_KM, minimum_valid_fraction=MIN_VALID_FRACTION,
+                    persistence_rule='at_least_2_of_3_hourly_samples')
+    if cam is not None:
+        spec['ero_cam'] = cam
+        spec['ero_cam_source'] = CAM_URL
+    verify_spec(spec, kind)
+    (target / 'suite.json').write_text(json.dumps(spec, indent=2))
+    subprocess.run([sys.executable, str(SCRIPTS / 'render_suite.py'), '--input', str(target),
+                    '--public', str(public)], check=True)
+    return spec
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=['forecast', 'tle', 'ero'], required=True)
+    parser.add_argument('--work', required=True)
+    parser.add_argument('--public', required=True)
+    parser.add_argument('--cache')
+    parser.add_argument('--now')
+    args = parser.parse_args()
+    main(args.mode, args.work, args.public, dt.datetime.fromisoformat(args.now) if args.now else None,
+         cache_root=args.cache)

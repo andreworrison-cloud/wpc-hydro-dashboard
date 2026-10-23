@@ -26,7 +26,8 @@ def render(input_dir,public):
   for numbers in (False,True):
    name=key+('_numbers' if numbers else '')
    if numbers:
-    im=contour_image(a,levels_for(key))
+    levels=[10,25,50,75,90] if '%' in product.get('unit','') else levels_for(key)
+    im=contour_image(a,levels)
    else:im=Image.fromarray(pixels)
    path=dest/(name+'.png');im.save(path,optimize=True);assets[name]={'path':str(path.relative_to(public)),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
   product['colors']=colors
