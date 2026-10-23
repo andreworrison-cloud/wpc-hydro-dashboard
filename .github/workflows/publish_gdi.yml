@@ -22,8 +22,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install numpy scipy pyproj pillow matplotlib eccodes
@@ -33,7 +33,7 @@ jobs:
         run: python tools/gdi/run.py --data-dir run/gdi-data
       - name: Publish atomically
         run: python tools/publish_gdi.py publish --data-dir run/gdi-data --state-file run/gdi-state.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: gdi-run-metadata
