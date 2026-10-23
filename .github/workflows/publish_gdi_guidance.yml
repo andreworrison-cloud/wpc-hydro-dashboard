@@ -36,12 +36,12 @@ jobs:
     env:
       GDI_SUITE: ${{ matrix.suite }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install numpy scipy pyproj pillow matplotlib eccodes
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: run/gdi-window/cache
           key: gdi-native-${{ matrix.suite }}-${{ github.run_id }}
@@ -87,12 +87,12 @@ jobs:
               raise SystemExit('ERO GDI build failed and retained ERO guidance is expired')
           print(f"::warning::ERO GDI build deferred; retaining verified current suite through {expires.isoformat()}.")
           PYTHON
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: always()
         with:
           path: run/gdi-window/cache
           key: gdi-native-${{ matrix.suite }}-${{ github.run_id }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: gdi-${{ matrix.suite }}-metadata
