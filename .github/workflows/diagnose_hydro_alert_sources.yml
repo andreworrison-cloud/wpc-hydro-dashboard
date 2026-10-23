@@ -15,57 +15,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Compare official NWS alert and GIS sources
+      - name: Test exact dashboard hydro request and browser headers
         shell: bash
         run: |
           python - <<'PY'
-          import json, requests
+          import requests
           from collections import Counter
-
-          EVENTS = {
-              'Flash Flood Warning',
-              'Flood Warning',
-              'Flood Advisory',
-              'Flood Watch',
-              'Flash Flood Watch',
-          }
-          UA={'User-Agent':'WPC-Hydro-Dashboard-Diagnostic/1.0 (github.com/andreworrison-cloud/wpc-hydro-dashboard)'}
-
-          def get_json(url, params=None):
-              r=requests.get(url, params=params, headers=UA, timeout=30)
-              print('HTTP', r.status_code, r.url)
-              r.raise_for_status()
-              return r.json()
-
-          print('\n=== api.weather.gov active CAP ===')
-          cap=get_json('https://api.weather.gov/alerts/active')
-          cap_features=[f for f in cap.get('features',[]) if (f.get('properties') or {}).get('event') in EVENTS]
-          cap_counts=Counter((f.get('properties') or {}).get('event') for f in cap_features)
-          print('CAP hydro counts:', dict(sorted(cap_counts.items())))
-          print('CAP hydro total:', len(cap_features))
-          for f in cap_features[:12]:
-              p=f.get('properties') or {}
-              print('CAP', p.get('event'), p.get('senderName'), p.get('expires'), f.get('id'))
-
           where="prod_type IN ('Flash Flood Warning','Flood Warning','Flood Advisory','Flood Watch','Flash Flood Watch')"
-          endpoints=[
-              ('eventdriven-primary','https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query'),
-              ('idpgis-secondary','https://idpgis.ncep.noaa.gov/arcgis/rest/services/NWS_Forecasts_Guidance_Warnings/watch_warn_adv/MapServer/1/query'),
-          ]
-          for name,url in endpoints:
-              print(f'\n=== {name} ===')
-              try:
-                  data=get_json(url, {'where':where,'outFields':'prod_type,wfo,expiration,url','returnGeometry':'true','f':'geojson'})
-                  features=data.get('features',[]) if isinstance(data,dict) else []
-                  valid=[f for f in features if f.get('geometry') and (f.get('properties') or {}).get('prod_type')]
-                  counts=Counter((f.get('properties') or {}).get('prod_type') for f in valid)
-                  print('GIS valid counts:', dict(sorted(counts.items())))
-                  print('GIS valid total:',len(valid),'raw total:',len(features),'exceededTransferLimit:',data.get('exceededTransferLimit'))
-                  count=get_json(url, {'where':where,'returnCountOnly':'true','f':'json'})
-                  print('GIS returnCountOnly:',count)
-                  for f in valid[:12]:
-                      p=f.get('properties') or {}
-                      print('GIS',p.get('prod_type'),p.get('wfo'),p.get('expiration'),p.get('url'))
-              except Exception as e:
-                  print(name,'ERROR',repr(e))
+          base='https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query'
+          params={'where':where,'outFields':'prod_type,wfo,expiration,url','f':'geojson','t':'diagnostic'}
+          r=requests.get(base,params=params,headers={'User-Agent':'Mozilla/5.0','Origin':'https://andreworrison-cloud.github.io'},timeout=30)
+          print('HTTP',r.status_code,r.url)
+          print('content-type',r.headers.get('content-type'))
+          print('access-control-allow-origin',r.headers.get('access-control-allow-origin'))
+          print('cache-control',r.headers.get('cache-control'))
+          print('age',r.headers.get('age'))
+          print('via',r.headers.get('via'))
+          r.raise_for_status()
+          data=r.json()
+          feats=data.get('features',[])
+          valid=[f for f in feats if f.get('geometry') and (f.get('properties') or {}).get('prod_type')]
+          nullgeom=[f for f in feats if not f.get('geometry')]
+          print('raw',len(feats),'valid geometry',len(valid),'null geometry',len(nullgeom),'exceeded',data.get('exceededTransferLimit'))
+          print('counts',dict(sorted(Counter((f.get('properties') or {}).get('prod_type') for f in valid).items())))
+          if feats:
+              print('first geometry type', (feats[0].get('geometry') or {}).get('type'))
+              print('first props',feats[0].get('properties'))
+
+          opt=requests.options(base,headers={
+              'Origin':'https://andreworrison-cloud.github.io',
+              'Access-Control-Request-Method':'GET',
+              'Access-Control-Request-Headers':'cache-control'
+          },timeout=30)
+          print('OPTIONS',opt.status_code)
+          print('OPTIONS allow-origin',opt.headers.get('access-control-allow-origin'))
+          print('OPTIONS allow-methods',opt.headers.get('access-control-allow-methods'))
+          print('OPTIONS allow-headers',opt.headers.get('access-control-allow-headers'))
           PY
