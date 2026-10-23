@@ -27,15 +27,15 @@ jobs:
     env:
       GDI_SUITE: rap
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install numpy scipy pyproj pillow matplotlib eccodes
       - run: python tools/publish_gdi_suite.py restore --data-dir run/rap-gdi-data --state-file run/rap-gdi-state.json
       - run: python tools/gdi/build_rap.py --public run/rap-gdi-data/public
       - run: python tools/publish_gdi_suite.py publish --data-dir run/rap-gdi-data --state-file run/rap-gdi-state.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rap-gdi-metadata
