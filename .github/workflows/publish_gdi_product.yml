@@ -1,0 +1,89 @@
+name: Publish Focused GDI Product
+on:
+  workflow_call:
+    inputs:
+      mode:
+        required: true
+        type: string
+      suite:
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: gdi-focused-${{ inputs.suite }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GDI_SUITE: ${{ inputs.suite }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Refresh queued run to latest source
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install numpy scipy pyproj pillow matplotlib eccodes
+      - name: Test timing, weighting, recurrence, and source redundancy
+        run: |
+          python tools/gdi/test_guidance.py
+          python tools/gdi/test_redundancy.py
+      - uses: actions/cache/restore@v6
+        with:
+          path: run/gdi-product/cache
+          key: gdi-focused-${{ inputs.suite }}-${{ github.run_id }}
+          restore-keys: |
+            gdi-focused-${{ inputs.suite }}-
+      - name: Bound native cache to recent cycles
+        run: |
+          python - <<'PY'
+          import datetime as d,pathlib,shutil
+          cutoff=(d.datetime.now(d.timezone.utc)-d.timedelta(hours=48)).strftime('%Y%m%d%H')
+          for model in ('hrrr','rrfs'):
+              for p in (pathlib.Path('run/gdi-product/cache')/model).glob('*'):
+                  if p.is_dir() and p.name.isdigit() and p.name<cutoff:shutil.rmtree(p)
+          PY
+      - name: Restore last verified publication
+        run: python tools/publish_gdi_suite.py restore --data-dir run/gdi-data --state-file run/gdi-state.json
+      - name: Build complete focused GDI suite
+        id: build
+        continue-on-error: true
+        run: python tools/gdi/build_guidance.py --mode ${{ inputs.mode }} --work run/gdi-product --public run/gdi-data/public
+      - name: Publish completed suite atomically
+        if: steps.build.outcome == 'success'
+        run: python tools/publish_gdi_suite.py publish --data-dir run/gdi-data --state-file run/gdi-state.json
+      - name: Check retained guidance if the source is incomplete
+        if: steps.build.outcome == 'failure'
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime,timezone
+          from pathlib import Path
+          p=Path('run/gdi-data/public/metadata.json')
+          if not p.exists():raise SystemExit('Build failed and no complete prior suite exists')
+          m=json.loads(p.read_text())
+          if datetime.now(timezone.utc)>=datetime.fromisoformat(m['expires_at']):
+              raise SystemExit('Build failed and retained suite is expired')
+          print('::warning::Source incomplete; retaining verified suite with its actual source cycles and valid times.')
+          PY
+      - uses: actions/cache/save@v6
+        if: always()
+        with:
+          path: run/gdi-product/cache
+          key: gdi-focused-${{ inputs.suite }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gdi-${{ inputs.suite }}-metadata
+          path: |
+            run/gdi-product/render/suite.json
+            run/gdi-data/public/metadata.json
+          retention-days: 14
