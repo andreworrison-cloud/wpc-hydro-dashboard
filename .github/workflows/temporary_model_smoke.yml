@@ -1,0 +1,74 @@
+name: Temporary Model Operations Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/temporary_model_smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-live-packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Restore current live model packages
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path 'static/cam_*.png' \
+            --path static/cam_metadata.json \
+            --path 'static/ero_*.png' \
+            --path static/ero_cam_metadata.json \
+            --path static/hrrr_latest_12h_max_ffg_ratio.png \
+            --path static/hrrr_latest_12h_ffg_exceedance_coverage.png \
+            --path 'static/hrrr_tle_*' \
+            --path static/nwm_soil_saturation.png \
+            --path static/nwm_metadata.json
+      - name: Validate live CAM
+        run: python tools/validate_model_package.py cam
+      - name: Validate live ERO CAM
+        run: python tools/validate_model_package.py ero
+      - name: Validate live HRRR-TLE
+        run: python tools/validate_model_package.py hrrr-tle
+      - name: Validate live NWM
+        run: python tools/validate_model_package.py nwm
+
+  rap-nonpublishing-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+      - name: Install ecCodes
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libeccodes0
+      - name: Install RAP Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests xarray cfgrib matplotlib numpy scipy metpy eccodes
+      - name: Restore current live RAP package
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path 'static/rap_*' \
+            --path 'static/leg_*.png'
+      - name: Build newest coherent RAP package without publishing
+        run: python fetch_rap.py
+      - name: Validate rebuilt RAP package
+        run: python tools/validate_model_package.py rap
