@@ -174,6 +174,25 @@ def validate_rap(root: Path, now: datetime) -> None:
     )
 
 
+def validate_nwm(root: Path, now: datetime) -> None:
+    meta = load_json(root / "nwm_metadata.json")
+    valid = parse_time(meta.get("valid_time_iso"), "NWM valid time")
+    policy = meta.get("freshness_policy") or {}
+    hide_hours = float(policy.get("hide_hours", 6))
+    age = (now - valid).total_seconds() / 3600.0
+    if age < -0.25 or age >= hide_hours:
+        raise ValueError(
+            f"NWM retained package age {age:.2f} h exceeds the "
+            f"{hide_hours:g} h usable window"
+        )
+    require_files(root, ["nwm_soil_saturation.png"], "NWM")
+    status = str(meta.get("update_status") or "unknown")
+    print(
+        f"NWM package PASS: valid {valid:%Y-%m-%d %HZ}; age {age:.2f} h; "
+        f"status {status}; hide threshold {hide_hours:g} h."
+    )
+
+
 def validate_hrrr_tle(root: Path, now: datetime) -> None:
     manifest = load_json(root / "hrrr_tle_manifest.json")
     meta = load_json(root / "hrrr_tle_metadata.json")
@@ -209,7 +228,7 @@ def validate_hrrr_tle(root: Path, now: datetime) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("product", choices=("cam", "ero", "rap", "hrrr-tle"))
+    parser.add_argument("product", choices=("cam", "ero", "rap", "hrrr-tle", "nwm"))
     parser.add_argument("--root", type=Path, default=Path("static"))
     args = parser.parse_args()
     now = datetime.now(UTC)
@@ -218,6 +237,7 @@ def main() -> None:
         "ero": validate_ero,
         "rap": validate_rap,
         "hrrr-tle": validate_hrrr_tle,
+        "nwm": validate_nwm,
     }
     validators[args.product](args.root, now)
 
