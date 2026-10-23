@@ -71,6 +71,9 @@ jobs:
       - name: Run CAM Fetch Script
         run: python fetch_cam.py
 
+      - name: Validate current or retained CAM package
+        run: python tools/validate_model_package.py cam
+
       - name: Publish CAM SuperEnsemble products to pages-live
         env:
           GITHUB_TOKEN: ${{ github.token }}
