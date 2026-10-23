@@ -879,10 +879,10 @@ window.QPEFFG=qpeFFG;
 
 // Approved SPoRT suites: durable products are separate from dashboard code.
 const sportReview = new URLSearchParams(location.search).get('sportReview') === '1';
-const gdiGuidance = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/guidance-gdi/public/metadata.json', keys: ['rrfs0','rrfs3','rrfs6','blend0','blend3','blend6','maximum','support30','support40','support50','persistence30','persistence40','persistence50'], paneName: 'gdiGuidance', onChange: () => updateLegends()});
-const gdiERO = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/ero-gdi/public/metadata.json', keys: ['maximum','support30','support40','support50','persistence30','persistence40','persistence50'], paneName: 'gdiERO', onChange: () => updateLegends()});
+const gdiGuidance = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/forecast-gdi/public/metadata.json', keys: ['hrrr0','hrrr3','hrrr6','rrfs0','rrfs3','rrfs6','blend0','blend3','blend6'], forecastGroups: {hrrr0:['hrrr0','hrrr3','hrrr6'],rrfs0:['rrfs0','rrfs3','rrfs6'],blend0:['blend0','blend3','blend6']}, requiredRecipe:'gdi_focused_v2', paneName: 'gdiForecast', onChange: () => updateLegends()});
+const gdiTLE = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/tle-gdi/public/metadata.json', keys: ['coverage30','coverage40','coverage50','persistence30','persistence40','persistence50'], requiredRecipe:'gdi_focused_v2', paneName: 'gdiTLE', onChange: () => updateLegends()});
+const gdiERO = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/day1-gdi/public/metadata.json', keys: ['hrrr_maximum','rrfs_maximum','blend_maximum'], requiredRecipe:'gdi_focused_v2', paneName: 'gdiERO', onChange: () => updateLegends()});
 const rapGDI = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rap-gdi/public/metadata.json', keys: ['analysis','change','forecast'], paneName: 'rapGDI', onChange: () => updateLegends()});
-const hrrrGDI = window.HRRRGDI.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/gdi/public/metadata.json', onChange: () => updateLegends()});
 const sportDataRoot = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/sport-lis/public/';
 const sportSuite = window.SPoRTSuite.create({map,
     metadataURL: sportReview ? 'review/sport-suite/metadata.json' : sportDataRoot + 'percentile/metadata.json',
@@ -7387,11 +7387,9 @@ function updateLegends() {
     if (changeLegend) addLegendBlock(changeLegend);
     const rsmLegend = sportRSM?.legendHTML();
     if (rsmLegend) addLegendBlock(rsmLegend);
-    [gdiGuidance,gdiERO].forEach(suite => {const html=suite.legendHTML();if(html)addLegendBlock(html);});
+    [gdiGuidance,gdiTLE,gdiERO].forEach(suite => {const html=suite.legendHTML();if(html)addLegendBlock(html);});
     const rapGdiLegend = rapGDI.legendHTML();
     if (rapGdiLegend) addLegendBlock(rapGdiLegend);
-    const gdiLegend = hrrrGDI.legendHTML();
-    if (gdiLegend) addLegendBlock(gdiLegend);
     const suiteLegend = sportSuite?.legendHTML();
     if (suiteLegend) addLegendBlock(suiteLegend);
 
@@ -8155,37 +8153,23 @@ const dashboardSections = [
         title: 'GDI Thermodynamic Guidance',
         layers: [],
         groups: [
-            {id: 'gdi-hrrr', title: 'HRRR · Hourly Guidance', openByDefault: true, layers: [
-                {id: 'hrrr-gdi', label: 'HRRR GDI', layer: hrrrGDI.layers.gdi, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'hrrr-gdi-coverage', label: 'HRRR GDI · Neighborhood Coverage', layer: hrrrGDI.layers.coverage, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
+            {id: 'gdi-model-forecasts', title: 'HRRR / RRFS Forecasts', openByDefault: true, layers: [
+                {id: 'gdi-forecast-hrrr', label: 'HRRR GDI', layer: gdiGuidance.layers.hrrr0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-forecast-rrfs', label: 'RRFS GDI', layer: gdiGuidance.layers.rrfs0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-forecast-blend', label: 'HRRR/RRFS GDI Blend', layer: gdiGuidance.layers.blend0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
             ]},
-            {id: 'gdi-persistence', title: 'HRRR · Six-hour Persistence', layers: [
-                {id: 'hrrr-gdi-persistence', label: 'HRRR GDI · Sampled Persistence', layer: hrrrGDI.layers.persistence, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'hrrr-gdi-longest', label: 'HRRR GDI · Longest Sampled Run', layer: hrrrGDI.layers.longest, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
+            {id: 'gdi-merged-tle', title: 'HRRR/RRFS TLE', layers: [
+                {id: 'gdi-tle-coverage30', label: 'GDI ≥30 · Neighborhood Coverage', layer: gdiTLE.layers.coverage30, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-tle-persistence30', label: 'GDI ≥30 · Persistence', layer: gdiTLE.layers.persistence30, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-tle-coverage40', label: 'GDI ≥40 · Neighborhood Coverage', layer: gdiTLE.layers.coverage40, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-tle-persistence40', label: 'GDI ≥40 · Persistence', layer: gdiTLE.layers.persistence40, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-tle-coverage50', label: 'GDI ≥50 · Neighborhood Coverage', layer: gdiTLE.layers.coverage50, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-tle-persistence50', label: 'GDI ≥50 · Persistence', layer: gdiTLE.layers.persistence50, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
             ]},
-            {id: 'gdi-rrfs', title: 'RRFS · Forecast Guidance', layers: [
-                {id: 'gdi-rrfs-rrfs0', label: 'RRFS GDI · Window +0h', layer: gdiGuidance.layers.rrfs0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-rrfs-rrfs3', label: 'RRFS GDI · Window +3h', layer: gdiGuidance.layers.rrfs3, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-rrfs-rrfs6', label: 'RRFS GDI · Window +6h', layer: gdiGuidance.layers.rrfs6, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
-            ]},
-            {id: 'gdi-blend', title: 'HRRR/RRFS Blend', layers: [
-                {id: 'gdi-rrfs-blend0', label: 'HRRR/RRFS GDI · Window +0h', layer: gdiGuidance.layers.blend0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-rrfs-blend3', label: 'HRRR/RRFS GDI · Window +3h', layer: gdiGuidance.layers.blend3, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-rrfs-blend6', label: 'HRRR/RRFS GDI · Window +6h', layer: gdiGuidance.layers.blend6, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
-            ]},
-            {id: 'gdi-nowcast', title: 'TLE · Six-hour Nowcast', layers: [
-                {id: 'gdi-nowcast-maximum', label: 'TLE Maximum GDI', layer: gdiGuidance.layers.maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-nowcast-support30', label: 'GDI ≥30 · Neighborhood Support', layer: gdiGuidance.layers.support30, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-nowcast-support40', label: 'GDI ≥40 · Neighborhood Support', layer: gdiGuidance.layers.support40, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-nowcast-support50', label: 'GDI ≥50 · Neighborhood Support', layer: gdiGuidance.layers.support50, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-nowcast-persistence40', label: 'GDI ≥40 · Sampled Persistence', layer: gdiGuidance.layers.persistence40, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
-            ]},
-            {id: 'gdi-day1', title: 'TLE · Day 1 ERO Remaining Period', layers: [
-                {id: 'gdi-day1-maximum', label: 'Day 1 Maximum GDI', layer: gdiERO.layers.maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-day1-support30', label: 'Day 1 GDI ≥30 · Neighborhood Support', layer: gdiERO.layers.support30, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-day1-support40', label: 'Day 1 GDI ≥40 · Neighborhood Support', layer: gdiERO.layers.support40, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-day1-support50', label: 'Day 1 GDI ≥50 · Neighborhood Support', layer: gdiERO.layers.support50, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-day1-persistence40', label: 'Day 1 GDI ≥40 · Sampled Persistence', layer: gdiERO.layers.persistence40, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
+            {id: 'gdi-day1', title: 'Day 1 ERO · Maximum GDI', layers: [
+                {id: 'gdi-day1-hrrr', label: 'Maximum HRRR GDI', layer: gdiERO.layers.hrrr_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-day1-rrfs', label: 'Maximum RRFS GDI', layer: gdiERO.layers.rrfs_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-day1-blend', label: 'HRRR/RRFS Maximum Blend', layer: gdiERO.layers.blend_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
             ]}
         ]
     },

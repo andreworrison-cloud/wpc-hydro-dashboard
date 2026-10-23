@@ -36,7 +36,7 @@ errors = []
 
 # Current registry total includes all existing dashboard data/config entries,
 # basemaps, and the two validated NASA NLDAS-3 static land-surface layers.
-EXPECTED_LAYER_COUNT = 186
+EXPECTED_LAYER_COUNT = 178
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -1569,12 +1569,12 @@ if "dashboardRadarSpeedMode = 'iem'" not in app or "dashboardRadarSpeedMode = 'm
     errors.append("Per-feed radar speed-mode switching is incomplete in app.js.")
 
 # Model GDI updates must be dispatched by the existing cron-job.org workflows.
-for caller, callee in [('update_hrrr_tle.yml','publish_gdi.yml'),('update_rap.yml','publish_rap_gdi.yml')]:
+for caller, callee in [('update_rap.yml','publish_rap_gdi.yml')]:
     caller_text=(ROOT/'.github/workflows'/caller).read_text()
     callee_text=(ROOT/'.github/workflows'/callee).read_text()
     if re.search(r'^\s+schedule:',callee_text,re.M):errors.append(f'{callee} must not introduce a GitHub cron')
     if 'workflow_call:' not in callee_text or f'uses: ./.github/workflows/{callee}' not in caller_text:errors.append(f'Missing external scheduler route for {callee}')
-for label in ['HRRR · Hourly Guidance','HRRR · Six-hour Persistence','RRFS · Forecast Guidance','HRRR/RRFS Blend']:
+for label in ['HRRR / RRFS Forecasts','HRRR/RRFS TLE','Day 1 ERO · Maximum GDI']:
     if label not in app:errors.append(f'Missing GDI menu group: {label}')
 rap_menu_start=app.find("title: 'RAP Mesoanalysis Data'")
 gdi_menu_start=app.find("title: 'GDI Thermodynamic Guidance'")
@@ -1586,6 +1586,15 @@ for layer_id in ['rap-gdi','rap-gdi-change','rap-gdi-forecast']:
 gdi_windows=(ROOT/'.github/workflows/publish_gdi_guidance.yml').read_text()
 if re.search(r'^\s+schedule:',gdi_windows,re.M) or 'types: [requested]' not in gdi_windows or 'Update HRRR-TLE Flash Flood Guidance' not in gdi_windows:
     errors.append('GDI windows must inherit the cron-job.org HRRR dispatch without a GitHub timer')
+gdi_day1=(ROOT/'.github/workflows/publish_gdi_day1.yml').read_text()
+if 'Update Day 1 ERO CAMs' not in gdi_day1 or 'types: [completed]' not in gdi_day1:
+    errors.append('Day 1 GDI must follow completed cron-job.org ERO CAM dispatches')
+if 'uses: ./.github/workflows/publish_gdi.yml' in (ROOT/'.github/workflows/update_hrrr_tle.yml').read_text():
+    errors.append('The retired standalone HRRR GDI producer must not duplicate focused forecasts')
+for workflow in (ROOT/'.github/workflows').glob('publish*gdi*.yml'):
+    if re.search(r'^\s+schedule:',workflow.read_text(),re.M):
+        errors.append(f'GDI must not introduce a native GitHub timer: {workflow.name}')
+
 
 if errors:
     print("Dashboard validation FAILED:")
