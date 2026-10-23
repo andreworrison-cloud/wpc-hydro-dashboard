@@ -59,6 +59,10 @@ jobs:
             --message "Automated update: NWM Hourly soil saturation" \
             --path static/nwm_soil_saturation.png \
             --path static/nwm_metadata.json
-      - name: Report failed update after retaining previous map
-        if: always() && steps.ingest.outcome == 'failure'
-        run: exit 1
+
+      - name: Validate current or retained NWM package
+        run: python tools/validate_model_package.py nwm
+
+      - name: Report retained NWM update
+        if: always() && steps.ingest.outcome == 'failure' && success()
+        run: echo "::warning::NWM upstream update failed; retained dashboard product remains inside its validated freshness window."
