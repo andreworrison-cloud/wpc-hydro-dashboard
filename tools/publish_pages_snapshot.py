@@ -25,6 +25,17 @@ DEFAULT_BRANCH = "pages-live"
 MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 MAX_ATTEMPTS = 4
 
+# These files are operational runtime products owned by dedicated model
+# workflows. Source synchronization from main must never replace a fresher
+# pages-live product with an archived/bootstrap copy from the durable branch.
+MODEL_RUNTIME_PREFIXES = (
+    "static/cam_",
+    "static/ero_",
+    "static/rap_",
+    "static/hrrr_",
+    "static/leg_",
+)
+
 
 def run(cmd, *, cwd=None, check=True, env=None):
     result = subprocess.run(
@@ -248,6 +259,11 @@ def restore(repo: Path, branch: str, specs: list[str]) -> None:
         print(f"{branch}: restored {len(specs)} pathspec(s) from {expected}", flush=True)
 
 
+def is_model_runtime_owned(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return any(normalized.startswith(prefix) for prefix in MODEL_RUNTIME_PREFIXES)
+
+
 def changed_paths(repo: Path, before: str, after: str) -> list[str]:
     zeros = set(before) == {"0"}
     if zeros:
@@ -257,6 +273,12 @@ def changed_paths(repo: Path, before: str, after: str) -> list[str]:
     for line in result.stdout.splitlines():
         rel = safe_rel(line.strip())
         if rel == ".github" or rel.startswith(".github/"):
+            continue
+        if is_model_runtime_owned(rel):
+            print(
+                f"Skipping model runtime-owned path during source sync: {rel}",
+                flush=True,
+            )
             continue
         paths.append(rel)
     return sorted(set(paths))
