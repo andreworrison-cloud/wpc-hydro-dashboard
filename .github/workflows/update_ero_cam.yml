@@ -71,6 +71,9 @@ jobs:
       - name: Run ERO CAM Fetch Script
         run: python fetch_cam_ero.py
 
+      - name: Validate current or retained Day 1 ERO CAM package
+        run: python tools/validate_model_package.py ero
+
       - name: Publish Day 1 ERO CAM products to pages-live
         env:
           GITHUB_TOKEN: ${{ github.token }}
