@@ -8169,7 +8169,7 @@ const dashboardSections = [
             {id: 'gdi-day1', title: 'Day 1 ERO · Maximum GDI', layers: [
                 {id: 'gdi-day1-hrrr', label: 'Maximum HRRR GDI', layer: gdiERO.layers.hrrr_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
                 {id: 'gdi-day1-rrfs', label: 'Maximum RRFS GDI', layer: gdiERO.layers.rrfs_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-day1-blend', label: 'HRRR/RRFS Maximum Blend', layer: gdiERO.layers.blend_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
+                {id: 'gdi-day1-blend', label: 'Maximum HRRR/RRFS GDI Blend', layer: gdiERO.layers.blend_maximum, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
             ]}
         ]
     },
