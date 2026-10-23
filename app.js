@@ -8125,6 +8125,10 @@ const dashboardSections = [
             {id: 'rap-mucape-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change', layer: mucapeDiffLayer, kind: 'raster', nested: true},
             {id: 'rap-mucape-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE', layer: mucapeF03Layer, kind: 'raster', nested: true},
 
+            {id: 'rap-gdi', label: 'RAP GDI · Analysis', layer: rapGDI.layers.analysis, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+            {id: 'rap-gdi-change', label: 'RAP GDI · 3-hour Change', layer: rapGDI.layers.change, kind: 'raster', nested: true, exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+            {id: 'rap-gdi-forecast', label: 'RAP GDI · +3-hour Forecast', layer: rapGDI.layers.forecast, kind: 'raster', nested: true, exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+
             {id: 'rap-lr-sfc3', label: 'Sfc-3km Low-Level Lapse Rate', layer: lrsfc3Layer, kind: 'raster'},
             {id: 'rap-lr-75', label: '700-500mb Mid-Level Lapse Rate', layer: lr75Layer, kind: 'raster'},
             {id: 'rap-scp', label: 'Supercell Composite Parameter', layer: scpLayer, kind: 'raster'},
@@ -8151,11 +8155,6 @@ const dashboardSections = [
         title: 'GDI Thermodynamic Guidance',
         layers: [],
         groups: [
-            {id: 'gdi-rap', title: 'RAP Analysis & Trends', openByDefault: true, layers: [
-                {id: 'rap-gdi', label: 'RAP GDI · Analysis', layer: rapGDI.layers.analysis, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'rap-gdi-change', label: 'RAP GDI · 3-hour Change', layer: rapGDI.layers.change, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'rap-gdi-forecast', label: 'RAP GDI · +3-hour Forecast', layer: rapGDI.layers.forecast, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
-            ]},
             {id: 'gdi-hrrr', title: 'HRRR · Hourly Guidance', openByDefault: true, layers: [
                 {id: 'hrrr-gdi', label: 'HRRR GDI', layer: hrrrGDI.layers.gdi, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
                 {id: 'hrrr-gdi-coverage', label: 'HRRR GDI · Neighborhood Coverage', layer: hrrrGDI.layers.coverage, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
@@ -8164,10 +8163,12 @@ const dashboardSections = [
                 {id: 'hrrr-gdi-persistence', label: 'HRRR GDI · Sampled Persistence', layer: hrrrGDI.layers.persistence, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
                 {id: 'hrrr-gdi-longest', label: 'HRRR GDI · Longest Sampled Run', layer: hrrrGDI.layers.longest, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
             ]},
-            {id: 'gdi-rrfs', title: 'RRFS & HRRR/RRFS Blend', layers: [
+            {id: 'gdi-rrfs', title: 'RRFS · Forecast Guidance', layers: [
                 {id: 'gdi-rrfs-rrfs0', label: 'RRFS GDI · Window +0h', layer: gdiGuidance.layers.rrfs0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
                 {id: 'gdi-rrfs-rrfs3', label: 'RRFS GDI · Window +3h', layer: gdiGuidance.layers.rrfs3, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
-                {id: 'gdi-rrfs-rrfs6', label: 'RRFS GDI · Window +6h', layer: gdiGuidance.layers.rrfs6, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+                {id: 'gdi-rrfs-rrfs6', label: 'RRFS GDI · Window +6h', layer: gdiGuidance.layers.rrfs6, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}
+            ]},
+            {id: 'gdi-blend', title: 'HRRR/RRFS Blend', layers: [
                 {id: 'gdi-rrfs-blend0', label: 'HRRR/RRFS GDI · Window +0h', layer: gdiGuidance.layers.blend0, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
                 {id: 'gdi-rrfs-blend3', label: 'HRRR/RRFS GDI · Window +3h', layer: gdiGuidance.layers.blend3, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
                 {id: 'gdi-rrfs-blend6', label: 'HRRR/RRFS GDI · Window +6h', layer: gdiGuidance.layers.blend6, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection}

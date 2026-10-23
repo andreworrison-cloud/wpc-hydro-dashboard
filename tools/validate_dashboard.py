@@ -1574,8 +1574,14 @@ for caller, callee in [('update_hrrr_tle.yml','publish_gdi.yml'),('update_rap.ym
     callee_text=(ROOT/'.github/workflows'/callee).read_text()
     if re.search(r'^\s+schedule:',callee_text,re.M):errors.append(f'{callee} must not introduce a GitHub cron')
     if 'workflow_call:' not in callee_text or f'uses: ./.github/workflows/{callee}' not in caller_text:errors.append(f'Missing external scheduler route for {callee}')
-for label in ['RAP Analysis & Trends','HRRR · Hourly Guidance','HRRR · Six-hour Persistence']:
+for label in ['HRRR · Hourly Guidance','HRRR · Six-hour Persistence','RRFS · Forecast Guidance','HRRR/RRFS Blend']:
     if label not in app:errors.append(f'Missing GDI menu group: {label}')
+rap_menu_start=app.find("title: 'RAP Mesoanalysis Data'")
+gdi_menu_start=app.find("title: 'GDI Thermodynamic Guidance'")
+rap_menu=app[rap_menu_start:gdi_menu_start] if 0<=rap_menu_start<gdi_menu_start else ''
+for layer_id in ['rap-gdi','rap-gdi-change','rap-gdi-forecast']:
+    if f"id: '{layer_id}'" not in rap_menu:
+        errors.append(f'{layer_id} must be under RAP Mesoanalysis Data')
 
 gdi_windows=(ROOT/'.github/workflows/publish_gdi_guidance.yml').read_text()
 if re.search(r'^\s+schedule:',gdi_windows,re.M) or 'types: [requested]' not in gdi_windows or 'Update HRRR-TLE Flash Flood Guidance' not in gdi_windows:
