@@ -33,6 +33,7 @@ MODEL_RUNTIME_PREFIXES = (
     "static/ero_",
     "static/rap_",
     "static/hrrr_",
+    "static/nwm_",
     "static/leg_",
 )
 
