@@ -12,6 +12,11 @@ on:
       - '.github/workflows/publish_rap_gdi.yml'
       - '.github/workflows/publish_gdi_guidance.yml'
       - '.github/workflows/update_rap.yml'
+      - '.github/workflows/update_cam.yml'
+      - '.github/workflows/update_ero_cam.yml'
+      - 'fetch_rap.py'
+      - 'tools/validate_model_package.py'
+      - 'tools/publish_pages_snapshot.py'
       - 'tools/gdi/**'
       - 'tools/publish_gdi.py'
       - 'index.html'
@@ -41,6 +46,11 @@ on:
       - '.github/workflows/publish_rap_gdi.yml'
       - '.github/workflows/publish_gdi_guidance.yml'
       - '.github/workflows/update_rap.yml'
+      - '.github/workflows/update_cam.yml'
+      - '.github/workflows/update_ero_cam.yml'
+      - 'fetch_rap.py'
+      - 'tools/validate_model_package.py'
+      - 'tools/publish_pages_snapshot.py'
       - 'tools/gdi/**'
       - 'tools/publish_gdi.py'
       - 'index.html'
@@ -93,8 +103,37 @@ jobs:
       - name: Check MRMS RALA Python syntax
         run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
 
-      - name: Check CAM Python syntax
-        run: python -m py_compile fetch_cam.py fetch_cam_ero.py
+      - name: Check model-data Python syntax
+        run: |
+          python -m py_compile \
+            fetch_cam.py \
+            fetch_cam_ero.py \
+            fetch_rap.py \
+            fetch_hrrr_tle.py \
+            tools/validate_model_package.py \
+            tools/publish_pages_snapshot.py \
+            tools/publish_gdi.py \
+            tools/publish_gdi_suite.py
+
+      - name: Validate model runtime ownership guard
+        run: |
+          python - <<'PY'
+          from tools.publish_pages_snapshot import is_model_runtime_owned
+
+          for path in (
+              'static/cam_metadata.json',
+              'static/ero_cam_metadata.json',
+              'static/rap_metadata.json',
+              'static/hrrr_tle_manifest.json',
+              'static/leg_pwat.png',
+          ):
+              assert is_model_runtime_owned(path), path
+
+          for path in ('app.js', 'style.css', 'fetch_rap.py', 'static/nwm_metadata.json'):
+              assert not is_model_runtime_owned(path), path
+
+          print('Model runtime ownership guard PASS')
+          PY
 
       - name: Validate menu order and required layers
         run: python tools/validate_dashboard.py
