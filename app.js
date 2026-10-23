@@ -1850,12 +1850,75 @@ warningsLayer.addTo(map);
 watchesLayer.addTo(map);
 
 let nwsAlertRefreshInFlight = false;
+let nwsAlertRetryTimer = null;
+
+const NWS_HYDRO_EVENTS = [
+    'Flash Flood Warning',
+    'Flood Warning',
+    'Flood Advisory',
+    'Flood Watch',
+    'Flash Flood Watch'
+];
+
+function countHydroEvents(features, propertyName) {
+    const counts = new Map();
+    for (const feature of features) {
+        const eventName = feature?.properties?.[propertyName];
+        if (!eventName) continue;
+        counts.set(eventName, (counts.get(eventName) || 0) + 1);
+    }
+    return counts;
+}
+
+function currentHydroPolygonCount() {
+    return floodAdvisoryLayer.getLayers().length +
+        floodWarningLayer.getLayers().length +
+        flashFloodWarningLayer.getLayers().length +
+        watchesLayer.getLayers().length;
+}
+
+function pruneExpiredHydroPolygons() {
+    const now = Date.now();
+    for (const geojsonLayer of [
+        floodAdvisoryLayer,
+        floodWarningLayer,
+        flashFloodWarningLayer,
+        watchesLayer
+    ]) {
+        geojsonLayer.eachLayer(layer => {
+            const expiration = Date.parse(
+                layer?.feature?.properties?.expiration || ''
+            );
+            if (Number.isFinite(expiration) && expiration <= now) {
+                geojsonLayer.removeLayer(layer);
+            }
+        });
+    }
+}
+
+function scheduleNWSAlertRetry() {
+    if (nwsAlertRetryTimer !== null) return;
+    nwsAlertRetryTimer = setTimeout(() => {
+        nwsAlertRetryTimer = null;
+        fetchNWSAlerts();
+    }, 30 * 1000);
+}
+
+function validateAlertLayerBuild(features, paneName) {
+    // Parse every replacement into a detached Leaflet layer before touching
+    // the live map. This keeps the refresh genuinely transactional if a
+    // malformed upstream geometry ever reaches the service.
+    const stagedLayer = L.geoJSON(null, commonAlertOptions(paneName));
+    stagedLayer.addData(features);
+    return stagedLayer.getLayers().length;
+}
 
 async function fetchNWSAlerts() {
-    // Treat each refresh transactionally. NOAA's ArcGIS service can
-    // occasionally return a syntactically valid HTTP-200 response whose
-    // feature payload is empty or incomplete. Never clear the last known-good
-    // polygons until a companion count query confirms the replacement set.
+    // NOAA exposes alert lifecycle and alert geometry through separate
+    // operational services. The GIS service can occasionally return a
+    // coherent HTTP-200 snapshot that is nevertheless temporarily empty or
+    // incomplete. Cross-check broad product presence against api.weather.gov
+    // before allowing such a snapshot to replace visible polygons.
     if (nwsAlertRefreshInFlight) return;
     nwsAlertRefreshInFlight = true;
 
@@ -1863,12 +1926,14 @@ async function fetchNWSAlerts() {
         const whereClause = "prod_type IN ('Flash Flood Warning', 'Flood Warning', 'Flood Advisory', 'Flood Watch', 'Flash Flood Watch')";
         const baseUrl = 'https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query';
         const refreshToken = new Date().getTime();
-        const featureUrl = `${baseUrl}?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&f=geojson&t=${refreshToken}`;
+        const featureUrl = `${baseUrl}?where=${encodeURIComponent(whereClause)}&outFields=prod_type,wfo,expiration,url&returnGeometry=true&f=geojson&t=${refreshToken}`;
         const countUrl = `${baseUrl}?where=${encodeURIComponent(whereClause)}&returnCountOnly=true&f=json&t=${refreshToken}`;
+        const capUrl = `https://api.weather.gov/alerts/active?t=${refreshToken}`;
 
-        const [featureResponse, countResponse] = await Promise.all([
+        const [featureResponse, countResponse, capResponse] = await Promise.all([
             fetch(featureUrl, {cache: 'no-store'}),
-            fetch(countUrl, {cache: 'no-store'})
+            fetch(countUrl, {cache: 'no-store'}),
+            fetch(capUrl, {cache: 'no-store'})
         ]);
 
         if (!featureResponse.ok) {
@@ -1902,12 +1967,49 @@ async function fetchNWSAlerts() {
                 feature.geometry
         );
 
-        // A mismatch is treated as a transient/partial upstream response.
-        // Retain the existing polygons and try again at the next refresh
-        // rather than flashing every active WFO product off the map.
         if (validFeatures.length !== expectedCount) {
             throw new Error(
                 `NOAA hydro-alert response incomplete: received ${validFeatures.length} of ${expectedCount} expected features`
+            );
+        }
+
+        // A same-service feature/count pair cannot detect a coherently stale
+        // zero snapshot. Use the independent CAP lifecycle feed as a sentinel.
+        if (capResponse.ok) {
+            const capData = await capResponse.json();
+            if (!capData || !Array.isArray(capData.features)) {
+                throw new Error('NWS CAP active-alert query returned an invalid feature collection');
+            }
+
+            const capHydroFeatures = capData.features.filter(
+                feature => NWS_HYDRO_EVENTS.includes(
+                    feature?.properties?.event
+                )
+            );
+            const capCounts = countHydroEvents(capHydroFeatures, 'event');
+            const gisCounts = countHydroEvents(validFeatures, 'prod_type');
+            const missingActiveTypes = NWS_HYDRO_EVENTS.filter(
+                eventName =>
+                    (capCounts.get(eventName) || 0) > 0 &&
+                    (gisCounts.get(eventName) || 0) === 0
+            );
+
+            if (missingActiveTypes.length > 0) {
+                throw new Error(
+                    'NOAA GIS snapshot omitted CAP-active hydro products: ' +
+                    missingActiveTypes.join(', ')
+                );
+            }
+        } else if (validFeatures.length === 0 && currentHydroPolygonCount() > 0) {
+            // If CAP is temporarily unavailable, never let a single empty GIS
+            // response erase an existing unexpired snapshot.
+            throw new Error(
+                `CAP sentinel HTTP ${capResponse.status}; refusing empty GIS replacement`
+            );
+        } else {
+            console.warn(
+                `NWS CAP sentinel unavailable (HTTP ${capResponse.status}); ` +
+                'accepting the non-empty validated GIS hydro snapshot.'
             );
         }
 
@@ -1925,10 +2027,17 @@ async function fetchNWSAlerts() {
                 feature.properties.prod_type === 'Flash Flood Watch'
         );
 
-        // Commit the replacement only after both NOAA responses agree.
-        flashFloodWarningLayer.clearLayers();
-        floodWarningLayer.clearLayers();
+        // Prove all four replacements parse successfully before clearing any
+        // live polygons. The prior implementation cleared first and therefore
+        // could not actually retain the last known-good map after addData().
+        validateAlertLayerBuild(floodAdvisoryFeatures, 'warnings');
+        validateAlertLayerBuild(floodWarningFeatures, 'floodWarnings');
+        validateAlertLayerBuild(flashFloodFeatures, 'flashFloodWarnings');
+        validateAlertLayerBuild(watchFeatures, 'watches');
+
         floodAdvisoryLayer.clearLayers();
+        floodWarningLayer.clearLayers();
+        flashFloodWarningLayer.clearLayers();
         watchesLayer.clearLayers();
 
         if (floodAdvisoryFeatures.length > 0) {
@@ -1943,11 +2052,28 @@ async function fetchNWSAlerts() {
         if (watchFeatures.length > 0) {
             watchesLayer.addData(watchFeatures);
         }
+
+        if (nwsAlertRetryTimer !== null) {
+            clearTimeout(nwsAlertRetryTimer);
+            nwsAlertRetryTimer = null;
+        }
+
+        console.info(
+            'NWS hydro alerts refreshed:',
+            {
+                flashFloodWarnings: flashFloodFeatures.length,
+                floodWarnings: floodWarningFeatures.length,
+                floodAdvisories: floodAdvisoryFeatures.length,
+                watches: watchFeatures.length
+            }
+        );
     } catch (error) {
+        pruneExpiredHydroPolygons();
         console.error(
-            "Error refreshing NWS hydro alerts; retaining last known-good polygons:",
+            'Error refreshing NWS hydro alerts; retaining unexpired last known-good polygons:',
             error
         );
+        scheduleNWSAlertRetry();
     } finally {
         nwsAlertRefreshInFlight = false;
     }
