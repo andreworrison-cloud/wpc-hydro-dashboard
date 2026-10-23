@@ -24,12 +24,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 20
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -59,6 +59,9 @@ jobs:
             --path 'static/leg_*.png'
       - name: Run RAP Mesoanalysis Script
         run: python fetch_rap.py
+
+      - name: Validate coherent RAP package
+        run: python tools/validate_model_package.py rap
 
       - name: Publish RAP maps to pages-live
         env:
