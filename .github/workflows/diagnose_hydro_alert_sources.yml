@@ -1,0 +1,71 @@
+name: Diagnose Hydro Alert Sources
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose_hydro_alert_sources.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Compare official NWS alert and GIS sources
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, requests
+          from collections import Counter
+
+          EVENTS = {
+              'Flash Flood Warning',
+              'Flood Warning',
+              'Flood Advisory',
+              'Flood Watch',
+              'Flash Flood Watch',
+          }
+          UA={'User-Agent':'WPC-Hydro-Dashboard-Diagnostic/1.0 (github.com/andreworrison-cloud/wpc-hydro-dashboard)'}
+
+          def get_json(url, params=None):
+              r=requests.get(url, params=params, headers=UA, timeout=30)
+              print('HTTP', r.status_code, r.url)
+              r.raise_for_status()
+              return r.json()
+
+          print('\n=== api.weather.gov active CAP ===')
+          cap=get_json('https://api.weather.gov/alerts/active')
+          cap_features=[f for f in cap.get('features',[]) if (f.get('properties') or {}).get('event') in EVENTS]
+          cap_counts=Counter((f.get('properties') or {}).get('event') for f in cap_features)
+          print('CAP hydro counts:', dict(sorted(cap_counts.items())))
+          print('CAP hydro total:', len(cap_features))
+          for f in cap_features[:12]:
+              p=f.get('properties') or {}
+              print('CAP', p.get('event'), p.get('senderName'), p.get('expires'), f.get('id'))
+
+          where="prod_type IN ('Flash Flood Warning','Flood Warning','Flood Advisory','Flood Watch','Flash Flood Watch')"
+          endpoints=[
+              ('eventdriven-primary','https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query'),
+              ('idpgis-secondary','https://idpgis.ncep.noaa.gov/arcgis/rest/services/NWS_Forecasts_Guidance_Warnings/watch_warn_adv/MapServer/1/query'),
+          ]
+          for name,url in endpoints:
+              print(f'\n=== {name} ===')
+              try:
+                  data=get_json(url, {'where':where,'outFields':'prod_type,wfo,expiration,url','returnGeometry':'true','f':'geojson'})
+                  features=data.get('features',[]) if isinstance(data,dict) else []
+                  valid=[f for f in features if f.get('geometry') and (f.get('properties') or {}).get('prod_type')]
+                  counts=Counter((f.get('properties') or {}).get('prod_type') for f in valid)
+                  print('GIS valid counts:', dict(sorted(counts.items())))
+                  print('GIS valid total:',len(valid),'raw total:',len(features),'exceededTransferLimit:',data.get('exceededTransferLimit'))
+                  count=get_json(url, {'where':where,'returnCountOnly':'true','f':'json'})
+                  print('GIS returnCountOnly:',count)
+                  for f in valid[:12]:
+                      p=f.get('properties') or {}
+                      print('GIS',p.get('prod_type'),p.get('wfo'),p.get('expiration'),p.get('url'))
+              except Exception as e:
+                  print(name,'ERROR',repr(e))
+          PY
