@@ -127,6 +127,8 @@ def frame(model, cycle, lead, cache, grids):
 
 
 def main(mode, work, public, now=None, cam=None, cache_root=None):
+    supplied_time = now is not None
+    supplied_cam = cam is not None
     now = now or dt.datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError('Use a timezone-aware time')
@@ -164,6 +166,14 @@ def main(mode, work, public, now=None, cam=None, cache_root=None):
             records.append({'model': model, 'lag': lag, 'cycle': cycle.isoformat(), 'samples': samples})
             print('Completed', kind, model, cycle.isoformat(), len(samples), 'samples', flush=True)
     lat, lon = check_grids(grids)
+    if not supplied_time and end <= dt.datetime.now(UTC):
+        raise ValueError('Forecast window expired during processing; do not publish')
+    if kind == 'day1' and not supplied_cam:
+        # A CAM update can finish while native GDI fields are downloading.
+        # Never publish a newly built GDI package against superseded cycles.
+        latest = cam_ero_contract(read_cam(dt.datetime.now(UTC)), dt.datetime.now(UTC))
+        if latest != (cycles, start, end, times):
+            raise ValueError('ERO CAM cycles/window changed during processing; retry current reference')
     arrays, products = {'latitude': lat, 'longitude': lon}, {}
     source_label = ('HRRR ' + cycles['hrrr'][0].strftime('%m-%d %HZ') +
                     ' / RRFS ' + cycles['rrfs'][0].strftime('%m-%d %HZ'))

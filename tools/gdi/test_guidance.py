@@ -166,6 +166,16 @@ class Contracts(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             verify_spec(bad, 'tle')
 
+    def test_day1_rejects_reference_changed_during_build(self):
+        with tempfile.TemporaryDirectory() as temp, \
+                mock.patch.object(model_source, 'PressureSource', Source), \
+                mock.patch.object(build, 'frame', fake_frame), \
+                mock.patch.object(build, 'read_cam', side_effect=[cam(), cam(12, 6)]), \
+                mock.patch.object(build.subprocess, 'run') as render:
+            with self.assertRaisesRegex(ValueError, 'changed during processing'):
+                build.main('ero', pathlib.Path(temp), pathlib.Path(temp)/'public', NOW)
+            render.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
