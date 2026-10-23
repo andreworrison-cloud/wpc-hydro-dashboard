@@ -61,34 +61,93 @@ def download_rap_subset():
             return target_time
         return None
 
-    # Find the most recent available T-0 Hour
-    t0_time = None
+    # Find the newest coherent RAP bundle. The dashboard publishes current
+    # analysis, +3 h forecast, and 3-hour change fields together, so never mix
+    # a new F00 analysis with retained forecast/change PNGs from an older run.
     for offset in range(0, 5):
-        check_time = now - timedelta(hours=offset)
-        t0_time = fetch_hour(check_time, "rap_subset_t0.grib2", fxx="00")
-        if t0_time:
-            print(f"Success! Downloaded Current RAP (T-0) for: {t0_time.strftime('%Y%m%d %H:00')}Z")
-            break
-            
-    if not t0_time:
-        raise Exception("Could not download current RAP data.")
+        candidate = now - timedelta(hours=offset)
+        t0_time = fetch_hour(candidate, "rap_subset_t0.grib2", fxx="00")
+        if not t0_time:
+            continue
 
-    # Fetch the +3 hour forecast for the exact same cycle
-    f03_time = fetch_hour(t0_time, "rap_subset_f03.grib2", fxx="03")
-    if f03_time:
-        print(f"Success! Downloaded +3h Forecast RAP for: {t0_time.strftime('%Y%m%d %H:00')}Z cycle")
+        f03_time = fetch_hour(candidate, "rap_subset_f03.grib2", fxx="03")
+        t3_target = candidate - timedelta(hours=3)
+        t3_time = fetch_hour(t3_target, "rap_subset_t3.grib2", fxx="00")
 
-    # Explicitly calculate and fetch the T-3 hour (Historical)
-    t3_target = t0_time - timedelta(hours=3)
-    t3_time = fetch_hour(t3_target, "rap_subset_t3.grib2", fxx="00")
-    if t3_time:
-        print(f"Success! Downloaded Historical RAP (T-3) for: {t3_time.strftime('%Y%m%d %H:00')}Z")
-    else:
-        print("WARNING: T-3 file not found. 3-Hour change fields will be blank.")
+        if f03_time and t3_time:
+            print(
+                f"Success! Selected coherent RAP bundle: "
+                f"{t0_time.strftime('%Y%m%d %H:00')}Z analysis, "
+                f"+3 h forecast, and "
+                f"{t3_time.strftime('%Y%m%d %H:00')}Z T-3 analysis"
+            )
+            return t0_time, t3_time
 
-    return t0_time, t3_time
+        missing = []
+        if not f03_time:
+            missing.append("+3 h forecast")
+        if not t3_time:
+            missing.append("T-3 analysis")
+        print(
+            f"RAP candidate {candidate.strftime('%Y%m%d %H:00')}Z is incomplete "
+            f"({', '.join(missing)}); trying the prior cycle."
+        )
+
+    for partial in (
+        "rap_subset_t0.grib2",
+        "rap_subset_f03.grib2",
+        "rap_subset_t3.grib2",
+    ):
+        try:
+            os.remove(partial)
+        except FileNotFoundError:
+            pass
+    raise RuntimeError(
+        "No coherent RAP analysis/+3 h/T-3 bundle is available in the "
+        "five-hour lookback window; retaining the last complete dashboard package."
+    )
 
 t0_obj, t3_obj = download_rap_subset()
+
+# The workflow restores the last complete live snapshot before this script runs.
+# Remove only the model PNGs owned by this producer after input preflight passes,
+# then require every one to be regenerated. If anything later fails, the
+# workflow stops before publishing and pages-live keeps the prior complete set.
+EXPECTED_RAP_OUTPUTS = [
+    "rap_corfidi_down.png",
+    "rap_corfidi_up.png",
+    "rap_diff_adv.png",
+    "rap_div250.png",
+    "rap_eff_shear.png",
+    "rap_f850_700.png",
+    "rap_f925_850.png",
+    "rap_lr_75.png",
+    "rap_lr_sfc3.png",
+    "rap_mean_wind.png",
+    "rap_mfc.png",
+    "rap_mlcape.png",
+    "rap_mlcape_diff.png",
+    "rap_mlcape_f03.png",
+    "rap_mucape.png",
+    "rap_mucape_diff.png",
+    "rap_mucape_f03.png",
+    "rap_pwat.png",
+    "rap_pwat_diff.png",
+    "rap_pwat_f03.png",
+    "rap_sbcape.png",
+    "rap_sbcape_diff.png",
+    "rap_sbcape_f03.png",
+    "rap_scp.png",
+    "rap_trans700.png",
+    "rap_trans850.png",
+    "rap_trans850_diff.png",
+    "rap_trans850_f03.png",
+    "rap_vort500.png",
+]
+for filename in EXPECTED_RAP_OUTPUTS:
+    path = os.path.join("static", filename)
+    if os.path.exists(path):
+        os.remove(path)
 
 # Calculate metadata strings for both current and +3h forecast valid times
 valid_time_str = f"Mesoanalysis F00 &mdash; {t0_obj.strftime('%b %d, %Y %H:00')}Z"
@@ -645,6 +704,22 @@ save_legend_png('BrBG', -1.0, 1.0, "3-Hour PWAT Change (inches)", 'leg_pwat_diff
 save_legend_png('RdBu_r', -2000, 2000, "3-Hour CAPE Change (J/kg)", 'leg_cape_diff.png')
 save_legend_png('BrBG', -250, 250, "3-Hour 850mb Moisture\nTransport Change (g/kg * kts)", 'leg_trans_diff.png')
 
+missing_outputs = [
+    filename
+    for filename in EXPECTED_RAP_OUTPUTS
+    if not os.path.exists(os.path.join("static", filename))
+    or os.path.getsize(os.path.join("static", filename)) == 0
+]
+if missing_outputs:
+    raise RuntimeError(
+        "RAP package is incomplete; refusing mixed-generation publication. "
+        "Missing regenerated outputs: " + ", ".join(missing_outputs)
+    )
+print(
+    f"Validated complete RAP dashboard package: "
+    f"{len(EXPECTED_RAP_OUTPUTS)}/{len(EXPECTED_RAP_OUTPUTS)} model PNGs regenerated."
+)
+
 print("Exporting exact bounding box and metadata to JSON...")
 bounds = [
     [float(np.nanmin(lats)), float(np.nanmin(lons))],
@@ -655,6 +730,10 @@ with open("static/rap_metadata.json", "w") as f:
     json.dump({
         "valid_time": valid_time_str,
         "valid_time_f03": valid_time_f03_str,
+        "analysis_init_utc": t0_obj.replace(minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z"),
+        "forecast_valid_utc": (t0_obj.replace(minute=0, second=0, microsecond=0) + timedelta(hours=3)).isoformat().replace("+00:00", "Z"),
+        "comparison_init_utc": t3_obj.replace(minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z"),
+        "source_completeness_contract": "coherent RAP F00/+3h/T-3 bundle and complete dashboard PNG set required before publication",
         "bounds": bounds,
         "rendering": {
             "revision": RENDER_REVISION,
