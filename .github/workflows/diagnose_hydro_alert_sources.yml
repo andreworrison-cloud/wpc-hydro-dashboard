@@ -15,40 +15,74 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Test exact dashboard hydro request and browser headers
+      - name: Fetch exact current hydro GeoJSON
         shell: bash
         run: |
           python - <<'PY'
-          import requests
+          import json, math, requests
           from collections import Counter
           where="prod_type IN ('Flash Flood Warning','Flood Warning','Flood Advisory','Flood Watch','Flash Flood Watch')"
-          base='https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query'
-          params={'where':where,'outFields':'prod_type,wfo,expiration,url','f':'geojson','t':'diagnostic'}
-          r=requests.get(base,params=params,headers={'User-Agent':'Mozilla/5.0','Origin':'https://andreworrison-cloud.github.io'},timeout=30)
-          print('HTTP',r.status_code,r.url)
-          print('content-type',r.headers.get('content-type'))
-          print('access-control-allow-origin',r.headers.get('access-control-allow-origin'))
-          print('cache-control',r.headers.get('cache-control'))
-          print('age',r.headers.get('age'))
-          print('via',r.headers.get('via'))
+          url='https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer/1/query'
+          p={'where':where,'outFields':'prod_type,wfo,expiration,url','f':'geojson','t':'leaflet-diagnostic'}
+          r=requests.get(url,params=p,headers={'Origin':'https://andreworrison-cloud.github.io','User-Agent':'Mozilla/5.0'},timeout=30)
           r.raise_for_status()
           data=r.json()
+          open('/tmp/hydro.json','w').write(json.dumps(data))
           feats=data.get('features',[])
-          valid=[f for f in feats if f.get('geometry') and (f.get('properties') or {}).get('prod_type')]
-          nullgeom=[f for f in feats if not f.get('geometry')]
-          print('raw',len(feats),'valid geometry',len(valid),'null geometry',len(nullgeom),'exceeded',data.get('exceededTransferLimit'))
-          print('counts',dict(sorted(Counter((f.get('properties') or {}).get('prod_type') for f in valid).items())))
-          if feats:
-              print('first geometry type', (feats[0].get('geometry') or {}).get('type'))
-              print('first props',feats[0].get('properties'))
-
-          opt=requests.options(base,headers={
-              'Origin':'https://andreworrison-cloud.github.io',
-              'Access-Control-Request-Method':'GET',
-              'Access-Control-Request-Headers':'cache-control'
-          },timeout=30)
-          print('OPTIONS',opt.status_code)
-          print('OPTIONS allow-origin',opt.headers.get('access-control-allow-origin'))
-          print('OPTIONS allow-methods',opt.headers.get('access-control-allow-methods'))
-          print('OPTIONS allow-headers',opt.headers.get('access-control-allow-headers'))
+          print('types',Counter((f.get('geometry') or {}).get('type') for f in feats))
+          bad=[]
+          def walk(v,path=''):
+              if isinstance(v,list):
+                  if not v: bad.append((path,'empty-list'))
+                  for i,x in enumerate(v): walk(x,f'{path}/{i}')
+              elif isinstance(v,(int,float)):
+                  if not math.isfinite(v): bad.append((path,'nonfinite'))
+              elif v is None:
+                  bad.append((path,'null'))
+          for i,f in enumerate(feats):
+              g=f.get('geometry') or {}
+              walk(g.get('coordinates'),f'feature-{i}')
+          print('coordinate anomalies',bad[:30],'total',len(bad))
+          print('features',len(feats))
           PY
+
+      - name: Reproduce Leaflet GeoJSON parsing feature-by-feature
+        shell: bash
+        run: |
+          cd /tmp
+          npm init -y >/dev/null 2>&1
+          npm install --silent leaflet@1.9.4 jsdom@24
+          node <<'JS'
+          const fs=require('fs');
+          const {JSDOM}=require('jsdom');
+          const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'https://andreworrison-cloud.github.io'});
+          global.window=dom.window;
+          global.document=dom.window.document;
+          global.navigator=dom.window.navigator;
+          global.Element=dom.window.Element;
+          global.SVGElement=dom.window.SVGElement;
+          const L=require('leaflet');
+          const data=JSON.parse(fs.readFileSync('/tmp/hydro.json','utf8'));
+          let failures=[];
+          let counts={};
+          for (let i=0;i<data.features.length;i++) {
+            const f=data.features[i];
+            const p=f.properties||{};
+            counts[p.prod_type]=(counts[p.prod_type]||0)+1;
+            try {
+              const layer=L.geoJSON(null,{
+                style:()=>({color:'red',weight:2,opacity:1,fillOpacity:0.2}),
+                onEachFeature:(feature, lyr)=>{
+                  const props=feature.properties||{};
+                  lyr.bindPopup('<strong>'+String(props.prod_type||'Unknown')+'</strong>');
+                }
+              });
+              layer.addData(f);
+            } catch (e) {
+              failures.push({i,event:p.prod_type,wfo:p.wfo,url:p.url,error:String(e),geom:f.geometry?.type});
+            }
+          }
+          console.log('Leaflet counts',counts);
+          console.log('Leaflet failures',JSON.stringify(failures,null,2));
+          if (failures.length) process.exitCode=2;
+          JS
