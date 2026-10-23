@@ -136,6 +136,9 @@ jobs:
           )
           PY
 
+      - name: Validate HRRR / HRRR-TLE freshness contract
+        run: python tools/validate_model_package.py hrrr-tle
+
       - name: Publish HRRR / HRRR-TLE products to pages-live
         env:
           GITHUB_TOKEN: ${{ github.token }}
