@@ -106,7 +106,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   }
   html+=ui.controls('data-gdi-suite="'+paneName+'"',numbers);
   const unit=p.unit||(k==='change'?'GDI change (3 h)':'GDI');
-  html+=ui.scale(p.colors||[],p.edges||[],unit);
+  html+=ui.scale(p.colors||[],p.edges||[],unit,{zeroCentered:k==='change'});
   if(m.display_rendering==='rap_scalar_bilinear_v1')html+='<div class="gdi-note">13-km RAP · interpolated display</div>';
   html+='<div class="gdi-note">'+esc(p.legend)+'</div></div>';return html;
  }
