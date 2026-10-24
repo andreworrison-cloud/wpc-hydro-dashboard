@@ -260,7 +260,15 @@ class Contracts(unittest.TestCase):
         verify_spec(m,'forecast',allow_legacy_forecast=True)
 
     def test_day1_rejects_reference_changed_during_build(self):
+        class FixtureClock(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+
+        # The post-build reference check deliberately reads the current clock.
+        # Keep that clock with this fixed CAM fixture, even after its real expiry.
         with tempfile.TemporaryDirectory() as temp, \
+                mock.patch.object(build.dt, 'datetime', FixtureClock), \
                 mock.patch.object(model_source, 'PressureSource', Source), \
                 mock.patch.object(build, 'frame', fake_frame), \
                 mock.patch.object(build, 'read_cam', side_effect=[cam(), cam(12, 6)]), \
