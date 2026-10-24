@@ -45,8 +45,10 @@ These points do not interpolate the fill or supply artificial additional sites.
   stations, a legend selector chooses temperature, dewpoint or wind speed.
 - Points carry their actual report times, independent of RTMA time. Popups show
   ID, observation UTC time, age, temperature, dewpoint, wind/gust, wind direction
-  when reported, and the escaped raw report. A pixel-cell thinning pass chooses
+  when reported, and the escaped raw report. Screen-space collision checks choose
   newer reports first to limit label overlap; more sites appear as users zoom.
+  Markers and open popups survive map auto-pan and periodic age updates while
+  their reports remain fresh; stale reports still disappear at the age limit.
 - Every 30 seconds the browser reevaluates source and individual station ages,
   even if no newer package has arrived. It never keeps old points visible just
   because the package was recently retrieved.
