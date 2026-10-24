@@ -8555,21 +8555,15 @@ function renderLayerRow(entry) {
     row.dataset.searchText = entry.searchText;
 
     const control = document.createElement('input');
-    const isExclusive = Boolean(entry.exclusiveGroup);
-    control.type = isExclusive ? 'radio' : 'checkbox';
+    control.type = 'checkbox';
     control.className = 'layer-checkbox';
     control.dataset.layerId = entry.id;
-    if (isExclusive) control.name = `layer-group-${entry.exclusiveGroup}`;
     control.checked = map.hasLayer(entry.layer);
 
-    control.addEventListener('click', event => {
+    control.addEventListener('click', () => {
         selectDashboardLayer(entry.id);
-        if (isExclusive && map.hasLayer(entry.layer)) {
-            event.preventDefault();
-            setDashboardLayerActive(entry, false);
-            return;
-        }
-        setDashboardLayerActive(entry, isExclusive ? true : control.checked);
+        // onActivate enforces GDI/radar/GLM groups; every square also toggles off.
+        setDashboardLayerActive(entry, control.checked);
     });
 
     const label = document.createElement('span');
