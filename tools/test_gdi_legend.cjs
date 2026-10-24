@@ -34,24 +34,33 @@ console.log('GDI legend DOM checks passed: stable controls/focus, valid-time upd
 const {execFileSync}=require('node:child_process');
 const rap=JSON.parse(execFileSync('python',['-c',`import ast,json,pathlib
 root=ast.parse(pathlib.Path('tools/gdi/build_rap.py').read_text())
-colors=next(ast.literal_eval(n.value) for n in ast.walk(root) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='diff' for t in n.targets))
-edges=next(ast.literal_eval(v) for n in ast.walk(root) if isinstance(n,ast.Dict) for k,v in zip(n.keys,n.values) if isinstance(k,ast.Constant) and k.value=='edges')
+def constant(name):
+ return next(ast.literal_eval(n.value) for n in ast.walk(root) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id==name for t in n.targets))
+colors=constant('CHANGE_COLORS');edges=constant('CHANGE_EDGES')
 print(json.dumps({'colors':colors,'edges':edges}))`],{encoding:'utf8'}));
 const display={};vm.runInNewContext(fs.readFileSync('gdi_display.js','utf8'),display);
 const ranges=display.GDIDisplay.binRanges(rap.edges);
-const probes=[-100,-20,-15,-10,-5,-2,0,1.999,2,5,10,15,20,100];
-const expectedBins=[0,1,2,3,4,5,5,5,6,7,8,9,10,10];
+const probes=[-100,-20,-15,-10,-5,-Number.EPSILON,0,Number.EPSILON,4.999,5,10,15,20,100];
+const expectedBins=[0,1,2,3,4,4,5,5,5,6,7,8,9,9];
 probes.forEach((value,i)=>assert.equal(ranges.findIndex(r=>value>=r.lower&&value<r.upper),expectedBins[i]));
 const scale=document.createElement('div');scale.innerHTML=display.GDIDisplay.scale(rap.colors,rap.edges,'GDI change (3 h)',{zeroCentered:true});
-const swatches=scale.querySelectorAll('.gdi-scale-bar span');assert.equal(swatches.length,11);
+const swatches=scale.querySelectorAll('.gdi-scale-bar span');assert.equal(swatches.length,10);
 assert.equal(swatches[0].title,'< −20 GDI change (3 h)');
-assert.equal(swatches[5].title,'−2 to < +2 GDI change (3 h)');
-assert.equal(swatches[10].title,'≥ +20 GDI change (3 h)');
+assert.equal(swatches[4].title,'−5 to < 0 GDI change (3 h)');
+assert.equal(swatches[5].title,'0 to < +5 GDI change (3 h)');
+assert.equal(swatches[9].title,'≥ +20 GDI change (3 h)');
 assert.equal(scale.querySelector('.gdi-change-zero').textContent,'0');assert.equal(scale.querySelector('.gdi-change-zero').style.left,'50%');
+assert.equal(scale.querySelectorAll('.gdi-change-zero').length,1);
+assert.equal(scale.querySelectorAll('.gdi-change-neutral-ticks').length,0);
 assert.ok(!scale.querySelector('.gdi-scale-ticks').textContent.includes('−30'));
-assert.match(scale.querySelector('.gdi-change-ranges').textContent,/Near zero: −2 to < \+2/);
+assert.ok(!scale.textContent.includes('Near zero'));
+assert.ok(!rap.colors.includes('#f7f7f7'),'no neutral color band');
 rap.colors.forEach((color,i)=>assert.ok(swatches[i].getAttribute('style').includes(color)));
-console.log('RAP change legend checks passed: source palette, exact boundaries/tails, zero and neutral band.');
+// A previous data generation may remain visible until the next atomic publish.
+const legacy=document.createElement('div');legacy.innerHTML=display.GDIDisplay.scale([...rap.colors.slice(0,5),'#f7f7f7',...rap.colors.slice(5)],[-30,-20,-15,-10,-5,-2,2,5,10,15,20],'GDI change (3 h)',{zeroCentered:true});
+assert.match(legacy.querySelector('.gdi-change-ranges').textContent,/Near zero: −2 to < \+2/);
+assert.ok(legacy.querySelector('.gdi-change-neutral-ticks .gdi-change-zero'));
+console.log('RAP change legend checks passed: source palette, zero boundary, five-unit bins, tails and previous-generation compatibility.');
 
 // Exercise the real row and group logic with native checkbox click behavior.
 function sourceFunction(name){const a=source.indexOf('function '+name+'(');assert.ok(a>=0);return source.slice(a,source.indexOf('\n}',a)+2);}
