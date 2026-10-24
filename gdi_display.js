@@ -14,6 +14,8 @@ async function request(url,type){
 }
 async function metadata(url){const u=new URL(url);u.searchParams.set('gdi_refresh',Math.floor(Date.now()/60000));return request(u,'json');}
 const cache=new Map();
+let cacheBytes=0;
+function forget(key){const old=cache.get(key);if(old)cacheBytes-=old.byteLength;cache.delete(key);}
 async function image(m,key,base){
  const a=m.assets[key],url=new URL(a.path,base).href,cacheKey=url+'#'+a.sha256;
  let bytes=cache.get(cacheKey);
@@ -21,10 +23,11 @@ async function image(m,key,base){
   bytes=await request(url,'arrayBuffer');
   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(x=>x.toString(16).padStart(2,'0')).join('');
   if(hash!==a.sha256)throw Error('Image checksum mismatch');
-  cache.set(cacheKey,bytes);if(cache.size>16)cache.delete(cache.keys().next().value);
+  forget(cacheKey);cache.set(cacheKey,bytes);cacheBytes+=bytes.byteLength;
+  while(cache.size&&(cache.size>64||cacheBytes>96*1024*1024))forget(cache.keys().next().value);
  }
  const objectURL=URL.createObjectURL(new Blob([bytes],{type:'image/png'}));
- try{const im=new Image();im.src=objectURL;await im.decode();if(im.width!==m.width||im.height!==m.height)throw Error('Image dimensions');return objectURL;}catch(e){cache.delete(cacheKey);URL.revokeObjectURL(objectURL);throw e;}
+ try{const im=new Image();im.src=objectURL;await im.decode();if(im.width!==m.width||im.height!==m.height)throw Error('Image dimensions');return objectURL;}catch(e){forget(cacheKey);URL.revokeObjectURL(objectURL);throw e;}
 }
 const number=v=>Number.isInteger(Number(v))?String(v):Number(v).toFixed(1);
 function scale(colors,edges,unit){
