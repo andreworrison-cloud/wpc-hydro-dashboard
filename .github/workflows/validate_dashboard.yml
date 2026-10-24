@@ -111,6 +111,13 @@ jobs:
       - name: Check MRMS RALA Python syntax
         run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
 
+      - name: Check stable GDI legend controls
+        env:
+          GDI_TEST_DOM_MODULE: ${{ runner.temp }}/gdi-dom-test/node_modules/jsdom
+        run: |
+          npm install --prefix "$RUNNER_TEMP/gdi-dom-test" --no-audit --no-fund --no-save jsdom@26.1.0
+          node tools/test_gdi_legend.cjs
+
       - name: Check model-data Python syntax
         run: |
           python -m py_compile \
