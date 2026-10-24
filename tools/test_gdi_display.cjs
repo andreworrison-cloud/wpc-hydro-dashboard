@@ -36,14 +36,23 @@ async function scenario(named,forecast=false){
 }
 async function hourlyLoop(){
  const cycle=new Date(Math.floor(Date.now()/3600000)*3600000).toISOString();
+ let windowStart=Date.parse(cycle);
  let generation=cycle.replace(/[-:]/g,'').slice(0,11).replace('T','')+'-cccccccccccc-v1';
- const keys=Array.from({length:7},(_,h)=>'hrrr'+h);
- function metadata(){return {schema:'gdi_named_suite_v1',recipe:'gdi_focused_v3',kind:'forecast',cycle,generation,width:2400,height:1360,crs:'EPSG:3857',bounds:[[24,-125],[50,-66]],resampling:'nearest',overlay_type:'labeled_contours_v1',products:Object.fromEntries(keys.map((k,i)=>[k,{label:'HRRR GDI',valid_time:new Date(Date.parse(cycle)+i*3600000).toISOString(),legend:'Hourly loop',unit:'GDI'}])),assets:Object.fromEntries(keys.flatMap(k=>[k,k+'_numbers']).map(k=>[k,{path:`generations/${generation}/${k}.png`,sha256:'a'.repeat(64)}]))};}
- let m=metadata(),id=0,timers=new Map(),listeners={},handlers={},active=new Set(),calls=0,failKey=null;
+ const groups=Object.fromEntries(['hrrr','rrfs','blend'].map(model=>[model+'0',Array.from({length:7},(_,h)=>model+h)]));
+ const keys=Object.values(groups).flat();
+ function metadata(){
+  const times=Array.from({length:7},(_,h)=>new Date(windowStart+h*3600000).toISOString());
+  return {schema:'gdi_named_suite_v1',recipe:'gdi_focused_v3',kind:'forecast',forecast_sampling:'common_valid_hourly_v1',cycle:new Date(windowStart-3600000).toISOString(),generation,width:2400,height:1360,crs:'EPSG:3857',bounds:[[24,-125],[50,-66]],resampling:'nearest',overlay_type:'labeled_contours_v1',window_start:times[0],window_end:times[6],expires_at:times[6],built_at:new Date(windowStart+600000).toISOString(),sample_times:times,sample_count:7,
+   products:Object.fromEntries(['hrrr','rrfs','blend'].flatMap(model=>times.map((valid_time,h)=>{
+    const lag=model==='rrfs'?3:1;
+    return [model+h,{label:model==='blend'?'HRRR/RRFS GDI Blend':model.toUpperCase()+' GDI',valid_time,cycle:new Date(windowStart-lag*3600000).toISOString(),forecast_hour:h+lag,source_label:model.toUpperCase()+' actual cycle · F'+String(h+lag).padStart(2,'0'),legend:'Hourly loop',unit:'GDI'}];
+   }))),assets:Object.fromEntries(keys.flatMap(k=>[k,k+'_numbers']).map(k=>[k,{path:`generations/${generation}/${k}.png`,sha256:'a'.repeat(64)}]))};
+ }
+ let m=metadata(),id=0,timers=new Map(),listeners={},handlers={},active=new Set(),calls=0,failKey=null,pending=null;
  const map={createPane(){},getPane(){return {style:{}};},hasLayer:g=>active.has(g),on(events,fn){events.split(' ').forEach(e=>handlers[e]=fn);},removeLayer(g){active.delete(g);handlers.layerremove({type:'layerremove',layer:g});},addLayer(g){active.add(g);handlers.layeradd({type:'layeradd',layer:g});}};
- const ctx={Date,console,URL:{revokeObjectURL(){}},setInterval(){},setTimeout:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},clearTimeout:n=>timers.delete(n),document:{hidden:false,addEventListener:(n,f,capture)=>{if(n==='click')assert.equal(capture,true,'playback clicks must be captured before Leaflet stops bubbling');listeners[n]=f;}},L:{layerGroup:()=>({options:{},images:[],clearLayers(){this.images=[];},eachLayer(f){this.images.forEach(f);}}),imageOverlay:(u,b,o)=>({u,opacity:o.opacity,setOpacity(v){this.opacity=v;},addTo(g){g.images.push(this);return this;}})},GDIDisplay:{utc:t=>t,scale:()=>'',controls:()=>'',metadata:async()=>structuredClone(m),image:async(meta,k)=>{calls++;if(k===failKey)throw Error('missing frame');return meta.generation+'/'+k;}}};
+ const ctx={Date,console,URL:{revokeObjectURL(){}},setInterval(){},setTimeout:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},clearTimeout:n=>timers.delete(n),document:{hidden:false,addEventListener:(n,f,capture)=>{if(n==='click')assert.equal(capture,true,'playback clicks must be captured before Leaflet stops bubbling');listeners[n]=f;}},L:{layerGroup:()=>({options:{},images:[],clearLayers(){this.images=[];},eachLayer(f){this.images.forEach(f);}}),imageOverlay:(u,b,o)=>({u,opacity:o.opacity,setOpacity(v){this.opacity=v;},addTo(g){g.images.push(this);return this;}})},GDIDisplay:{utc:t=>t,scale:()=>'',controls:()=>'',metadata:async()=>structuredClone(m),image:async(meta,k)=>{calls++;if(pending)await pending;if(k===failKey)throw Error('missing frame');return meta.generation+'/'+k;}}};
  vm.runInNewContext(fs.readFileSync('gdi_suite_layer.js','utf8'),ctx);
- const suite=ctx.GDINamedSuite.create({map,metadataURL:'https://example.test/hourly.json',keys,paneName:'hourly',requiredRecipe:'gdi_focused_v3',forecastGroups:{hrrr0:keys}});await flush();map.addLayer(suite.layers.hrrr0);await flush();
+ const suite=ctx.GDINamedSuite.create({map,metadataURL:'https://example.test/hourly.json',keys,paneName:'hourly',requiredRecipe:'gdi_focused_v3',forecastGroups:groups});await flush();map.addLayer(suite.layers.hrrr0);await flush();
  assert.equal(calls,14,'preload all seven shading and contour pairs');
  const firstImages=suite.layers.hrrr0.images.slice();assert.equal(firstImages.length,14);
  assert.equal(visibleImages(suite.layers.hrrr0).length,2);
@@ -61,9 +70,36 @@ async function hourlyLoop(){
  listeners.change({target:{dataset:{gdiSpeed:'hourly'},value:'1400'}});listeners.click({target:{dataset:{gdiPlay:'hourly'}}});assert.equal(tick(),1400);
  generation=generation.replace('cccccccccccc','dddddddddddd');m=metadata();failKey='hrrr3';await suite.refresh();
  assert.ok(visibleImages(suite.layers.hrrr0)[0].u.includes('cccccccccccc'),'an incomplete new loop retains its verified prior generation');assert.match(suite.legendHTML(),/retaining/);
- m={...m,kind:'tle',status:'awaiting_hourly_inputs',status_message:'Hourly RRFS GDI inputs unavailable',products:{},assets:{},generation:generation.replace('dddddddddddd','eeeeeeeeeeee'),built_at:cycle,window_start:cycle,window_end:new Date(Date.parse(cycle)+12*3600000).toISOString()};await suite.refresh();
- assert.equal(suite.layers.hrrr0.images.length,0,'hourly-input status removes old shading');assert.equal(timers.size,0);assert.match(suite.legendHTML(),/Hourly RRFS/);
- console.log('Hourly GDI loop tests passed: seven frames, wrap, pause, scrub, speed, generation failure retention, unavailable-input clearing.');
+ failKey=null;await suite.refresh();
+ listeners.change({target:{dataset:{gdiForecast:'hourly'},value:'3'}});await flush();
+ const selectedTime=m.products.hrrr3.valid_time;
+ for(const model of ['rrfs','blend']){
+  const previous=Object.keys(groups).find(k=>map.hasLayer(suite.layers[k]));
+  map.removeLayer(suite.layers[previous]);
+  map.addLayer(suite.layers[model+'0']);await flush();
+  assert.ok(visibleImages(suite.layers[model+'0'])[0].u.endsWith('/'+model+'3'),'changing model preserves the selected valid time');
+  assert.match(suite.legendHTML(),new RegExp(selectedTime.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite.legendHTML(),/Window/);assert.equal(timers.size,0,'paused comparisons stay paused');
+ }
+ windowStart+=3600000;generation=generation.replace('dddddddddddd','eeeeeeeeeeee');m=metadata();await suite.refresh();
+ assert.ok(visibleImages(suite.layers.blend0)[0].u.endsWith('/blend2'),'hourly window rollover preserves an overlapping absolute valid time');
+ assert.equal(m.products.blend2.valid_time,selectedTime);
+ const invalid=structuredClone(m);invalid.products.rrfs2.valid_time=invalid.products.rrfs3.valid_time;
+ assert.throws(()=>ctx.GDINamedSuite.validate(invalid,keys,null),/forecast frame/);
+ const pickedDuringUpdate=m.products.blend4.valid_time;
+ let release;pending=new Promise(resolve=>release=resolve);
+ windowStart+=3600000;generation=generation.replace('eeeeeeeeeeee','f0f0f0f0f0f0');m=metadata();
+ const refreshing=suite.refresh();await flush();
+ listeners.change({target:{dataset:{gdiForecast:'hourly'},value:'4'}});await flush();
+ release();pending=null;await refreshing;await flush();
+ assert.ok(visibleImages(suite.layers.blend0)[0].u.endsWith('/blend3'),'a new time selection during an update takes precedence');
+ assert.equal(m.products.blend3.valid_time,pickedDuringUpdate);
+ listeners.change({target:{dataset:{gdiForecast:'hourly'},value:'0'}});await flush();
+ windowStart+=3600000;generation=generation.replace('f0f0f0f0f0f0','ffffffffffff');m=metadata();await suite.refresh();
+ assert.ok(visibleImages(suite.layers.blend0)[0].u.endsWith('/blend0'),'a selected time outside the new window moves to the nearest available frame');
+ m={...m,kind:'tle',status:'awaiting_hourly_inputs',status_message:'Hourly RRFS GDI inputs unavailable',products:{},assets:{},generation:generation.replace('ffffffffffff','abababababab'),built_at:cycle,window_start:cycle,window_end:new Date(Date.parse(cycle)+12*3600000).toISOString()};await suite.refresh();
+ assert.equal(suite.layers.blend0.images.length,0,'hourly-input status removes old shading');assert.equal(timers.size,0);assert.match(suite.legendHTML(),/Hourly RRFS/);
+ console.log('Hourly GDI loop tests passed: seven frames, playback, failure retention, synchronized model switching, absolute-time rollover, nearest-frame fallback, misalignment rejection and unavailable-input clearing.');
 }
 (async()=>{await scenario(true);await scenario(false);await scenario(true,true);await hourlyLoop();
  const ctx={URL,AbortController,setTimeout,clearTimeout,Date,fetch:async()=>{throw Error('network');}};vm.runInNewContext(fs.readFileSync('gdi_display.js','utf8'),ctx);

@@ -111,6 +111,11 @@ jobs:
       - name: Check MRMS RALA Python syntax
         run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
 
+      - name: Check GDI valid-time alignment and aggregation
+        run: |
+          pip install numpy scipy eccodes
+          python tools/gdi/test_guidance.py
+
       - name: Check stable GDI legend controls
         env:
           GDI_TEST_DOM_MODULE: ${{ runner.temp }}/gdi-dom-test/node_modules/jsdom

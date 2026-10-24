@@ -2,6 +2,7 @@
 (function(root){
 'use strict';
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const commonForecast=m=>m?.kind==='forecast'&&m.forecast_sampling==='common_valid_hourly_v1';
 function validate(m,keys,previous){
  const interpolated=m?.model==='rap'&&m.resampling==='masked_bilinear'&&m.display_rendering==='rap_scalar_bilinear_v1';
  if(m?.schema!=='gdi_named_suite_v1'||m.width!==2400||m.height!==1360||m.crs!=='EPSG:3857'||!(m.resampling==='nearest'||interpolated)||!/^\d{10}-[a-f0-9]{12}-v1$/.test(m.generation)||JSON.stringify(m.bounds)!=='[[24,-125],[50,-66]]'||!Number.isFinite(Date.parse(m.cycle)))throw Error('Invalid GDI suite');
@@ -12,10 +13,21 @@ function validate(m,keys,previous){
   return;
  }
  keys.forEach(k=>{if(!m.products[k]||!Number.isFinite(Date.parse(m.products[k].valid_time)))throw Error('Missing product/time');for(const suffix of ['','_numbers']){const a=m.assets[k+suffix];if(a?.path!==`generations/${m.generation}/${k+suffix}.png`||!/^[a-f0-9]{64}$/.test(a.sha256))throw Error('Invalid image');}});
+ if(commonForecast(m)){
+  const start=Date.parse(m.window_start),end=Date.parse(m.window_end),built=Date.parse(m.built_at);
+  if(!Number.isFinite(start)||Math.floor(built/3600000)*3600000!==start||end-start!==6*3600000||Date.parse(m.expires_at)!==end||m.sample_count!==7||m.sample_times?.length!==7)throw Error('Invalid common forecast window');
+  for(let h=0;h<7;h++){
+   const valid=start+h*3600000;if(Date.parse(m.sample_times[h])!==valid)throw Error('Misaligned forecast samples');
+   for(const model of ['hrrr','rrfs','blend']){
+    const p=m.products[model+h];if(!p||Date.parse(p.valid_time)!==valid)throw Error('Misaligned forecast frame');
+    if(model!=='blend'&&(!Number.isInteger(p.forecast_hour)||Date.parse(p.cycle)+p.forecast_hour*3600000!==valid))throw Error('Invalid forecast cycle/lead');
+   }
+  }
+ }
 }
 function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=null,onChange=()=>{}}){
  const ui=root.GDIDisplay;
- let metadata=null,shown=null,buffer=null,failed=false,numbers=true,serial=0,contourFailed=false,loading=false,lastCheck=0,refreshing=null,forecastIndex=0,playing=true,speed=800,timer=null,switching=false;
+ let metadata=null,shown=null,buffer=null,failed=false,numbers=true,serial=0,contourFailed=false,loading=false,lastCheck=0,refreshing=null,forecastIndex=0,forecastValidTime=null,playing=true,speed=800,timer=null,switching=false;
  const layers={};
  map.createPane(paneName);map.getPane(paneName).style.zIndex=340;map.getPane(paneName).style.pointerEvents='none';
  keys.forEach(k=>{const g=L.layerGroup();g.options.opacity=.8;g.setOpacity=v=>{g.options.opacity=v;if(buffer?.base===k)buffer.frames.forEach((f,i)=>f.overlays.forEach(o=>o.setOpacity(!buffer.loop||i===forecastIndex?v:0)));else g.eachLayer(x=>x.setOpacity(v));};layers[k]=g;});
@@ -33,6 +45,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   const base=selected();if(base!==buffer.base)return;
   forecastIndex=Math.min(forecastIndex,buffer.frames.length-1);
   const f=buffer.frames[buffer.loop?forecastIndex:0];
+  if(buffer.loop&&commonForecast(buffer.m))forecastValidTime=buffer.m.products[f.key].valid_time;
   // Keep decoded overlays mounted: playback changes visibility, not image URLs.
   buffer.frames.forEach((frame,index)=>frame.overlays.forEach(o=>o.setOpacity(!buffer.loop||index===forecastIndex?layers[base].options.opacity:0)));
   shown={m:buffer.m,k:f.key,base};onChange();schedule();
@@ -55,6 +68,10 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   if(result.some(f=>!f.baseOK)){release(fresh);failed=true;onChange();schedule();return;}
   if(expired(m)){release(fresh);clear();onChange();return;}
   contourFailed=result.some(f=>!f.contourOK);
+  if(group&&commonForecast(m)&&forecastValidTime&&(buffer?.m.generation!==m.generation||buffer?.base!==base)){
+   const time=Date.parse(forecastValidTime),i=group.findIndex(k=>Date.parse(m.products[k].valid_time)===time);
+   forecastIndex=i>=0?i:time<Date.parse(m.products[group[0]].valid_time)?0:group.length-1;
+  }
   keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=fresh;
   buffer.frames.forEach(f=>{f.overlays=f.urls.map(u=>L.imageOverlay(u,m.bounds,{pane:paneName,opacity:0,interactive:false}).addTo(layers[base]));});
   failed=false;showFrame();
@@ -76,7 +93,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
  });
  document.addEventListener('change',e=>{
   if(e.target?.dataset?.gdiSuite===paneName){numbers=e.target.checked;draw();}
-  else if(e.target?.dataset?.gdiForecast===paneName){const i=Number(e.target.value),group=forecastGroups[selected()];if(Number.isInteger(i)&&i>=0&&i<(group?.length||0)){playing=false;forecastIndex=i;draw();}}
+  else if(e.target?.dataset?.gdiForecast===paneName){const i=Number(e.target.value),group=forecastGroups[selected()];if(Number.isInteger(i)&&i>=0&&i<(group?.length||0)){playing=false;forecastIndex=i;const displayed=buffer?.m||metadata;if(commonForecast(displayed))forecastValidTime=displayed.products[group[i]].valid_time;draw();}}
   else if(e.target?.dataset?.gdiSpeed===paneName){const value=Number(e.target.value);if([400,800,1400].includes(value)){speed=value;schedule();}}
  });
  // Leaflet stops bubbling clicks inside controls. Capture these first.
@@ -97,6 +114,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   let html=open+'<strong>'+esc(p.label)+'</strong>';
   html+='<div class="gdi-time">'+(p.window_start?'Period '+ui.utc(p.window_start)+' – '+ui.utc(p.valid_time):'Valid '+ui.utc(p.valid_time))+'</div>';
   html+='<div class="gdi-note">'+(p.source_label?esc(p.source_label):esc((m.model||'Model').toUpperCase())+' cycle '+ui.utc(p.cycle||m.cycle))+'</div>';
+  if(group&&commonForecast(m))html+='<div class="gdi-note">Window '+ui.utc(m.window_start)+' – '+ui.utc(m.window_end)+'</div>';
   if(loading)html+='<div class="gdi-status">Loading update · displayed times shown above</div>';
   else if(failed)html+='<div class="gdi-status">Update unavailable · retaining displayed data; retrying</div>';
   if(contourFailed)html+='<div class="gdi-status">Some contours unavailable · shading loaded; retrying</div>';

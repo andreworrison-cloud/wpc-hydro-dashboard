@@ -19,7 +19,7 @@ def verify(target):
   previous_restore=sys.argv[1:2]==['restore'] and m.get('recipe')=='gdi_focused_v2' and m.get('kind')==SUITE
   if not previous_restore:
    if m.get('status')=='awaiting_hourly_inputs':verify_unavailable(m)
-   else:verify_spec(m,SUITE)
+   else:verify_spec(m,SUITE,allow_legacy_forecast=sys.argv[1:2]==['restore'])
  if SUITE in ('guidance','ero'):
   keys={'maximum','support30','support40','support50','persistence30','persistence40','persistence50'}
   if SUITE=='guidance':keys|={f'{model}{h}' for model in ('rrfs','blend') for h in (0,3,6)}
