@@ -987,6 +987,9 @@ let iemRadarRequestedFPS = IEM_RADAR_DEFAULT_FPS;
 let mrmsRalaFrameStepMs = MRMS_RALA_DEFAULT_FRAME_STEP_MS;
 let mrmsRalaAnimationTimer = null;
 let mrmsRalaAnimationPlaying = false;
+let mrmsRalaAnimationGeneration = 0;
+let mrmsRalaTickInFlight = false;
+let mrmsRalaWarmSerial = 0;
 let mrmsRalaSpeedControl = null;
 let mrmsRalaSpeedSlider = null;
 let mrmsRalaSpeedValue = null;
@@ -1069,6 +1072,7 @@ function syncMRMSRALAWindowControl() {
 
 function stopMRMSRALAAnimation() {
     mrmsRalaAnimationPlaying = false;
+    ++mrmsRalaAnimationGeneration;
     if (mrmsRalaAnimationTimer) {
         window.clearTimeout(mrmsRalaAnimationTimer);
         mrmsRalaAnimationTimer = null;
@@ -1107,14 +1111,28 @@ async function advanceMRMSRALAOneFrame() {
     return true;
 }
 
-async function runMRMSRALAAnimationTick() {
-    if (!mrmsRalaAnimationPlaying) return;
-    const started = performance.now();
-    await advanceMRMSRALAOneFrame();
-    if (!mrmsRalaAnimationPlaying) return;
-    const elapsed = performance.now() - started;
-    const remaining = Math.max(0, mrmsRalaFrameStepMs - elapsed);
-    mrmsRalaAnimationTimer = window.setTimeout(runMRMSRALAAnimationTick, remaining);
+function scheduleMRMSRALAAnimationTick(generation = mrmsRalaAnimationGeneration) {
+    if (!mrmsRalaAnimationPlaying || generation !== mrmsRalaAnimationGeneration) return;
+    if (mrmsRalaAnimationTimer) window.clearTimeout(mrmsRalaAnimationTimer);
+    mrmsRalaAnimationTimer = window.setTimeout(() => runMRMSRALAAnimationTick(generation), mrmsRalaFrameStepMs);
+}
+
+async function runMRMSRALAAnimationTick(generation = mrmsRalaAnimationGeneration) {
+    if (!mrmsRalaAnimationPlaying || generation !== mrmsRalaAnimationGeneration) return;
+    mrmsRalaAnimationTimer = null;
+    if (mrmsRalaTickInFlight) {
+        scheduleMRMSRALAAnimationTick(generation);
+        return;
+    }
+    mrmsRalaTickInFlight = true;
+    try {
+        await advanceMRMSRALAOneFrame();
+    } finally {
+        mrmsRalaTickInFlight = false;
+        // Give the displayed frame its full selected interval. Slow image
+        // loads never cause catch-up bursts or additional concurrent players.
+        scheduleMRMSRALAAnimationTick(generation);
+    }
 }
 
 function startMRMSRALAAnimation() {
@@ -1122,7 +1140,8 @@ function startMRMSRALAAnimation() {
     const player = dashboardTimeControl?._player;
     if (player?.isPlaying()) player.stop();
     mrmsRalaAnimationPlaying = true;
-    mrmsRalaAnimationTimer = window.setTimeout(runMRMSRALAAnimationTick, mrmsRalaFrameStepMs);
+    ++mrmsRalaAnimationGeneration;
+    scheduleMRMSRALAAnimationTick();
     syncMRMSRALAPlayButton();
 }
 
@@ -1139,8 +1158,7 @@ function setMRMSRALAFrameStep(milliseconds) {
 
     // Apply a changed viewer speed promptly without altering the frame sequence.
     if (mrmsRalaAnimationPlaying) {
-        if (mrmsRalaAnimationTimer) window.clearTimeout(mrmsRalaAnimationTimer);
-        mrmsRalaAnimationTimer = window.setTimeout(runMRMSRALAAnimationTick, mrmsRalaFrameStepMs);
+        scheduleMRMSRALAAnimationTick();
     }
     return true;
 }
@@ -4560,11 +4578,24 @@ function loadMRMSRALAFrameIntoLayer(layer, frame) {
             if (settled) return;
             settled = true;
             cleanup();
+            const state = mrmsRalaLayerLoadState.get(layer);
+            if (state?.token === token) {
+                state.promise = null;
+                state.cancel = null;
+            }
             reject(error);
         };
-        const onLoad = () => {
+        const onLoad = async () => {
             const state = mrmsRalaLayerLoadState.get(layer);
             if (state?.token !== token || settled) return;
+            try {
+                const image = layer.getElement?.();
+                if (typeof image?.decode === 'function') await image.decode();
+            } catch (error) {
+                finishReject(error);
+                return;
+            }
+            if (mrmsRalaLayerLoadState.get(layer)?.token !== token || settled) return;
             settled = true;
             cleanup();
             state.loaded = true;
@@ -4645,6 +4676,7 @@ async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
         primeNextMRMSRALABuffer(frame);
         return true;
     } catch (error) {
+        if (requestSerial !== mrmsRalaFrameRequestSerial || !map.hasLayer(mrmsRalaLayer)) return false;
         console.warn('MRMS RALA loop frame load failed:', error);
         return false;
     }
@@ -4655,10 +4687,13 @@ function warmMRMSRALALoopCache() {
     // modest so background prefetching does not compete with the next-frame
     // display buffer or make the initial dashboard render sluggish.
     const frames = [...mrmsRalaActiveFrames()];
+    const serial = ++mrmsRalaWarmSerial;
+    const mode = mrmsRalaDisplayMode;
     const workers = Math.min(3, frames.length);
     let nextIndex = 0;
     const worker = async () => {
         while (nextIndex < frames.length) {
+            if (serial !== mrmsRalaWarmSerial || mode !== mrmsRalaDisplayMode || !map.hasLayer(mrmsRalaLayer)) return;
             const frame = frames[nextIndex++];
             try {
                 await preloadMRMSRALAFrame(frame);
@@ -4691,6 +4726,9 @@ function activateMRMSRALATimeline({jumpToLatest = true, applyDefaultSpeed = fals
     if (jumpToLatest) map.timeDimension.setCurrentTime(times[times.length - 1]);
     else showMRMSRALAFrame(map.timeDimension.getCurrentTime());
 
+    // Warm the selected product on every layer/window switch, not only when
+    // a new manifest arrives. Type images have their own URLs and cache.
+    if (mrmsRalaDisplayMode !== 'ptype' || WinterPrecipDisplay.available(mrmsRalaMetadata)) warmMRMSRALALoopCache();
     if (autoPlay) startMRMSRALAAnimation();
     return true;
 }
@@ -4853,7 +4891,6 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
                     activateMRMSRALATimeline({jumpToLatest: true});
                     await showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
                 }
-                warmMRMSRALALoopCache();
             }
             if (typeof updateLegends === 'function') updateLegends();
             return true;

@@ -61,6 +61,16 @@ history-free `mrms-rala-data` publication architecture.
 
 ## Verification
 
+Playback preloads the selected product/window on every activation, cancels
+obsolete product warmers, and waits for image decoding before buffer swaps.
+A single timer generation owns playback; speed changes and pause/restart cannot
+start overlapping frame advances. Each displayed frame receives the full selected
+hold interval, so a slow download does not cause a catch-up burst. Network and
+decoding delays can still lengthen an interval before the cache is warm.
+
+`node tools/test_radar_playback.cjs` checks asynchronous speed changes, restart
+generations, slow-load frame holds and product-specific cache warming.
+
 Run `python tools/test_winter_precip.py`,
 `node tools/test_winter_precip_display.cjs`, the existing RALA selection self-test
 and `python tools/validate_dashboard.py`. A live GRIB2 smoke build should additionally
