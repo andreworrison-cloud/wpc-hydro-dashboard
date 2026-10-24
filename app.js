@@ -7364,18 +7364,52 @@ function glmLegendHTMLForConfig(config) {
 // Global tracker for currently active layers
 let activeLayerNames = new Set();
 
+// Preserve GDI form controls while radar and forecast frames refresh the legend.
+function patchGDILegendNode(current, fresh) {
+    if (current.nodeType !== fresh.nodeType || current.nodeName !== fresh.nodeName) {
+        current.replaceWith(fresh);
+        return;
+    }
+    if (current.nodeType === 3) {
+        if (current.nodeValue !== fresh.nodeValue) current.nodeValue = fresh.nodeValue;
+        return;
+    }
+    if (current.nodeType !== 1) return;
+    const freshValue = fresh.tagName === 'SELECT' ? fresh.value : null;
+    const freshChecked = fresh.tagName === 'INPUT' ? fresh.checked : null;
+    Array.from(current.attributes).forEach(attribute => {
+        if (!fresh.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+    });
+    Array.from(fresh.attributes).forEach(attribute => {
+        if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+    });
+    const oldChildren = Array.from(current.childNodes);
+    const newChildren = Array.from(fresh.childNodes);
+    newChildren.forEach((node, index) => {
+        if (oldChildren[index]) patchGDILegendNode(oldChildren[index], node);
+        else current.appendChild(node);
+    });
+    oldChildren.slice(newChildren.length).forEach(node => node.remove());
+    if (current.tagName === 'INPUT') current.checked = freshChecked;
+    if (current.tagName === 'SELECT' && current.value !== freshValue) current.value = freshValue;
+}
+
 function updateLegends() {
     const legendContainer = document.getElementById('legend-container');
     if (!legendContainer) return;
 
-    legendContainer.innerHTML = '';
+    const previousGDI = new Map(Array.from(legendContainer.children).map(block => [block.querySelector('[data-gdi-pane]')?.dataset.gdiPane, block]));
+    const nextBlocks = [];
     let hasLegend = false;
 
     const addLegendBlock = (htmlContent) => {
-        const div = document.createElement('div');
-        div.className = 'legend-block';
-        div.innerHTML = htmlContent;
-        legendContainer.appendChild(div);
+        const fresh = document.createElement('div');
+        fresh.className = 'legend-block';
+        fresh.innerHTML = htmlContent;
+        const key = fresh.querySelector('[data-gdi-pane]')?.dataset.gdiPane;
+        const div = key && previousGDI.get(key) || fresh;
+        if (div !== fresh) patchGDILegendNode(div, fresh);
+        nextBlocks.push(div);
         hasLegend = true;
     };
 
@@ -7452,6 +7486,12 @@ function updateLegends() {
         `);
     }
 
+    nextBlocks.forEach((block, index) => {
+        if (legendContainer.children[index] !== block) legendContainer.insertBefore(block, legendContainer.children[index] || null);
+    });
+    Array.from(legendContainer.children).forEach(block => {
+        if (!nextBlocks.includes(block)) block.remove();
+    });
     legendContainer.style.display = hasLegend ? 'block' : 'none';
     refreshLegendDockSummary();
 }

@@ -18,7 +18,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
  let metadata=null,shown=null,buffer=null,failed=false,numbers=true,serial=0,contourFailed=false,loading=false,lastCheck=0,refreshing=null,forecastIndex=0,playing=true,speed=800,timer=null,switching=false;
  const layers={};
  map.createPane(paneName);map.getPane(paneName).style.zIndex=340;map.getPane(paneName).style.pointerEvents='none';
- keys.forEach(k=>{const g=L.layerGroup();g.options.opacity=.8;g.setOpacity=v=>{g.options.opacity=v;g.eachLayer(x=>x.setOpacity(v));};layers[k]=g;});
+ keys.forEach(k=>{const g=L.layerGroup();g.options.opacity=.8;g.setOpacity=v=>{g.options.opacity=v;if(buffer?.base===k)buffer.frames.forEach((f,i)=>f.overlays.forEach(o=>o.setOpacity(!buffer.loop||i===forecastIndex?v:0)));else g.eachLayer(x=>x.setOpacity(v));};layers[k]=g;});
  const selected=()=>keys.find(k=>map.hasLayer(layers[k]));
  const expired=m=>m?.expires_at&&Date.now()>=Date.parse(m.expires_at);
  const release=b=>{if(b)b.frames.forEach(f=>f.urls.forEach(URL.revokeObjectURL));};
@@ -33,8 +33,8 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   const base=selected();if(base!==buffer.base)return;
   forecastIndex=Math.min(forecastIndex,buffer.frames.length-1);
   const f=buffer.frames[buffer.loop?forecastIndex:0];
-  keys.forEach(k=>layers[k].clearLayers());
-  f.urls.forEach(u=>L.imageOverlay(u,buffer.m.bounds,{pane:paneName,opacity:layers[base].options.opacity,interactive:false}).addTo(layers[base]));
+  // Keep decoded overlays mounted: playback changes visibility, not image URLs.
+  buffer.frames.forEach((frame,index)=>frame.overlays.forEach(o=>o.setOpacity(!buffer.loop||index===forecastIndex?layers[base].options.opacity:0)));
   shown={m:buffer.m,k:f.key,base};onChange();schedule();
  }
  async function draw(){
@@ -55,7 +55,9 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   if(result.some(f=>!f.baseOK)){release(fresh);failed=true;onChange();schedule();return;}
   if(expired(m)){release(fresh);clear();onChange();return;}
   contourFailed=result.some(f=>!f.contourOK);
-  keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=fresh;failed=false;showFrame();
+  keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=fresh;
+  buffer.frames.forEach(f=>{f.overlays=f.urls.map(u=>L.imageOverlay(u,m.bounds,{pane:paneName,opacity:0,interactive:false}).addTo(layers[base]));});
+  failed=false;showFrame();
  }
  function refresh(){
   if(refreshing)return refreshing;
@@ -83,14 +85,16 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   if(t?.dataset?.gdiPlay===paneName){playing=!playing;onChange();schedule();}
   else if(t?.dataset?.gdiStep===paneName&&buffer?.loop){playing=false;forecastIndex=(forecastIndex+Number(t.dataset.direction)+buffer.frames.length)%buffer.frames.length;showFrame();}
  },true);
+ document.addEventListener('focusin',e=>{if(e.target?.dataset?.gdiForecast===paneName){playing=false;stop();onChange();}});
  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();else if(selected()){refresh();schedule();}});
  function legendHTML(){
   const base=selected();if(!base)return '';
-  if(metadata?.status==='awaiting_hourly_inputs')return '<div class="gdi-legend"><strong>HRRR/RRFS TLE</strong><div class="gdi-status">'+esc(metadata.status_message)+'</div><div class="gdi-note">'+(expired(metadata)?'Awaiting the current F00–F12 window. ':'Requested period '+ui.utc(metadata.window_start)+' – '+ui.utc(metadata.window_end)+'. ')+'Last source check '+ui.utc(metadata.built_at)+'.</div></div>';
+  const open='<div class="gdi-legend" data-gdi-pane="'+esc(paneName)+'">';
+  if(metadata?.status==='awaiting_hourly_inputs')return open+'<strong>HRRR/RRFS TLE</strong><div class="gdi-status">'+esc(metadata.status_message)+'</div><div class="gdi-note">'+(expired(metadata)?'Awaiting the current F00–F12 window. ':'Requested period '+ui.utc(metadata.window_start)+' – '+ui.utc(metadata.window_end)+'. ')+'Last source check '+ui.utc(metadata.built_at)+'.</div></div>';
   const group=forecastGroups[base],k=group?.[forecastIndex]||base;
   const d=shown?.base===base?shown:null,m=d?.m,p=m?.products[d?.k];
-  if(!d)return '<div class="gdi-legend"><strong>'+esc(metadata?.products[k]?.label||'GDI')+'</strong><div class="gdi-status">'+(expired(metadata)?'Forecast window ended · awaiting current guidance':failed?'Data unavailable · retrying automatically':group?'Loading hourly forecast loop…':'Loading selected field…')+'</div></div>';
-  let html='<div class="gdi-legend"><strong>'+esc(p.label)+'</strong>';
+  if(!d)return open+'<strong>'+esc(metadata?.products[k]?.label||'GDI')+'</strong><div class="gdi-status">'+(expired(metadata)?'Forecast window ended · awaiting current guidance':failed?'Data unavailable · retrying automatically':group?'Loading hourly forecast loop…':'Loading selected field…')+'</div></div>';
+  let html=open+'<strong>'+esc(p.label)+'</strong>';
   html+='<div class="gdi-time">'+(p.window_start?'Period '+ui.utc(p.window_start)+' – '+ui.utc(p.valid_time):'Valid '+ui.utc(p.valid_time))+'</div>';
   html+='<div class="gdi-note">'+(p.source_label?esc(p.source_label):esc((m.model||'Model').toUpperCase())+' cycle '+ui.utc(p.cycle||m.cycle))+'</div>';
   if(loading)html+='<div class="gdi-status">Loading update · displayed times shown above</div>';
