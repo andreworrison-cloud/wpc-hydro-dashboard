@@ -77,11 +77,12 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   else if(e.target?.dataset?.gdiForecast===paneName){const i=Number(e.target.value),group=forecastGroups[selected()];if(Number.isInteger(i)&&i>=0&&i<(group?.length||0)){playing=false;forecastIndex=i;draw();}}
   else if(e.target?.dataset?.gdiSpeed===paneName){const value=Number(e.target.value);if([400,800,1400].includes(value)){speed=value;schedule();}}
  });
+ // Leaflet stops bubbling clicks inside controls. Capture these first.
  document.addEventListener('click',e=>{
   const t=e.target?.closest?.('[data-gdi-play],[data-gdi-step]')||e.target;
   if(t?.dataset?.gdiPlay===paneName){playing=!playing;onChange();schedule();}
   else if(t?.dataset?.gdiStep===paneName&&buffer?.loop){playing=false;forecastIndex=(forecastIndex+Number(t.dataset.direction)+buffer.frames.length)%buffer.frames.length;showFrame();}
- });
+ },true);
  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();else if(selected()){refresh();schedule();}});
  function legendHTML(){
   const base=selected();if(!base)return '';
