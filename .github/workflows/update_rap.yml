@@ -12,6 +12,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  surface-analysis:
+    # Shares the existing hourly cron-job.org dispatch; independent of RAP failures.
+    uses: ./.github/workflows/update_surface_analysis.yml
+    permissions:
+      contents: write
+
   rap-gdi:
     # Receives the existing cron-job.org RAP trigger; runs independently.
     uses: ./.github/workflows/publish_rap_gdi.yml

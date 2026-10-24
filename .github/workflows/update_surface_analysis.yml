@@ -1,0 +1,56 @@
+name: Update Surface Analysis and Observations
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - 'surface_analysis.py'
+      - 'fetch_surface_analysis.py'
+      - '.github/workflows/update_surface_analysis.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surface-analysis-production
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install surface decoding dependencies
+        run: pip install numpy requests pillow pyproj rasterio eccodes
+      - name: Restore previous validated surface package
+        run: |
+          if git ls-remote --exit-code --heads origin surface-data >/dev/null; then
+            python tools/publish_pages_snapshot.py restore \
+              --branch surface-data --path surface_publish
+          else
+            echo 'First surface publication; building a fresh validated package.'
+          fi
+      - name: Check science and source handling
+        run: python tools/test_surface_analysis.py
+      - name: Build hourly analyses and latest METAR values
+        run: python -u fetch_surface_analysis.py --output surface_publish
+      - name: Verify complete surface assets
+        run: python fetch_surface_analysis.py --validate-only --output surface_publish
+      - name: Publish bounded surface data snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python tools/publish_pages_snapshot.py publish \
+            --branch surface-data --path surface_publish \
+            --message 'Update hourly RTMA surface analysis and METAR observations'

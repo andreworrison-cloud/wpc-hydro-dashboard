@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'surface_layer.js'
+      - 'surface_analysis.py'
+      - 'fetch_surface_analysis.py'
+      - 'tools/test_surface*'
+      - '.github/workflows/update_surface_analysis.yml'
       - 'app.js'
       - 'gdi_layer.js'
       - 'gdi_suite_layer.js'
@@ -45,6 +50,11 @@ on:
       - '.github/workflows/validate_dashboard.yml'
   push:
     paths:
+      - 'surface_layer.js'
+      - 'surface_analysis.py'
+      - 'fetch_surface_analysis.py'
+      - 'tools/test_surface*'
+      - '.github/workflows/update_surface_analysis.yml'
       - 'app.js'
       - 'gdi_layer.js'
       - 'gdi_suite_layer.js'
@@ -109,6 +119,7 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
+          node --check surface_layer.js
           node --check app.js
           node --check gdi_layer.js
           node --check gdi_suite_layer.js
@@ -125,6 +136,8 @@ jobs:
         run: |
           pip install numpy scipy eccodes rasterio pyproj requests pillow
           python tools/gdi/test_guidance.py
+          python tools/test_surface_analysis.py
+          node tools/test_surface_layer.cjs
           python tools/test_winter_precip.py
           python tools/test_winter_precip_sources.py
           node tools/test_winter_precip_display.cjs

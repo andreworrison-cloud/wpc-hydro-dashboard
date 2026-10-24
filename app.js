@@ -902,6 +902,12 @@ const sportChange = window.SPoRTChange.create({map,
 });
 window.sportChange = sportChange;
 
+// Hourly surface analyses and independently timed observed station values.
+const surfaceSuite = window.SurfaceSuite.create({map,
+    metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/surface-data/surface_publish/metadata.json',
+    onChange: () => updateLegends()
+});
+
 // --- AUTO-TOGGLING GEOJSON STATE BORDERS ---
 const whiteBorders = L.geoJSON(null, {
     style: { color: 'rgba(255, 255, 255, 0.8)', weight: 1.5, fillOpacity: 0 },
@@ -918,10 +924,10 @@ fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geo
     .then(data => {
         whiteBorders.addData(data);
         blackBorders.addData(data);
-        rfcFFG.setBorders(data); ffgTendency.setBorders(data); qpeFFG.forEach(x=>x.setBorders(data)); sportSuite?.setBorders(data); sportRSM?.setBorders(data); sportChange?.setBorders(data);
+        rfcFFG.setBorders(data); ffgTendency.setBorders(data); qpeFFG.forEach(x=>x.setBorders(data)); sportSuite?.setBorders(data); sportRSM?.setBorders(data); sportChange?.setBorders(data); surfaceSuite.setBorders(data);
     }).catch(() => fetch('review/vendor/us-states.json')
         .then(response => { if (!response.ok) throw new Error('State reference unavailable'); return response.json(); })
-        .then(data => { whiteBorders.addData(data); blackBorders.addData(data); rfcFFG.setBorders(data); ffgTendency.setBorders(data); qpeFFG.forEach(x=>x.setBorders(data)); sportSuite?.setBorders(data); sportRSM?.setBorders(data); sportChange?.setBorders(data); })
+        .then(data => { whiteBorders.addData(data); blackBorders.addData(data); rfcFFG.setBorders(data); ffgTendency.setBorders(data); qpeFFG.forEach(x=>x.setBorders(data)); sportSuite?.setBorders(data); sportRSM?.setBorders(data); sportChange?.setBorders(data); surfaceSuite.setBorders(data); })
         .catch(error => console.warn('State borders unavailable:', error)));
 
 
@@ -7503,6 +7509,7 @@ function updateLegends() {
     };
 
     qpeFFG.forEach(x=>{const html=x.legendHTML();if(html)addLegendBlock(html);});
+    const surfaceLegend=surfaceSuite.legendHTML();if(surfaceLegend)addLegendBlock(surfaceLegend);
     const tendencyLegend=ffgTendency.legendHTML();if(tendencyLegend)addLegendBlock(tendencyLegend);
     const ffgLegend = rfcFFG.legendHTML();
     if (ffgLegend) addLegendBlock(ffgLegend);
@@ -8055,6 +8062,12 @@ function handleRadarLayerDeactivate(entry) {
     }
 }
 
+function enforceExclusiveSurfaceSelection(activeEntry) {
+    getAllDashboardLayerEntries().forEach(entry => {
+        if (entry !== activeEntry && entry.exclusiveGroup === 'surface-analysis') setDashboardLayerActive(entry, false);
+    });
+}
+
 const dashboardSections = [
     {
         id: 'hazards',
@@ -8092,6 +8105,16 @@ const dashboardSections = [
             {id: 'glm-mosaic-60min', label: GLM_MOSAIC_60MIN_LAYER_NAME, layer: glmMosaic60minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
             {id: 'glm-convective-trend-15min', label: GLM_TREND_MAP_15MIN_LAYER_NAME, layer: glmTrendMap15minLayer, kind: 'raster', exclusiveGroup: 'glm-primary', onActivate: enforceExclusiveGLMSelection},
             {id: 'lightningcast-probability-60min', label: LIGHTNINGCAST_LAYER_NAME, layer: lightningCastLayer, kind: 'raster', keywords: 'lightning forecast probability CIMSS SSEC next 60 minutes'}
+        ]
+    },
+    {
+        id: 'surface-observations',
+        title: 'Surface Observations & Analysis',
+        layers: [
+            {id: 'surface-temperature', label: 'RTMA 2-m Temperature', layer: surfaceSuite.layers.temperature, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface temperature hourly analysis observations 2.5 km Fahrenheit'},
+            {id: 'surface-dewpoint', label: 'RTMA 2-m Dewpoint', layer: surfaceSuite.layers.dewpoint, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface moisture dewpoint hourly analysis observations 2.5 km Fahrenheit'},
+            {id: 'surface-wind-speed', label: 'RTMA 10-m Wind Speed', layer: surfaceSuite.layers.wind_speed, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface wind speed hourly analysis observations 2.5 km knots'},
+            {id: 'surface-stations', label: 'METAR Station Values (Zoom In)', layer: surfaceSuite.stations, kind: 'vector', keywords: 'surface observations METAR ASOS AWOS station data points temperature dewpoint wind speed'}
         ]
     },
     {
