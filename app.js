@@ -991,7 +991,6 @@ let mrmsRalaSpeedControl = null;
 let mrmsRalaSpeedSlider = null;
 let mrmsRalaSpeedValue = null;
 let mrmsRalaWindowSelect = null;
-let mrmsRalaModeSelect = null;
 let mrmsRalaDisplayMode = 'reflectivity';
 let mrmsRalaCurrentImageUrl = '';
 let mrmsRalaWindowMinutes = MRMS_RALA_DEFAULT_WINDOW_MINUTES;
@@ -1348,6 +1347,7 @@ const radarTimeLayer = L.timeDimension.layer.wms(radarWMS, { updateTimeDimension
 
 // --- DIRECT NOAA MRMS RALA — OPERATIONAL 10-MINUTE / 2–6 HOUR LOOP ---
 const MRMS_RALA_LAYER_NAME = 'MRMS RALA — Direct NOAA (10-Min Loop)';
+const MRMS_WINTER_LAYER_NAME = 'MRMS RALA — Precipitation Type & Intensity';
 const MRMS_RALA_DATA_ROOT = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/mrms-rala-data';
 const MRMS_RALA_MANIFEST_URL = `${MRMS_RALA_DATA_ROOT}/mrms_rala_loop_manifest.json`;
 const MRMS_RALA_MANIFEST_POLL_INTERVAL_MS = 60 * 1000;
@@ -1427,7 +1427,7 @@ function syncMRMSRALAOpacityWidgets(opacity) {
     if (inlineSlider && inlineSlider.value !== percent) inlineSlider.value = percent;
     if (inlineValue) inlineValue.textContent = `${percent}%`;
 
-    if (selectedDashboardLayerId === 'mrms-rala-direct') {
+    if (['mrms-rala-direct','mrms-winter-type'].includes(selectedDashboardLayerId)) {
         const genericSlider = document.getElementById('layer-opacity');
         const genericValue = document.getElementById('opacity-value');
         if (genericSlider) genericSlider.value = percent;
@@ -1447,7 +1447,7 @@ const mrmsRalaOpacityTarget = {
         } catch (error) {
             console.debug('Unable to persist MRMS RALA opacity preference:', error);
         }
-        const visibleOpacity = map.hasLayer(mrmsRalaLayer) && mrmsRalaReady && mrmsRalaFresh ? opacity : 0;
+        const visibleOpacity = map.hasLayer(mrmsRalaLayer) && mrmsRalaReady && mrmsRalaFresh && (mrmsRalaDisplayMode !== 'ptype' || WinterPrecipDisplay.available(mrmsRalaMetadata)) ? opacity : 0;
         mrmsRalaVisibleLayer.setOpacity(visibleOpacity);
         mrmsRalaHiddenLayer.setOpacity(0);
         syncMRMSRALAOpacityWidgets(opacity);
@@ -1455,9 +1455,33 @@ const mrmsRalaOpacityTarget = {
     }
 };
 
-// MRMS RALA is the primary baseline radar. It remains transparent until the
-// rolling NOAA manifest and latest frame pass freshness/validation checks.
-mrmsRalaLayer.addTo(map);
+// Distinct menu groups share the same radar playback engine. The engine
+// itself is not a registered checkbox, so type and reflectivity cannot both
+// appear selected merely because they share image buffers.
+function createMRMSRadarMenuLayer(mode) {
+    const group = L.layerGroup();
+    group.on('add', () => {
+        ++mrmsRalaFrameRequestSerial;
+        mrmsRalaDisplayMode = mode;
+        mrmsRalaCurrentImageUrl = '';
+        mrmsRalaVisibleLayer.setOpacity(0);
+        mrmsRalaHiddenLayer.setOpacity(0);
+        if (!map.hasLayer(mrmsRalaLayer)) mrmsRalaLayer.addTo(map);
+    });
+    group.on('remove', () => {
+        if (!map.hasLayer(mrmsReflectivityMenuLayer) && !map.hasLayer(mrmsWinterMenuLayer)) {
+            ++mrmsRalaFrameRequestSerial;
+            stopMRMSRALAAnimation();
+            mrmsRalaVisibleLayer.setOpacity(0);
+            mrmsRalaHiddenLayer.setOpacity(0);
+            if (map.hasLayer(mrmsRalaLayer)) map.removeLayer(mrmsRalaLayer);
+        }
+    });
+    return group;
+}
+const mrmsReflectivityMenuLayer = createMRMSRadarMenuLayer('reflectivity');
+const mrmsWinterMenuLayer = createMRMSRadarMenuLayer('ptype');
+mrmsReflectivityMenuLayer.addTo(map);
 
 // --- MRMS & SATELLITE QPE LAYERS ---
 const mrmsOptions = { format: 'image/png', transparent: true, opacity: 0.65, attribution: "Data © IEM / NCEP" };
@@ -4448,61 +4472,15 @@ function validateMRMSRALAManifest(manifest) {
 
 function mrmsRalaFrameUrl(frame) {
     const path = WinterPrecipDisplay.path(frame, mrmsRalaDisplayMode);
-    return `${MRMS_RALA_DATA_ROOT}/${path}?v=${encodeURIComponent(frame.valid_time_utc)}&mode=${mrmsRalaDisplayMode}`;
+    return `${MRMS_RALA_DATA_ROOT}/${path}?v=${encodeURIComponent(frame.valid_time_utc)}&mode=${mrmsRalaDisplayMode}${mrmsRalaDisplayMode === 'ptype' ? '&image='+encodeURIComponent(frame.ptype?.image_sha256 || '') : ''}`;
 }
 
 function syncMRMSRALADisplayMode() {
-    const available = WinterPrecipDisplay.available(mrmsRalaMetadata);
-    if (!available && mrmsRalaDisplayMode === 'ptype') {
-        mrmsRalaDisplayMode = 'reflectivity';
+    if (mrmsRalaDisplayMode === 'ptype' && !WinterPrecipDisplay.available(mrmsRalaMetadata)) {
         ++mrmsRalaFrameRequestSerial;
         mrmsRalaCurrentImageUrl = '';
-        // Hide the previous type image until reflectivity has finished loading.
         mrmsRalaVisibleLayer.setOpacity(0);
-    }
-    if (mrmsRalaModeSelect) {
-        mrmsRalaModeSelect.querySelector('option[value="ptype"]').disabled = !available;
-        mrmsRalaModeSelect.value = mrmsRalaDisplayMode;
-    }
-}
-
-function createMRMSRALADisplayModeControl(parent) {
-    if (mrmsRalaModeSelect) return;
-    const control = document.createElement('div');
-    control.style.cssText = 'margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.18);';
-    const label = document.createElement('label');
-    label.textContent = 'Radar display';
-    label.htmlFor = 'mrms-rala-display-mode';
-    label.style.cssText = 'display:block;font-size:0.82em;margin-bottom:4px;';
-    const select = document.createElement('select');
-    select.id = 'mrms-rala-display-mode';
-    select.setAttribute('aria-label', 'Radar display');
-    select.title = 'Reflectivity or experimental MRMS + HRRR precipitation type';
-    select.style.cssText = 'width:100%;font-size:12px;padding:4px;';
-    select.innerHTML = '<option value="reflectivity">Reflectivity</option><option value="ptype" disabled>Rain / Mix / Snow / Ice</option>';
-    select.addEventListener('change', event => setMRMSRALADisplayMode(event.target.value));
-    control.append(label, select);
-    parent.appendChild(control);
-    mrmsRalaModeSelect = select;
-    syncMRMSRALADisplayMode();
-}
-
-async function setMRMSRALADisplayMode(mode) {
-    if (!['reflectivity', 'ptype'].includes(mode)) return;
-    if (mode === 'ptype' && !WinterPrecipDisplay.available(mrmsRalaMetadata)) return;
-    const wasPlaying = mrmsRalaAnimationPlaying;
-    stopMRMSRALAAnimation();
-    ++mrmsRalaFrameRequestSerial;
-    mrmsRalaDisplayMode = mode;
-    mrmsRalaCurrentImageUrl = '';
-    mrmsRalaVisibleLayer.setOpacity(0);
-    mrmsRalaHiddenLayer.setOpacity(0);
-    syncMRMSRALADisplayMode();
-    updateMRMSRALATimeBox();
-    updateLegends();
-    if (map.hasLayer(mrmsRalaLayer)) {
-        const shown = await showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
-        if (shown && wasPlaying) startMRMSRALAAnimation();
+        mrmsRalaHiddenLayer.setOpacity(0);
     }
 }
 
@@ -4632,7 +4610,7 @@ function primeNextMRMSRALABuffer(frame) {
 }
 
 async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
-    if (!mrmsRalaReady || !mrmsRalaFresh) return false;
+    if (!mrmsRalaReady || !mrmsRalaFresh || (mrmsRalaDisplayMode === 'ptype' && !WinterPrecipDisplay.available(mrmsRalaMetadata))) return false;
     const frame = nearestMRMSRALAFrame(timeMillis);
     if (!frame) return false;
     const requestedUrl = mrmsRalaFrameUrl(frame);
@@ -4722,7 +4700,7 @@ function applyMRMSRALAFreshnessState() {
     mrmsRalaFresh = Boolean(
         mrmsRalaReady && Number.isFinite(age) && age <= MRMS_RALA_FRESHNESS_LIMIT_MINUTES
     );
-    if (!mrmsRalaFresh) {
+    if (!mrmsRalaFresh || (mrmsRalaDisplayMode === 'ptype' && !WinterPrecipDisplay.available(mrmsRalaMetadata))) {
         mrmsRalaVisibleLayer.setOpacity(0);
         mrmsRalaHiddenLayer.setOpacity(0);
     } else if (map.hasLayer(mrmsRalaLayer) && mrmsRalaCurrentImageUrl) {
@@ -4734,9 +4712,10 @@ function applyMRMSRALAFreshnessState() {
 }
 
 function formatMRMSRALATimeBox(metadata) {
+    const radarTitle = mrmsRalaDisplayMode === 'ptype' ? MRMS_WINTER_LAYER_NAME : MRMS_RALA_LAYER_NAME;
     if (!metadata) {
         return `
-            <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
+            <strong>${radarTitle}</strong><br>
             <span style="color:#ffeb3b;">Loading official NOAA MRMS loop...</span>
         `;
     }
@@ -4756,9 +4735,12 @@ function formatMRMSRALATimeBox(metadata) {
         ? `<div style="font-size:0.8em;margin:5px 0;color:#e6d5f7;">Experimental: MRMS radar + HRRR type<br>${phase?.hrrr ? `HRRR valid: ${formatMetadataUTC(phase.hrrr.valid_time_utc)} (1-h forecast)` : 'HRRR type unavailable — MRMS rain/snow only'}${phase?.hrrr && phase.mrms_fallback_visible_pixels > 0 ? '<br>MRMS rain/snow fallback in some areas' : ''}</div>`
         : '';
 
+    if (isType && !WinterPrecipDisplay.available(metadata)) {
+        return `<strong>${radarTitle}</strong><br><span style="color:#ffeb3b;">Precipitation type unavailable — hidden</span><br><span style="font-size:0.82em;">Waiting for a complete type/intensity archive.</span>`;
+    }
     if (!mrmsRalaFresh) {
         return `
-            <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
+            <strong>${radarTitle}</strong><br>
             <span style="color:#ff8a80;font-weight:bold;">STALE — radar hidden</span><br>
             <span style="color:#ffeb3b;">Latest: ${formatMetadataUTC(metadata.latest_valid_time_utc)} (${ageText})</span><br>
             <span style="font-size:0.82em;color:#d0d0d0;">Waiting for a fresh NOAA MRMS update (&le; ${MRMS_RALA_FRESHNESS_LIMIT_MINUTES} min).</span>
@@ -4766,7 +4748,7 @@ function formatMRMSRALATimeBox(metadata) {
     }
 
     return `
-        <strong>${MRMS_RALA_LAYER_NAME}</strong><br>
+        <strong>${radarTitle}</strong><br>
         <span style="color:#4fc3f7;font-weight:bold;">Frame: ${formatMetadataUTC(currentTime)}</span><br>
         <span style="color:#ffeb3b;">Latest: ${formatMetadataUTC(metadata.latest_valid_time_utc)} &bull; ${ageText}</span><br>
         <span style="font-size:0.82em;color:#d0d0d0;">${selectedHours} h selected &bull; ${activeFrameCount} frames &bull; ${cadenceText} &bull; &ge;5 dBZ</span><br>
@@ -4798,16 +4780,7 @@ function updateMRMSRALATimeBox() {
         refreshLegendDockSummary();
         return;
     }
-    // Keep the mode select attached while time/opacity markup updates at each
-    // animation frame. An open dropdown must not be replaced or lose focus.
-    let content = box.querySelector('.mrms-rala-time-content');
-    if (!content) {
-        content = document.createElement('div');
-        content.className = 'mrms-rala-time-content';
-        box.appendChild(content);
-        createMRMSRALADisplayModeControl(box);
-    }
-    content.innerHTML = formatMRMSRALATimeBox(mrmsRalaMetadata);
+    box.innerHTML = formatMRMSRALATimeBox(mrmsRalaMetadata);
     box.style.display = 'block';
     bindMRMSRALAOpacityControl();
     refreshLegendDockSummary();
@@ -4874,7 +4847,7 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
             mrmsRalaLastManifestVersion = version;
             applyMRMSRALAFreshnessState();
 
-            if (mrmsRalaFresh) {
+            if (mrmsRalaFresh && (mrmsRalaDisplayMode !== 'ptype' || WinterPrecipDisplay.available(mrmsRalaMetadata))) {
                 await preloadMRMSRALAFrame(mrmsRalaActiveFrames()[mrmsRalaActiveFrames().length - 1]);
                 if (map.hasLayer(mrmsRalaLayer)) {
                     activateMRMSRALATimeline({jumpToLatest: true});
@@ -7517,7 +7490,7 @@ function updateLegends() {
     ) {
         addLegendBlock(buildWFIGSLegendHTML());
     }
-    if (activeLayerNames.has(MRMS_RALA_LAYER_NAME)) addLegendBlock(buildMRMSRALALegendHTML());
+    if (activeLayerNames.has(MRMS_RALA_LAYER_NAME) || activeLayerNames.has(MRMS_WINTER_LAYER_NAME)) addLegendBlock(buildMRMSRALALegendHTML());
     if (activeLayerNames.has('MRMS DVD Flash Flood Detector')) addLegendBlock(ffdLegendHTML);
     if (activeLayerNames.has(MRMS_CREST_24H_LAYER_NAME)) addLegendBlock(mrmsCrest24hLegendHTML);
     if (activeLayerNames.has(MRMS_FFD_24H_LAYER_NAME)) addLegendBlock(mrmsFfd24hLegendHTML);
@@ -7625,7 +7598,7 @@ map.on('overlayadd', function(eventLayer) {
         mrmsTimeBox.style.display = 'block';
     }
 
-    if (eventLayer.name === MRMS_RALA_LAYER_NAME) {
+    if ([MRMS_RALA_LAYER_NAME,MRMS_WINTER_LAYER_NAME].includes(eventLayer.name)) {
         updateMRMSRALATimeBox();
         applyMRMSRALAFreshnessState();
         if (mrmsRalaReady && mrmsRalaFresh) {
@@ -7877,7 +7850,7 @@ map.on('overlayremove', function(eventLayer) {
         if (!hasMRMS) mrmsTimeBox.style.display = 'none';
     }
     
-    if (eventLayer.name === MRMS_RALA_LAYER_NAME) {
+    if ([MRMS_RALA_LAYER_NAME,MRMS_WINTER_LAYER_NAME].includes(eventLayer.name)) {
         if (mrmsRalaTimeBox) mrmsRalaTimeBox.style.display = 'none';
     }
 
@@ -8019,7 +7992,8 @@ function enforceExclusiveRadarSelection(activeEntry) {
         }
     });
 
-    if (activeEntry.id === 'mrms-rala-direct') {
+    if (['mrms-rala-direct','mrms-winter-type'].includes(activeEntry.id)) {
+        updateMRMSRALATimeBox();
         dashboardRadarSpeedMode = 'mrms';
         const player = dashboardTimeControl?._player;
         if (player?.isPlaying()) player.stop();
@@ -8036,7 +8010,7 @@ function enforceExclusiveRadarSelection(activeEntry) {
 }
 
 function handleRadarLayerDeactivate(entry) {
-    if (entry.id === 'mrms-rala-direct') {
+    if (['mrms-rala-direct','mrms-winter-type'].includes(entry.id)) {
         stopMRMSRALAAnimation();
     } else if (entry.id === 'nexrad-loop') {
         const player = dashboardTimeControl?._player;
@@ -8060,7 +8034,8 @@ const dashboardSections = [
         id: 'radar-satellite',
         title: 'Radar and Satellite Data (Real-Time)',
         layers: [
-            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsRalaLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km 10 minute cadence two four six hour loop'},
+            {id: 'mrms-rala-direct', label: MRMS_RALA_LAYER_NAME, layer: mrmsReflectivityMenuLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: true, keywords: 'MRMS RALA reflectivity radar direct NOAA NCEP NODD operational lowest altitude 0.5 km 10 minute cadence two four six hour loop'},
+            {id: 'mrms-winter-type', label: MRMS_WINTER_LAYER_NAME, layer: mrmsWinterMenuLayer, kind: 'raster', opacityTarget: mrmsRalaOpacityTarget, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: false, keywords: 'MRMS RALA rain mix snow ice sleet freezing rain winter precipitation type intensity reflectivity dBZ HRRR loop'},
             {id: 'nexrad-loop', label: 'IEM NEXRAD Radar — Backup (2-Hour Loop)', layer: radarTimeLayer, kind: 'raster', opacityTarget: radarWMS, exclusiveGroup: 'radar-primary', onActivate: enforceExclusiveRadarSelection, onDeactivate: handleRadarLayerDeactivate, defaultActive: false},
             {id: 'mrms-ffd', label: 'MRMS DVD Flash Flood Detector', layer: ffdLayer, kind: 'vector'},
             {id: 'mrms-qpe-1h', label: 'MRMS 1-Hour QPE', layer: mrms1hr, kind: 'raster'},
@@ -8955,7 +8930,8 @@ setTimeout(() => {
     if (map.hasLayer(watchesLayer)) activeLayerNames.add("Active Hydro Watches");
     if (map.hasLayer(mpdLayer)) activeLayerNames.add("WPC Active MPDs");
     if (map.hasLayer(eroLayer)) activeLayerNames.add("Day 1 ERO (Real-Time)");
-    if (map.hasLayer(mrmsRalaLayer)) activeLayerNames.add(MRMS_RALA_LAYER_NAME);
+    if (map.hasLayer(mrmsReflectivityMenuLayer)) activeLayerNames.add(MRMS_RALA_LAYER_NAME);
+    if (map.hasLayer(mrmsWinterMenuLayer)) activeLayerNames.add(MRMS_WINTER_LAYER_NAME);
     if (map.hasLayer(radarTimeLayer)) activeLayerNames.add('IEM NEXRAD Radar — Backup (2-Hour Loop)');
     
     if (map.hasLayer(ffdLayer)) activeLayerNames.add("MRMS DVD Flash Flood Detector");

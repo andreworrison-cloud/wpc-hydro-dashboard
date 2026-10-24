@@ -174,7 +174,7 @@ def warp(data, transform, crs, shape, target):
 
 def validate_frame(frame, name, metadata, output, display):
     stamp = loop.parse_time(frame["valid_time_utc"])
-    if name != f"winter_frames/winter_{stamp:%Y%m%dT%H%M%SZ}.png":
+    if name != f"{winter.FRAMES_DIR}/winter_{stamp:%Y%m%dT%H%M%SZ}.png":
         raise ValueError("Invalid winter image path")
     image_path = output/name
     if hashlib.sha256(image_path.read_bytes()).hexdigest() != metadata["image_sha256"]:
@@ -273,7 +273,7 @@ def build(args):
                     supported = (classes>0) & np.isin(model_classes,(1,2,3,4))
                     classes[supported] = model_classes[supported].astype(np.uint8)
                 rgba = winter.colorize(dbz,classes)
-                name = f"winter_frames/winter_{stamp:%Y%m%dT%H%M%SZ}.png"
+                name = f"{winter.FRAMES_DIR}/winter_{stamp:%Y%m%dT%H%M%SZ}.png"
                 loop.save_rgba_png(rgba,output/name)
                 visible = rgba[...,3]>0
                 metadata = {"flag_valid_time_utc":selected.iso(),"flag_source_url":selected.url,"flag_sha256":flag_hash,
@@ -292,6 +292,7 @@ def build(args):
     for frame,name,meta in pending:
         frame.update(ptype_png=name,ptype=meta)
     manifest["winter_type"] = {"revision":winter.REVISION,"experimental":True,"method":"MRMS radar + HRRR 1-h forecast precipitation type",
+        "intensity":winter.intensity_metadata(),
         "classes":[{"id":c,"label":winter.LABELS[c],"color":winter.COLORS[c]} for c in winter.COLORS],
         "max_flag_offset_minutes":2,"max_model_age_minutes":90,"model_grid_km":3,"radar_grid_km":1,
         "fallback":"MRMS rain/snow only where HRRR phase is unavailable or dry; no inferred transition band",

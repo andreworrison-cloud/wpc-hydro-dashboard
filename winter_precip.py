@@ -9,11 +9,25 @@ from __future__ import annotations
 
 import numpy as np
 
-REVISION = "mrms-hrrr-winter-v1"
+REVISION = "mrms-hrrr-winter-v2"
+FRAMES_DIR = "winter_frames_v2"
 UNKNOWN, RAIN, MIX, SNOW, ICE = range(5)
 COLORS = {RAIN: "#2bc45b", MIX: "#bf65d9", SNOW: "#50b9f2", ICE: "#f14d87"}
 LABELS = {RAIN: "Rain", MIX: "Mix", SNOW: "Snow", ICE: "Ice (sleet/freezing rain)"}
 RAIN_FLAGS = (1, 6, 7, 10, 91, 96)
+THRESHOLDS_DBZ = list(range(5, 80, 5))
+INTENSITY_COLORS = {
+    RAIN: ['#8ce6b6','#49d17c','#23bc48','#139a32','#08732b','#b0ce22','#fff02b','#ffbc29','#ff8623','#f34b25','#db2027','#b80e24','#940b21','#72091c','#500615'],
+    MIX: ['#f0e4fa','#e3cef4','#d5b3ec','#c795e4','#b77adb','#a763d0','#974dc3','#853bb4','#742da2','#63218e','#531879','#451163','#380c50','#2b083e','#20052e'],
+    SNOW: ['#d0f7fa','#a7eef5','#7ce2f1','#50d1ed','#2ab9e5','#169cdb','#1b7bcf','#265cc2','#3845b1','#49349d','#542589','#531a74','#49125f','#3b0c4d','#2c073b'],
+    ICE: ['#ffe3ef','#ffd0e5','#ffb8d8','#ff9dca','#ff80b9','#fa61a6','#f34392','#e72d7e','#d81e6d','#c4155f','#ad0e52','#940a47','#7c073c','#660531','#500426'],
+}
+
+
+def intensity_metadata():
+    return {'units':'dBZ', 'thresholds_dbz':THRESHOLDS_DBZ,
+            'colors':{str(c):colors for c,colors in INTENSITY_COLORS.items()},
+            'bin_rule':'lower inclusive; 75+ uses final color; below 5 transparent'}
 
 
 def classify(flag, rain=None, snow=None, pellets=None, freezing=None):
@@ -49,10 +63,9 @@ def colorize(dbz, classes):
     # A small lookup table avoids multi-gigabyte RGB float intermediates at
     # native CONUS dimensions. Echo strength is shown in 5-dBZ display bins.
     palette = np.zeros((5,15,4),dtype=np.uint8)
-    for code, color in COLORS.items():
-        rgb = np.array([int(color[i:i+2], 16) for i in (1, 3, 5)])
-        for i in range(15):
-            palette[code,i,:3] = rgb*(0.55+0.45*min(i/9,1))
+    for code, colors in INTENSITY_COLORS.items():
+        for i,color in enumerate(colors):
+            palette[code,i,:3] = [int(color[j:j+2],16) for j in (1,3,5)]
             palette[code,i,3] = 255
     bins = np.clip((np.where(np.isfinite(dbz),dbz,0)-5)//5,0,14).astype(np.uint8)
     rgba = palette[classes,bins]

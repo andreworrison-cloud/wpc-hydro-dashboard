@@ -116,7 +116,6 @@ jobs:
           node tools/test_gdi_display.cjs
           node tools/gdi/test_adapter.cjs
           node --check winter_precip_display.js
-          node tools/test_winter_precip_display.cjs
 
       - name: Check MRMS RALA Python syntax
         run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
@@ -127,6 +126,7 @@ jobs:
           python tools/gdi/test_guidance.py
           python tools/test_winter_precip.py
           python tools/test_winter_precip_sources.py
+          node tools/test_winter_precip_display.cjs
 
       - name: Check stable GDI legend controls
         env:

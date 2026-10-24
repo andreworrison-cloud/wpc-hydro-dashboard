@@ -14,6 +14,17 @@ for(const change of [f=>delete f.ptype_png,f=>f.ptype_png='../bad.png',f=>f.ptyp
 }
 const fallback=structuredClone(manifest);fallback.frames[0].ptype.hrrr=null;assert.ok(display.available(fallback));
 assert.equal(display.available({frames:[]}),false);
+const {execFileSync}=require('node:child_process');
+const intensity=JSON.parse(execFileSync('python',['-c','import json; from winter_precip import intensity_metadata; print(json.dumps(intensity_metadata()))'],{encoding:'utf8'}));
+const v2=structuredClone(manifest);v2.winter_type.revision='mrms-hrrr-winter-v2';v2.winter_type.intensity=intensity;
+v2.frames[0].ptype_png=v2.frames[0].ptype_png.replace('winter_frames/','winter_frames_v2/');
+assert.ok(display.available(v2));
+const html=display.legend(v2);
+assert.equal((html.match(/title="/g)||[]).length,60,'four actual fifteen-bin ramps');
+for(const colors of Object.values(intensity.colors))for(const color of colors)assert.ok(html.includes('background:'+color));
+assert.ok(html.includes('5 to &lt;10') || html.includes('5 to <10'));
+assert.ok(html.includes('75+ dBZ'));assert.ok(html.includes('Radar reflectivity (dBZ)'));
+v2.winter_type.intensity.thresholds_dbz[1]=11;assert.equal(display.available(v2),false,'invalid intensity legend disables mismatched data');
 
 // The actual buffer loader must key cache hits by URL, not just radar time.
 const source=fs.readFileSync('app.js','utf8');

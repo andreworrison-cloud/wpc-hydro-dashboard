@@ -1,7 +1,10 @@
 # Radar precipitation type
 
-The MRMS radar display has two modes: its existing RALA reflectivity and an
-experimental rain/mix/snow/ice display. The second mode uses official NOAA GRIB2
+The radar menu has adjacent choices for existing RALA reflectivity and
+experimental precipitation type & intensity. They are mutually exclusive, also
+with the IEM backup radar, and share the existing playback engine. The type
+choice is directly below RALA; no display selector is buried in the legend.
+The type layer uses official NOAA GRIB2
 data, not WeatherFront imagery or endpoints. Hail has no separate display class.
 
 ## Sources and interpretation
@@ -29,11 +32,17 @@ the model phase estimate is nominally 3 km. Categorical fields use nearest-neigh
 reprojection without smoothing or invented transition bands. Reflectivity below
 5 dBZ stays transparent, consistent with the existing radar display. Brightness
 shows 5-dBZ echo-strength bins and is not a snow/ice accumulation or rate estimate.
+Version 2 supplies distinct fifteen-color intensity ramps per precipitation type.
+Rain progresses through green/yellow/orange/red; snow, mix and ice retain separate
+blue, purple and pink ramps. The legend uses the exact color arrays and thresholds
+published by the renderer, from 5 through 75+ dBZ. Previous v1 images retain their
+actual legacy brightness legend until a complete v2 archive is available.
 
 ## Operation
 
 `fetch_mrms_winter_type.py` reads the newly built RALA manifest and writes one
-`winter_frames/` image per retained radar frame. Timestamped NCEP MRMS flag files
+`winter_frames_v2/` image per retained radar frame. Revision-specific paths prevent
+old cached colors from appearing under the new legend. Timestamped NCEP MRMS flag files
 and NOAA's public MRMS AWS inventory supply flag candidates. HRRR AWS is preferred,
 with NOMADS fallback using that provider's own index/byte offsets. Each GRIB record
 is checked for variable, level, grid, cycle, lead and validity time before use.
