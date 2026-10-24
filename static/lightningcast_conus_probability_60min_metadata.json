@@ -1,0 +1,433 @@
+{
+  "metadata_mode": "lightningcast_dashboard_v1e",
+  "generator_revision": "v1i_realearth_v2_live_ingest",
+  "product_role": "probability_of_lightning_next_60_minutes",
+  "display_label": "CIMSS/SSEC LightningCast \u2014 Probability of Lightning in Next 60 Minutes",
+  "source_product": "LightningCast CONUS probability contour vectors (RealEarth v2 ABI+MRMS preferred; v1 fallback)",
+  "source_attribution": "LightningCast data courtesy CIMSS/SSEC",
+  "scan_time_utc": "2026-10-24T23:06:00Z",
+  "source_scan_times_utc": {
+    "GOES-East": "2026-10-24T23:06:00Z",
+    "GOES-West": "2026-10-24T23:06:00Z"
+  },
+  "source_time_offset_minutes": 0.0,
+  "forecast_window_start_utc": "2026-10-24T23:06:00Z",
+  "forecast_window_end_utc": "2026-10-25T00:06:00Z",
+  "fetched_at_utc": "2026-10-24T23:08:38Z",
+  "frame_age_minutes_at_fetch": 2.65,
+  "frame_selection": {
+    "policy": "newest clean near-time East/West frame pair within freshness and offset windows",
+    "selected_frame_clean": true,
+    "selected_frame_age_minutes": 2.65,
+    "selected_east_frame_utc": "2026-10-24T23:06:00Z",
+    "selected_west_frame_utc": "2026-10-24T23:06:00Z",
+    "selected_east_age_minutes": 2.65,
+    "selected_west_age_minutes": 2.65,
+    "selected_frame_offset_minutes": 0.0,
+    "maximum_frame_offset_minutes": 5.0,
+    "newest_exact_common_frame_utc": "2026-10-24T23:06:00Z",
+    "newest_east_frame_utc": "2026-10-24T23:06:00Z",
+    "newest_west_frame_utc": "2026-10-24T23:06:00Z",
+    "skipped_dirty_frames": {
+      "GOES-East": [],
+      "GOES-West": []
+    },
+    "skipped_future_frames": {
+      "GOES-East": [],
+      "GOES-West": []
+    }
+  },
+  "probability_thresholds_percent": [
+    10,
+    30,
+    50,
+    70,
+    90
+  ],
+  "standard_threshold_note": "10%, 30%, 50%, 70%, and 90% are standard LightningCast probability categories; a frame may validly contain zero contours at any category.",
+  "source_urls": {
+    "GOES-East": "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-East_CONUS_LOOP",
+    "GOES-West": "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-West_CONUS_LOOP"
+  },
+  "source_permission": "CIMSS/SSEC permission obtained by the WPC dashboard project owner for direct server pulls and dashboard display.",
+  "satellite_ownership": {
+    "method": "fixed whole-storm-object representative-longitude ownership with completeness-based overlap swaps",
+    "ownership_longitude": -106.1,
+    "GOES-West": "whole same-satellite contour families with representative longitude < -106.1",
+    "GOES-East": "whole same-satellite contour families with representative longitude >= -106.1",
+    "summation": false,
+    "averaging": false,
+    "blending": false,
+    "gap_fill": false,
+    "cross_boundary_geometry_clipping": false,
+    "cross_threshold_family_splitting": false,
+    "cross_satellite_family_splitting": false,
+    "swap_padding_degrees": 0.25,
+    "object_link_padding_degrees": 0.18,
+    "representative_longitude_field": "mean longitude of the object's outermost available probability contour(s)",
+    "note": "Nested/adjacent probability contours from one satellite are grouped into a storm object and retained or rejected together. In the overlap region, a more complete opposite-satellite family may replace a truncated family, but no family is split across satellites. Source contour geometry is never cut or altered at the ownership longitude."
+  },
+  "rendering": {
+    "image_crs": "EPSG:3857",
+    "leaflet_bounds": [
+      [
+        20.0,
+        -130.0
+      ],
+      [
+        55.0,
+        -60.0
+      ]
+    ],
+    "rendered_shape": [
+      1175,
+      1800
+    ],
+    "threshold_labels": [
+      ">= 10%",
+      ">= 30%",
+      ">= 50%",
+      ">= 70%",
+      ">= 90%"
+    ],
+    "threshold_rgba": [
+      [
+        80,
+        201,
+        134,
+        118
+      ],
+      [
+        255,
+        255,
+        81,
+        124
+      ],
+      [
+        255,
+        192,
+        108,
+        132
+      ],
+      [
+        255,
+        80,
+        80,
+        142
+      ],
+      [
+        255,
+        80,
+        255,
+        154
+      ]
+    ],
+    "source_threshold_rgb": [
+      [
+        80,
+        201,
+        134
+      ],
+      [
+        255,
+        255,
+        81
+      ],
+      [
+        255,
+        192,
+        108
+      ],
+      [
+        255,
+        80,
+        80
+      ],
+      [
+        255,
+        80,
+        255
+      ]
+    ],
+    "contour_lines_only": true,
+    "polygon_fill_inference": false,
+    "line_width_pixels": 2,
+    "resampling": "not applicable; vector contours rendered directly to Web Mercator"
+  },
+  "source_summary": {
+    "GOES-East": {
+      "title": "NOAA LightningCast  loop -- GOES-East CONUS sector",
+      "refresh_seconds": 1,
+      "frame_count": 13,
+      "selected_frame_contours": {
+        "10": 92,
+        "30": 74,
+        "50": 72,
+        "70": 53,
+        "90": 43
+      },
+      "threshold_colors_observed": {
+        "10": [
+          [
+            80,
+            201,
+            134
+          ]
+        ],
+        "30": [
+          [
+            255,
+            255,
+            81
+          ]
+        ],
+        "50": [
+          [
+            255,
+            192,
+            108
+          ]
+        ],
+        "70": [
+          [
+            255,
+            80,
+            80
+          ]
+        ],
+        "90": [
+          [
+            255,
+            80,
+            255
+          ]
+        ]
+      },
+      "invalid_coordinate_lines": 0,
+      "invalid_lines_by_frame": {},
+      "invalid_line_examples_by_frame": {},
+      "selected_frame_invalid_lines": 0,
+      "discarded_short_contours": 0,
+      "warnings": [
+        "No fresh RealEarth LightningCast candidate: RealEarth GOES-East product PLTG-abi-mrms-GOESEastRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTG-abi-mrms-GOESEastRadC after 2 attempts: <urlopen error timed out> | RealEarth GOES-East product PLTGGOESEastRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTGGOESEastRadC after 2 attempts: <urlopen error timed out>"
+      ],
+      "fetch": {
+        "http_status": 200,
+        "bytes_downloaded": 3219011,
+        "download_seconds": 1.067,
+        "download_attempt": 1,
+        "last_modified": "Sat, 24 Oct 2026 23:09:29 GMT",
+        "etag": "\"311e43-65e9e305a3a25\"",
+        "sha256": "4a9850047c43f542d773162a306fc34fb842c07046e3c1e8e192e1009ea89f96",
+        "source_transport": "legacy_cimss_placefile",
+        "source_url": "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-East_CONUS_LOOP",
+        "candidate_products_considered": [
+          "PLTG-abi-mrms-GOESEastRadC",
+          "PLTGGOESEastRadC"
+        ],
+        "primary_realearth_errors": [
+          "RealEarth GOES-East product PLTG-abi-mrms-GOESEastRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTG-abi-mrms-GOESEastRadC after 2 attempts: <urlopen error timed out>",
+          "RealEarth GOES-East product PLTGGOESEastRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTGGOESEastRadC after 2 attempts: <urlopen error timed out>"
+        ]
+      }
+    },
+    "GOES-West": {
+      "title": "NOAA LightningCast  loop -- GOES-West CONUS sector",
+      "refresh_seconds": 1,
+      "frame_count": 13,
+      "selected_frame_contours": {
+        "10": 46,
+        "30": 31,
+        "50": 21,
+        "70": 13,
+        "90": 6
+      },
+      "threshold_colors_observed": {
+        "10": [
+          [
+            80,
+            201,
+            134
+          ]
+        ],
+        "30": [
+          [
+            255,
+            255,
+            81
+          ]
+        ],
+        "50": [
+          [
+            255,
+            192,
+            108
+          ]
+        ],
+        "70": [
+          [
+            255,
+            80,
+            80
+          ]
+        ],
+        "90": [
+          [
+            255,
+            80,
+            255
+          ]
+        ]
+      },
+      "invalid_coordinate_lines": 0,
+      "invalid_lines_by_frame": {},
+      "invalid_line_examples_by_frame": {},
+      "selected_frame_invalid_lines": 0,
+      "discarded_short_contours": 0,
+      "warnings": [
+        "No fresh RealEarth LightningCast candidate: RealEarth GOES-West product PLTG-abi-mrms-GOESWestRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTG-abi-mrms-GOESWestRadC after 2 attempts: <urlopen error timed out> | RealEarth GOES-West product PLTGGOESWestRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTGGOESWestRadC after 2 attempts: <urlopen error timed out>"
+      ],
+      "fetch": {
+        "http_status": 200,
+        "bytes_downloaded": 860747,
+        "download_seconds": 0.604,
+        "download_attempt": 1,
+        "last_modified": "Sat, 24 Oct 2026 23:09:22 GMT",
+        "etag": "\"d224b-65e9e2ff837e1\"",
+        "sha256": "8972dfd7d09ce8a5abf2eae582148bad92dbadceb62435d1b7da8b3c64d388bf",
+        "source_transport": "legacy_cimss_placefile",
+        "source_url": "https://cimss.ssec.wisc.edu/severe_conv/NOAACIMSS_PLTG_GOES-West_CONUS_LOOP",
+        "candidate_products_considered": [
+          "PLTG-abi-mrms-GOESWestRadC",
+          "PLTGGOESWestRadC"
+        ],
+        "primary_realearth_errors": [
+          "RealEarth GOES-West product PLTG-abi-mrms-GOESWestRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTG-abi-mrms-GOESWestRadC after 2 attempts: <urlopen error timed out>",
+          "RealEarth GOES-West product PLTGGOESWestRadC ingest failed: failed to fetch https://realearth.ssec.wisc.edu/api/latest?products=PLTGGOESWestRadC after 2 attempts: <urlopen error timed out>"
+        ]
+      }
+    }
+  },
+  "render_summary": {
+    "width": 1800,
+    "height": 1175,
+    "has_visible_pixels": true,
+    "source_contours_by_satellite_and_threshold": {
+      "East": {
+        "10": 92,
+        "30": 74,
+        "50": 72,
+        "70": 53,
+        "90": 43
+      },
+      "West": {
+        "10": 46,
+        "30": 31,
+        "50": 21,
+        "70": 13,
+        "90": 6
+      }
+    },
+    "selected_contours_by_satellite_and_threshold": {
+      "East": {
+        "10": 88,
+        "30": 72,
+        "50": 71,
+        "70": 53,
+        "90": 43
+      },
+      "West": {
+        "10": 45,
+        "30": 28,
+        "50": 19,
+        "70": 11,
+        "90": 4
+      }
+    },
+    "rendered_contour_lines_by_threshold": {
+      "10": 85,
+      "30": 79,
+      "50": 79,
+      "70": 50,
+      "90": 42
+    },
+    "source_color_mismatches": [],
+    "ownership_longitude": -106.1,
+    "storm_object_summary": {
+      "West": {
+        "source_object_count": 37,
+        "retained_object_count": 36,
+        "rejected_object_count": 1,
+        "retained_threshold_families": {
+          "10,30,50,70": 2,
+          "10": 24,
+          "10,30": 6,
+          "10,30,50,70,90": 1,
+          "10,30,50": 3
+        },
+        "retained_closed_contours": 102,
+        "retained_total_contours": 107
+      },
+      "East": {
+        "source_object_count": 51,
+        "retained_object_count": 47,
+        "rejected_object_count": 4,
+        "retained_threshold_families": {
+          "10,30,50,70": 2,
+          "10,30,50": 5,
+          "10,30,50,70,90": 7,
+          "10": 27,
+          "10,30": 6
+        },
+        "retained_closed_contours": 318,
+        "retained_total_contours": 327
+      },
+      "cross_satellite_family_swaps": [
+        {
+          "replaced_satellite": "West",
+          "replaced_thresholds": [
+            10,
+            30,
+            50,
+            70,
+            90
+          ],
+          "replacement_satellite": "East",
+          "replacement_thresholds": [
+            10,
+            30,
+            50,
+            70,
+            90
+          ],
+          "primary_score": [
+            7,
+            5,
+            10
+          ],
+          "alternate_score": [
+            117,
+            5,
+            117
+          ],
+          "primary_bbox": [
+            -107.879,
+            34.54,
+            -105.684,
+            37.186
+          ],
+          "alternate_bbox": [
+            -114.302,
+            25.423,
+            -101.511,
+            38.318
+          ]
+        }
+      ],
+      "cross_satellite_family_splitting": false,
+      "swap_padding_degrees": 0.25
+    }
+  },
+  "leaflet_png": "lightningcast_conus_probability_60min.png",
+  "generated_time_utc": "2026-10-24T23:11:26Z"
+}
