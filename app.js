@@ -1196,15 +1196,6 @@ function createMRMSRALAFrameStepControl() {
         setMRMSRALAWindowMinutes(Number(event.target.value));
     });
 
-    const modeSelect = L.DomUtil.create('select', 'mrms-rala-mode-select', control);
-    modeSelect.setAttribute('aria-label', 'Radar display');
-    modeSelect.title = 'Reflectivity or experimental MRMS + HRRR precipitation type';
-    modeSelect.style.marginRight = '8px';
-    modeSelect.style.fontSize = '10px';
-    modeSelect.innerHTML = '<option value="reflectivity">Reflectivity</option><option value="ptype" disabled>Rain / Mix / Snow / Ice</option>';
-    modeSelect.addEventListener('change', event => setMRMSRALADisplayMode(event.target.value));
-    mrmsRalaModeSelect = modeSelect;
-
     const slow = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
     slow.textContent = 'Slow';
     slow.style.fontSize = '11px';
@@ -4475,6 +4466,27 @@ function syncMRMSRALADisplayMode() {
     }
 }
 
+function createMRMSRALADisplayModeControl(parent) {
+    if (mrmsRalaModeSelect) return;
+    const control = document.createElement('div');
+    control.style.cssText = 'margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.18);';
+    const label = document.createElement('label');
+    label.textContent = 'Radar display';
+    label.htmlFor = 'mrms-rala-display-mode';
+    label.style.cssText = 'display:block;font-size:0.82em;margin-bottom:4px;';
+    const select = document.createElement('select');
+    select.id = 'mrms-rala-display-mode';
+    select.setAttribute('aria-label', 'Radar display');
+    select.title = 'Reflectivity or experimental MRMS + HRRR precipitation type';
+    select.style.cssText = 'width:100%;font-size:12px;padding:4px;';
+    select.innerHTML = '<option value="reflectivity">Reflectivity</option><option value="ptype" disabled>Rain / Mix / Snow / Ice</option>';
+    select.addEventListener('change', event => setMRMSRALADisplayMode(event.target.value));
+    control.append(label, select);
+    parent.appendChild(control);
+    mrmsRalaModeSelect = select;
+    syncMRMSRALADisplayMode();
+}
+
 async function setMRMSRALADisplayMode(mode) {
     if (!['reflectivity', 'ptype'].includes(mode)) return;
     if (mode === 'ptype' && !WinterPrecipDisplay.available(mrmsRalaMetadata)) return;
@@ -4786,7 +4798,16 @@ function updateMRMSRALATimeBox() {
         refreshLegendDockSummary();
         return;
     }
-    box.innerHTML = formatMRMSRALATimeBox(mrmsRalaMetadata);
+    // Keep the mode select attached while time/opacity markup updates at each
+    // animation frame. An open dropdown must not be replaced or lose focus.
+    let content = box.querySelector('.mrms-rala-time-content');
+    if (!content) {
+        content = document.createElement('div');
+        content.className = 'mrms-rala-time-content';
+        box.appendChild(content);
+        createMRMSRALADisplayModeControl(box);
+    }
+    content.innerHTML = formatMRMSRALATimeBox(mrmsRalaMetadata);
     box.style.display = 'block';
     bindMRMSRALAOpacityControl();
     refreshLegendDockSummary();
