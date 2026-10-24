@@ -35,6 +35,10 @@ on:
       - '.github/workflows/update_hrrr_tle.yml'
       - 'fetch_mrms_rala.py'
       - 'fetch_mrms_rala_loop.py'
+      - 'fetch_mrms_winter_type.py'
+      - 'winter_precip.py'
+      - 'winter_precip_display.js'
+      - 'tools/test_winter_precip*'
       - 'tools/validate_mrms_rala.py'
       - 'tools/validate_mrms_rala_loop.py'
       - '.github/workflows/update_mrms_rala.yml'
@@ -72,6 +76,10 @@ on:
       - '.github/workflows/update_hrrr_tle.yml'
       - 'fetch_mrms_rala.py'
       - 'fetch_mrms_rala_loop.py'
+      - 'fetch_mrms_winter_type.py'
+      - 'winter_precip.py'
+      - 'winter_precip_display.js'
+      - 'tools/test_winter_precip*'
       - 'tools/validate_mrms_rala.py'
       - 'tools/validate_mrms_rala_loop.py'
       - '.github/workflows/update_mrms_rala.yml'
@@ -107,6 +115,8 @@ jobs:
           node --check gdi_display.js
           node tools/test_gdi_display.cjs
           node tools/gdi/test_adapter.cjs
+          node --check winter_precip_display.js
+          node tools/test_winter_precip_display.cjs
 
       - name: Check MRMS RALA Python syntax
         run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
@@ -115,6 +125,7 @@ jobs:
         run: |
           pip install numpy scipy eccodes
           python tools/gdi/test_guidance.py
+          python tools/test_winter_precip.py
 
       - name: Check stable GDI legend controls
         env:
@@ -122,6 +133,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/gdi-dom-test" --no-audit --no-fund --no-save jsdom@26.1.0
           node tools/test_gdi_legend.cjs
+          node tools/test_winter_precip_dom.cjs
 
       - name: Check model-data Python syntax
         run: |
