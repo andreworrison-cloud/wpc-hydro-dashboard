@@ -52,7 +52,7 @@ def flag_inventory(session, now):
     try:
         html = request(session, directory).text
         for name, stamp in re.findall(r'(MRMS_PrecipFlag_00\.00_(\d{8}-\d{6})\.grib2\.gz)', html):
-            found[stamp] = rala.SourceCandidate("NCEP MRMS HTTPS", datetime.strptime(stamp, "%Y%m%d-%H%M%S").replace(tzinfo=UTC), directory+name, name)
+            found[("ncep",stamp)] = rala.SourceCandidate("NCEP MRMS HTTPS", datetime.strptime(stamp, "%Y%m%d-%H%M%S").replace(tzinfo=UTC), directory+name, name)
     except Exception as exc:
         errors.append(str(exc))
     # Discover AWS too: NCEP inventories can be shorter than the radar archive.
@@ -66,9 +66,12 @@ def flag_inventory(session, now):
                 if not element.tag.endswith("Key") or not element.text:
                     continue
                 key = element.text
-                stamp = rala.parse_timestamp(key)
-                if stamp:
-                    found.setdefault(stamp.strftime("%Y%m%d-%H%M%S"), rala.SourceCandidate("NOAA NODD MRMS (AWS)", stamp, rala.NODD_ROOT+"/"+key, key))
+                match = re.search(r"MRMS_PrecipFlag_00\.00_(\d{8}-\d{6})\.grib2\.gz$",key)
+                if match:
+                    stamp = datetime.strptime(match.group(1),"%Y%m%d-%H%M%S").replace(tzinfo=UTC)
+                    # Retain both providers at equal times so a download error
+                    # on NCEP can fall back to AWS for the same observation.
+                    found.setdefault(("aws",stamp.strftime("%Y%m%d-%H%M%S")), rala.SourceCandidate("NOAA NODD MRMS (AWS)", stamp, rala.NODD_ROOT+"/"+key, key))
         except Exception as exc:
             errors.append(str(exc))
     if not found:

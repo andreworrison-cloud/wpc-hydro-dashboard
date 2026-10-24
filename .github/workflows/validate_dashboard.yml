@@ -123,9 +123,10 @@ jobs:
 
       - name: Check GDI valid-time alignment and aggregation
         run: |
-          pip install numpy scipy eccodes
+          pip install numpy scipy eccodes rasterio pyproj requests pillow
           python tools/gdi/test_guidance.py
           python tools/test_winter_precip.py
+          python tools/test_winter_precip_sources.py
 
       - name: Check stable GDI legend controls
         env:
