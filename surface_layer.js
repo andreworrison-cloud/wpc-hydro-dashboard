@@ -37,10 +37,15 @@
         return p && Number.isFinite(p[key]) && Number.isFinite(age) && age >= 0 && age <= 90*60000 && Number.isFinite(p.lat) && Number.isFinite(p.lon) && p.lat >= 24 && p.lat <= 50 && p.lon >= -125 && p.lon <= -66;
     }
     function thinPoints(points, key, now, project, contains) {
-        const occupied = new Set(), result = [];
+        const occupied = new Map(), result = [];
         points.filter(p=>freshPoint(p,key,now) && contains(p)).sort((a,b)=>Date.parse(b.time)-Date.parse(a.time) || a.id.localeCompare(b.id)).forEach(p=>{
-            const pt=project(p), cell=`${Math.floor(pt.x/48)},${Math.floor(pt.y/30)}`;
-            if (!occupied.has(cell) && result.length < 800) {occupied.add(cell);result.push(p);}
+            const pt=project(p), x=Math.floor(pt.x/52), y=Math.floor(pt.y/28);
+            let overlap=false;
+            for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
+                const neighbor=occupied.get(`${x+dx},${y+dy}`);
+                if(neighbor && Math.abs(neighbor.x-pt.x)<52 && Math.abs(neighbor.y-pt.y)<28)overlap=true;
+            }
+            if (!overlap && result.length < 800) {occupied.set(`${x},${y}`,pt);result.push(p);}
         });
         return result;
     }
@@ -61,8 +66,8 @@
         return `<div class="surface-popup"><strong>${esc(p.id)} · METAR observation</strong><br>${esc(utc(p.time))} · ${Math.floor((now-Date.parse(p.time))/60000)} min old<br>Temperature: ${fmt(p.temperature,'°F')}<br>Dewpoint: ${fmt(p.dewpoint,'°F')}<br>Wind: ${fmt(p.wind_speed,'kt')} · ${direction}<br>Gust: ${fmt(p.wind_gust,'kt')}<p>${esc(p.raw)}</p></div>`;
     }
     function create({map, metadataURL, onChange=()=>{}, now=()=>Date.now()}) {
-        const layers={}, cache=new Map(), urls=new Set();
-        let metadata=null, points=[], pointHash=null, busy=false, serial=0, stationField='temperature', failed=false, stationFailed=false, border=null;
+        const layers={}, cache=new Map(), urls=new Set(), stationMarkers=new Map();
+        let metadata=null, points=[], pointHash=null, busy=false, serial=0, stationField='temperature', markerField=null, failed=false, stationFailed=false, border=null;
         map.createPane('surfaceAnalysis');map.getPane('surfaceAnalysis').style.zIndex=338;map.getPane('surfaceAnalysis').style.pointerEvents='none';
         map.createPane('surfaceStations');map.getPane('surfaceStations').style.zIndex=588;
         keys.forEach(key=>{const group=L.layerGroup();group.options.opacity=.85;group.setOpacity=value=>{group.options.opacity=value;group.eachLayer(layer=>layer.setOpacity(value));};layers[key]=group;});
@@ -73,13 +78,34 @@
         const item=key=>cache.get(`${metadata?.analysis?.generation}/${key}`);
         const current=key=>Array.from(cache.values()).filter(v=>v.key===key).at(-1);
         function renderStations() {
-            stations.clearLayers();
-            if (!map.hasLayer(stations) || map.getZoom() < 7) return;
+            if (!map.hasLayer(stations) || map.getZoom() < 7) {stations.clearLayers();stationMarkers.clear();return;}
             const key=stationKey(), palette=metadata?.analysis?.products[key];
+            if(markerField!==key){stations.clearLayers();stationMarkers.clear();markerField=key;}
             const shown=thinPoints(points,key,now(),p=>map.latLngToContainerPoint([p.lat,p.lon]),p=>map.getBounds().contains([p.lat,p.lon]));
+            // Popup auto-pan emits moveend. Preserve the selected station across
+            // redraws while its report is fresh, even if thinning priorities move.
+            stationMarkers.forEach((entry,id)=>{
+                if(entry.marker.isPopupOpen?.() && !shown.some(p=>p.id===id)){
+                    const p=points.find(p=>p.id===id);
+                    if(freshPoint(p,key,now()) && map.getBounds().contains([p.lat,p.lon]))shown.push(p);
+                }
+            });
+            const keep=new Set(shown.map(p=>p.id));
+            stationMarkers.forEach((entry,id)=>{if(!keep.has(id)){stations.removeLayer(entry.marker);stationMarkers.delete(id);}});
             shown.forEach(p=>{
-                const icon=L.divIcon({className:'surface-station-icon',iconSize:[46,24],iconAnchor:[23,12],html:`<span class="surface-station-value"><i style="background:${color(palette,p[key])}"></i>${Math.round(p[key])}</span>`});
-                L.marker([p.lat,p.lon],{pane:'surfaceStations',icon,keyboard:true,title:`${p.id}: ${Math.round(p[key])} ${key==='wind_speed'?'kt':'°F'}, ${utc(p.time)}`,riseOnHover:true}).bindPopup(popup(p,now())).addTo(stations);
+                const html=`<span class="surface-station-value"><i style="background:${color(palette,p[key])}"></i>${Math.round(p[key])}</span>`, content=popup(p,now());
+                const title=`${p.id}: ${Math.round(p[key])} ${key==='wind_speed'?'kt':'°F'}, ${utc(p.time)}`;
+                const icon=()=>L.divIcon({className:'surface-station-icon',iconSize:[46,24],iconAnchor:[23,12],html});
+                const entry=stationMarkers.get(p.id);
+                if(entry){
+                    if(entry.html!==html){entry.marker.setIcon(icon());entry.html=html;}
+                    if(entry.content!==content){entry.marker.setPopupContent(content);entry.content=content;}
+                    if(entry.lat!==p.lat || entry.lon!==p.lon){entry.marker.setLatLng([p.lat,p.lon]);entry.lat=p.lat;entry.lon=p.lon;}
+                    entry.marker.getElement?.()?.setAttribute('title',title);
+                }else{
+                    const marker=L.marker([p.lat,p.lon],{pane:'surfaceStations',icon:icon(),keyboard:true,title,riseOnHover:true}).bindPopup(content).addTo(stations);
+                    stationMarkers.set(p.id,{marker,html,content,lat:p.lat,lon:p.lon});
+                }
             });
         }
         function sync() {

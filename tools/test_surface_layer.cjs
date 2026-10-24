@@ -11,6 +11,7 @@ assert.equal(S.freshPoint(point,'temperature',now),true);assert.equal(S.freshPoi
 assert.equal(S.freshPoint({...point,time:at(91)},'temperature',now),false);assert.equal(S.freshPoint({...point,time:at(-1)},'temperature',now),false);
 const fresh={...point,id:'KBBB',time:at(10)};const thinned=S.thinPoints([point,fresh,{...point,id:'KCCC',lon:-90}],'temperature',now,p=>({x:p.lon*100,y:0}),()=>true);
 assert.equal(thinned.length,2);assert.equal(thinned[0].id,'KBBB');
+assert.equal(S.thinPoints([point,fresh],'temperature',now,p=>({x:p.id==='KAAA'?51:53,y:25}),()=>true).length,1,'adjacent pixel cells still reject overlapping labels');
 Object.entries(palettes).forEach(([key,p])=>{
  assert.equal(S.color(p,p.stops[0]-100),p.colors[0]);assert.equal(S.color(p,p.stops.at(-1)+100),p.colors.at(-1));
  p.stops.forEach((value,i)=>assert.equal(S.color(p,value),p.colors[i]));
@@ -29,7 +30,8 @@ assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temper
  const handlers={},onMap=new Set(),panes={};let calls=0,clock=now;const nodes=[];
  const map={createPane:n=>panes[n]={style:{}},getPane:n=>panes[n],hasLayer:l=>onMap.has(l),getZoom:()=>8,getBounds:()=>({contains:()=>true}),latLngToContainerPoint:()=>({x:5,y:5}),on:(events,f)=>events.split(' ').forEach(e=>(handlers[e]??=[]).push(f))};
  function group(){const children=new Set();return {options:{},hasLayer:l=>children.has(l),addLayer(l){children.add(l);return this},removeLayer:l=>children.delete(l),clearLayers:()=>children.clear(),eachLayer:f=>[...children].forEach(f),addTo:()=>{}};}
- const L={layerGroup:group,imageOverlay:()=>({setOpacity(){}}),divIcon:x=>x,marker:()=>({bindPopup(){return this},addTo(g){g.addLayer(this);return this}})};
+ const markerInstances=[];
+ const L={layerGroup:group,imageOverlay:()=>({setOpacity(){}}),divIcon:x=>x,marker:()=>{const marker={bindPopup(){return this},setPopupContent(){},setLatLng(){},setIcon(){},isPopupOpen:()=>true,addTo(g){g.addLayer(this);return this}};markerInstances.push(marker);return marker;}};
  const crypto=require('node:crypto').webcrypto,bytes=new Uint8Array([1,2,3]);const hash=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
  const mock=JSON.parse(JSON.stringify(m));for(const k of S.keys)mock.analysis.products[k].sha256=hash;
  const points={schema:'surface-stations-v1',fetched_at:at(0),points:[point]};const pointBytes=new TextEncoder().encode(JSON.stringify(points));const pointSha=Buffer.from(await crypto.subtle.digest('SHA-256',pointBytes)).toString('hex');
@@ -42,6 +44,8 @@ assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temper
  const suite=c.SurfaceSuite.create({map,metadataURL:'https://example.org/metadata.json',now:()=>clock});
  onMap.add(suite.layers.temperature);onMap.add(suite.stations);await suite.refresh();
  assert.equal(suite.layers.temperature.hasLayer(undefined),false);let n=0;suite.layers.temperature.eachLayer(()=>n++);assert.equal(n,1);let s=0;suite.stations.eachLayer(()=>s++);assert.equal(s,1);assert.ok(calls>=3);
+ clock=now+60000;await suite.refresh();assert.equal(markerInstances.length,1,'refresh retains marker identity and open popup');
+ handlers.moveend.forEach(f=>f());assert.equal(markerInstances.length,1,'popup auto-pan does not recreate markers');
  clock=now+241*60000;await suite.refresh();n=0;suite.layers.temperature.eachLayer(()=>n++);assert.equal(n,0,'expired analysis hides');s=0;suite.stations.eachLayer(()=>s++);assert.equal(s,0,'individual old reports hide');
  suite.stop();onMap.clear();clock=now;
  // An unavailable image must not prevent usable, independent station values.
