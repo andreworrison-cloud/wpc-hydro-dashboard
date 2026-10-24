@@ -4,15 +4,22 @@ from pathlib import Path
 from PIL import Image
 import publish_gdi as publisher
 sys.path.insert(0,str(Path(__file__).parent/'gdi'))
-from guidance_contract import verify_spec
+from guidance_contract import verify_spec, verify_unavailable
 SUITE=os.environ.get('GDI_SUITE','rap')
 if SUITE not in ('rap','guidance','ero','forecast','tle','day1'):raise ValueError('Unknown GDI suite')
 publisher.BRANCH='data/'+SUITE+'-gdi';publisher.MARKER='GDI_SUITE_DATA_BRANCH.json';publisher.IDENTITY={'schema_version':1,'purpose':SUITE+' GDI dashboard suite'}
 def verify(target):
  root=target/'public';m=json.loads((root/'metadata.json').read_text());dt.datetime.fromisoformat(m['cycle'])
- if m.get('schema')!='gdi_named_suite_v1' or m.get('crs')!='EPSG:3857' or [m.get('width'),m.get('height')]!=[2400,1360] or m.get('resampling')!='nearest':raise ValueError('Invalid GDI display contract')
+ if m.get('schema')!='gdi_named_suite_v1' or m.get('crs')!='EPSG:3857' or [m.get('width'),m.get('height')]!=[2400,1360]:raise ValueError('Invalid GDI display contract')
+ if m.get('resampling')!='nearest' and not (SUITE=='rap' and m.get('resampling')=='masked_bilinear' and m.get('display_rendering')=='rap_scalar_bilinear_v1'):raise ValueError('Unrecognized GDI display interpolation')
  if SUITE=='rap' and set(m['products'])!={'analysis','change','forecast'}:raise ValueError('Incomplete RAP suite')
- if SUITE in ('forecast','tle','day1'):verify_spec(m,SUITE)
+ if SUITE in ('forecast','tle','day1'):
+  # Restore the previous recipe only as the exact publishing base. It is never
+  # accepted for new publication or for v3 frontend display.
+  previous_restore=sys.argv[1:2]==['restore'] and m.get('recipe')=='gdi_focused_v2' and m.get('kind')==SUITE
+  if not previous_restore:
+   if m.get('status')=='awaiting_hourly_inputs':verify_unavailable(m)
+   else:verify_spec(m,SUITE)
  if SUITE in ('guidance','ero'):
   keys={'maximum','support30','support40','support50','persistence30','persistence40','persistence50'}
   if SUITE=='guidance':keys|={f'{model}{h}' for model in ('rrfs','blend') for h in (0,3,6)}

@@ -8,7 +8,7 @@ import numpy as np
 from scipy.signal import fftconvolve
 
 UTC = dt.timezone.utc
-RECIPE = 'gdi_focused_v2'
+RECIPE = 'gdi_focused_v3'
 THRESHOLDS = (30, 40, 50)
 TLE_RUNS_PER_MODEL = 6
 TLE_HOURS = 12
@@ -18,8 +18,8 @@ MIN_VALID_FRACTION = .8
 PERCENT_COLORS = ['#142d41', '#205269', '#267991', '#359fa4', '#62c6b4', '#a5debd', '#e5efa6']
 PERCENT_EDGES = [0, 10, 25, 50, 75, 90, 100]
 PRODUCT_KEYS = {
-    'forecast': {f'{model}{h}' for model in ('hrrr', 'rrfs', 'blend') for h in (0, 3, 6)},
-    'tle': {f'{metric}{t}' for metric in ('coverage', 'persistence') for t in THRESHOLDS},
+    'forecast': {f'{model}{h}' for model in ('hrrr', 'rrfs', 'blend') for h in range(7)},
+    'tle': {f'{metric}{t}' for metric in ('exceedance', 'persistence') for t in THRESHOLDS},
     'day1': {'hrrr_maximum', 'rrfs_maximum', 'blend_maximum'},
 }
 
@@ -147,31 +147,14 @@ def tle_fields(members):
     for model in ('hrrr', 'rrfs'):
         if len({m['cycle'] for m in members if m['model'] == model}) != TLE_RUNS_PER_MODEL:
             raise ValueError('Repeated cycle would double-weight a member')
-    kernel = footprint()
     results = {}
-    weights = {model: .5 / TLE_RUNS_PER_MODEL for model in ('hrrr', 'rrfs')}
-    denominators = [disk_sum(m['complete'], kernel) for m in members]
+    all_valid = np.logical_and.reduce([m['complete'] for m in members])
     for threshold in THRESHOLDS:
-        coverage = persistence = None
-        all_valid = None
-        for m, den in zip(members, denominators):
-            good = m['complete']
-            valid = good & (den >= MIN_VALID_FRACTION * kernel.sum())
-            hit = good & (m['max'] >= threshold)
-            num = disk_sum(hit, kernel)
-            spatial = 100 * num / np.maximum(den, 1)
-            recurring = disk_sum(good & m['persistent'][threshold], kernel) > 0
-            w = weights[m['model']]
-            if coverage is None:
-                coverage = w * spatial
-                persistence = w * 100 * recurring.astype('float32')
-                all_valid = valid.copy()
-            else:
-                coverage += w * spatial
-                persistence += w * 100 * recurring
-                all_valid &= valid
-        results[f'coverage{threshold}'] = np.where(all_valid, coverage, np.nan)
-        results[f'persistence{threshold}'] = np.where(all_valid, persistence, np.nan)
+        # Every actual run has one vote. Spatial coverage is not member frequency.
+        hit = sum((m['max'] >= threshold).astype('uint8') for m in members)
+        persistent = sum(m['persistent'][threshold].astype('uint8') for m in members)
+        results[f'exceedance{threshold}'] = np.where(all_valid, 100 * hit.astype('float32') / len(members), np.nan)
+        results[f'persistence{threshold}'] = np.where(all_valid, 100 * persistent.astype('float32') / len(members), np.nan)
     return results
 
 
@@ -181,10 +164,9 @@ def verify_spec(m, suite):
         raise ValueError('Unexpected focused GDI product set')
     start, end = utc(m['window_start']), utc(m['window_end'])
     times = [utc(t) for t in m['sample_times']]
-    expected_times = ([start + dt.timedelta(hours=h) for h in (0, 3, 6)] if suite == 'forecast'
-                      else hourly_times(start, end, include_start=suite == 'day1'))
+    expected_times = hourly_times(start, end)
     if (times != expected_times or m['sample_count'] != len(times)
-            or utc(m['expires_at']) != end):
+            or utc(m['expires_at']) > end):
         raise ValueError('Incomplete/misaligned sample times')
     runs = m['source_metadata']
     per_model = TLE_RUNS_PER_MODEL if suite == 'tle' else 1
@@ -196,21 +178,42 @@ def verify_spec(m, suite):
         if len({r['cycle'] for r in runs if r['model'] == model}) != per_model:
             raise ValueError('Duplicate member cycle')
     for run in runs:
-        if [utc(s['valid_time']) for s in run['samples']] != times:
+        own_times = hourly_times(utc(run['cycle']), utc(run['cycle']) + dt.timedelta(hours=6))
+        expected_run_times = sorted(set(times + own_times)) if suite == 'forecast' else times
+        if [utc(s['valid_time']) for s in run['samples']] != expected_run_times:
             raise ValueError('Model samples do not share the same valid times')
         for s in run['samples']:
             if (utc(s['cycle']) != utc(run['cycle'])
                     or utc(s['cycle']) + dt.timedelta(hours=s['lead']) != utc(s['valid_time'])):
                 raise ValueError('Sample cycle/lead/time mismatch')
     if suite == 'tle':
-        if end != start + dt.timedelta(hours=TLE_HOURS) or m['neighborhood_km'] != NEIGHBORHOOD_KM:
-            raise ValueError('TLE window/neighborhood differs from HRRR-TLE convention')
-        hcycles = sorted(utc(r['cycle']) for r in runs if r['model'] == 'hrrr')
-        if hcycles != [start - dt.timedelta(hours=h) for h in reversed(range(TLE_RUNS_PER_MODEL))]:
-            raise ValueError('HRRR TLE members must be six consecutive aligned cycles')
+        if (end != start + dt.timedelta(hours=TLE_HOURS)
+                or utc(m['expires_at']) != start + dt.timedelta(hours=1)
+                or m.get('frequency_method') != 'native_point_equal_member_frequency'):
+            raise ValueError('TLE must use the current F00-F12 window and point member frequency')
+        if dt.datetime.fromisoformat(m['built_at']).replace(minute=0,second=0,microsecond=0) != start:
+            raise ValueError('TLE reference hour must be the current clock hour')
+        for model in ('hrrr','rrfs'):
+            cycles = sorted(utc(r['cycle']) for r in runs if r['model'] == model)
+            newest = cycles[-1]
+            if newest not in (start, start-dt.timedelta(hours=1)) or cycles != [newest-dt.timedelta(hours=h) for h in reversed(range(6))]:
+                raise ValueError('Each model needs its six consecutive hourly runs; do not fill gaps with older cycles')
         if m.get('persistence_rule') != 'at_least_2_of_3_hourly_samples':
             raise ValueError('Unexpected persistence rule')
+    if suite == 'forecast':
+        if end != start + dt.timedelta(hours=6) or m.get('forecast_sampling') != 'hourly_f00_f06':
+            raise ValueError('Forecast loops require seven hourly frames')
+        origins = {r['model']:utc(r['cycle']) for r in runs}
+        if start != max(origins.values()):raise ValueError('Blend must start at the newest source cycle')
+        if utc(m['expires_at']) != min(v+dt.timedelta(hours=6) for v in origins.values()):
+            raise ValueError('Forecast expiry must respect the earliest model loop endpoint')
+        for model in ('hrrr','rrfs','blend'):
+            origin = start if model == 'blend' else origins[model]
+            for h in range(7):
+                if utc(m['products'][f'{model}{h}']['valid_time']) != origin+dt.timedelta(hours=h):
+                    raise ValueError('Loop frame does not match its valid time')
     if suite == 'day1':
+        if utc(m['expires_at']) != end:raise ValueError('Day 1 expiry must match the ERO endpoint')
         built_at = dt.datetime.fromisoformat(m['built_at'].replace('Z', '+00:00'))
         if built_at.tzinfo is None:
             raise ValueError('Build time needs an explicit UTC offset')
@@ -219,3 +222,18 @@ def verify_spec(m, suite):
             raise ValueError('Day 1 GDI differs from its ERO CAM reference')
         if any(utc(r['cycle']) != cycles[r['model']][0] for r in runs):
             raise ValueError('Day 1 GDI source cycles differ from HREF/REFS cycles')
+
+
+def verify_unavailable(m):
+    if (m.get('recipe') != RECIPE or m.get('kind') != 'tle'
+            or m.get('status') != 'awaiting_hourly_inputs'
+            or m.get('products') != {} or m.get('assets') != {}
+            or not m.get('availability') or not m.get('status_message')):
+        raise ValueError('Invalid unavailable-hourly-input publication')
+    start,end=utc(m['window_start']),utc(m['window_end'])
+    if end != start+dt.timedelta(hours=12) or utc(m['expires_at']) != start+dt.timedelta(hours=1):
+        raise ValueError('Unavailable TLE must still describe the current F00-F12 window')
+    if utc(m['cycle']) != start or dt.datetime.fromisoformat(m['built_at']).replace(minute=0,second=0,microsecond=0)!=start:
+        raise ValueError('Unavailable TLE must describe the current reference hour')
+    if set(m['availability']) != {'hrrr','rrfs'} or all(any(all(c['available'] for c in a['cycles']) for a in attempts) for attempts in m['availability'].values()):
+        raise ValueError('Unavailable status needs an actual incomplete hourly membership')

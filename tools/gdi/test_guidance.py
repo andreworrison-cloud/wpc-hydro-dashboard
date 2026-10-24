@@ -33,8 +33,6 @@ class Source:
         self.cycle = dt.datetime.strptime(cycle, '%Y%m%d%H').replace(tzinfo=UTC)
 
     def tasks(self, lead):
-        if self.model == 'rrfs' and self.cycle.hour % 3:
-            raise ValueError('This fake RRFS source is available every three hours')
         if lead < 0 or lead > build.horizon(self.model, self.cycle):
             raise ValueError('Out of horizon')
         return []
@@ -126,12 +124,12 @@ class Contracts(unittest.TestCase):
                 members.append({**acc.finish(12), 'model': model, 'lag': lag,
                                 'cycle': f'{model}-{lag}'})
         f = tle_fields(members)
-        self.assertAlmostEqual(float(f['coverage30'][20, 20]), 50, places=4)
+        self.assertAlmostEqual(float(f['exceedance30'][20, 20]), 50, places=4)
         self.assertAlmostEqual(float(f['persistence30'][20, 20]), 50, places=4)
         self.assertEqual(float(f['persistence50'][20, 20]), 0)
         members[0]['complete'][20, 20] = False
         f = tle_fields(members)
-        self.assertTrue(np.isnan(f['coverage30'][20, 20]))
+        self.assertTrue(np.isnan(f['exceedance30'][20, 20]))
         self.assertTrue(np.isnan(f['persistence30'][20, 20]))
         with self.assertRaises(ValueError):
             tle_fields(members[:-1])
@@ -150,7 +148,7 @@ class Contracts(unittest.TestCase):
                 verify_spec(spec, spec['kind'])
                 with np.load(root/'render/fields.npz') as f:
                     if mode == 'forecast':
-                        self.assertEqual(len(spec['products']), 9)
+                        self.assertEqual(len(spec['products']), 21)
                         self.assertEqual(float(f['blend3'][20, 20]), 32.5)
                     elif mode == 'ero':
                         self.assertEqual(set(spec['products']), {'hrrr_maximum','rrfs_maximum','blend_maximum'})
@@ -158,13 +156,67 @@ class Contracts(unittest.TestCase):
                         self.assertEqual(spec['sample_count'], 25)
                     else:
                         self.assertEqual(spec['member_count'], 12)
-                        self.assertEqual(spec['sample_count'], 12)
+                        self.assertEqual(spec['sample_count'], 13)
                         self.assertEqual(spec['window_start'], NOW.replace(minute=0,second=0,microsecond=0).isoformat())
                         self.assertAlmostEqual(float(f['persistence40'][20, 20]), 50, places=4)
                         bad = json.loads(json.dumps(spec))
                         bad['source_metadata'][0]['samples'][0]['lead'] += 1
                         with self.assertRaises(ValueError):
                             verify_spec(bad, 'tle')
+
+    def test_hourly_rrfs_gaps_never_substitute_older_runs(self):
+        class ThreeHourly(Source):
+            def tasks(self,lead):
+                if self.model=='rrfs' and self.cycle.hour%3:raise ValueError('No hourly pressure-level cycle')
+                return super().tasks(lead)
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(model_source,'PressureSource',ThreeHourly), mock.patch.object(build,'frame') as decode:
+            root=pathlib.Path(temp)
+            spec=build.main('tle',root,root/'public',NOW)
+            self.assertEqual(spec['status'],'awaiting_hourly_inputs')
+            self.assertEqual(spec['products'],{})
+            self.assertEqual(spec['assets'],{})
+            self.assertIn('RRFS',spec['status_message'])
+            decode.assert_not_called()
+
+    def test_current_hour_window_rolls_and_includes_f00(self):
+        for now in [NOW,NOW+dt.timedelta(hours=1),NOW.replace(hour=0)]:
+            kind,cycles,start,end,times,_=build.select('tle',now,Source)
+            self.assertEqual(start,now.replace(minute=0,second=0,microsecond=0))
+            self.assertEqual(end-start,dt.timedelta(hours=12))
+            self.assertEqual(len(times),13)
+            self.assertEqual(times[0],start)
+            for model in ('hrrr','rrfs'):
+                self.assertEqual(cycles[model],[start-dt.timedelta(hours=h) for h in range(6)])
+
+    def test_frequency_has_one_vote_per_run_without_neighborhood_dilation(self):
+        members=[]
+        for model in ('hrrr','rrfs'):
+            for lag in range(6):
+                acc=MemberAccumulator()
+                for h in range(13):
+                    a=np.zeros((6,6),dtype='float32')
+                    if model=='hrrr' and lag==0 and h in (2,3):a[3,3]=50
+                    acc.update(a)
+                members.append({**acc.finish(13),'model':model,'lag':lag,'cycle':model+str(lag)})
+        result=tle_fields(members)
+        for key in ('exceedance50','persistence50'):
+            self.assertAlmostEqual(float(result[key][3,3]),100/12,places=5)
+            self.assertEqual(result[key][3,2],0)
+        self.assertEqual(result['exceedance30'][0,0],0)
+
+    def test_model_loops_keep_native_cycle_and_blend_matches_valid_time(self):
+        class ThreeHourly(Source):
+            def tasks(self,lead):
+                if self.model=='rrfs' and self.cycle.hour%3:raise ValueError('No hourly pressure-level cycle')
+                return super().tasks(lead)
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(model_source,'PressureSource',ThreeHourly), mock.patch.object(build,'frame',fake_frame), mock.patch.object(build.subprocess,'run'):
+            root=pathlib.Path(temp);m=build.main('forecast',root,root/'public',NOW)
+            self.assertEqual(m['products']['hrrr0']['valid_time'],NOW.replace(minute=0,second=0,microsecond=0).isoformat())
+            self.assertEqual(m['products']['rrfs0']['valid_time'],NOW.replace(hour=15,minute=0,second=0,microsecond=0).isoformat())
+            self.assertEqual(m['products']['blend6']['valid_time'],NOW.replace(hour=23,minute=0,second=0,microsecond=0).isoformat())
+            verify_spec(m,'forecast')
+            m['products']['rrfs6']['valid_time']=m['products']['blend6']['valid_time']
+            with self.assertRaises(ValueError):verify_spec(m,'forecast')
 
     def test_day1_rejects_reference_changed_during_build(self):
         with tempfile.TemporaryDirectory() as temp, \

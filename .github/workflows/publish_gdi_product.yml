@@ -35,6 +35,7 @@ jobs:
       - name: Test timing, weighting, recurrence, and source redundancy
         run: |
           python tools/gdi/test_guidance.py
+          python tools/gdi/test_display.py
           python tools/gdi/test_redundancy.py
       - uses: actions/cache/restore@v6
         with:
@@ -53,7 +54,7 @@ jobs:
           PY
       - name: Restore last verified publication
         run: python tools/publish_gdi_suite.py restore --data-dir run/gdi-data --state-file run/gdi-state.json
-      - name: Build complete focused GDI suite
+      - name: Build current GDI product or explicit hourly-input status
         id: build
         continue-on-error: true
         run: python tools/gdi/build_guidance.py --mode ${{ inputs.mode }} --work run/gdi-product --public run/gdi-data/public
@@ -65,11 +66,16 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import sys
           from datetime import datetime,timezone
           from pathlib import Path
           p=Path('run/gdi-data/public/metadata.json')
           if not p.exists():raise SystemExit('Build failed and no complete prior suite exists')
           m=json.loads(p.read_text())
+          sys.path.insert(0,'tools/gdi')
+          from guidance_contract import verify_spec,verify_unavailable
+          if m.get('status')=='awaiting_hourly_inputs':verify_unavailable(m)
+          else:verify_spec(m,m['kind'])
           if datetime.now(timezone.utc)>=datetime.fromisoformat(m['expires_at']):
               raise SystemExit('Build failed and retained suite is expired')
           print('::warning::Source incomplete; retaining verified suite with its actual source cycles and valid times.')
