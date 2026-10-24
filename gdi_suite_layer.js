@@ -1,37 +1,61 @@
-/* Named GDI suites: immutable assets, actual displayed valid times, forecast-time controls and labeled contours. */
+/* GDI suites: immutable frames, hourly forecast loops, labeled contours. */
 (function(root){
 'use strict';
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function validate(m,keys,previous){
- if(m?.schema!=='gdi_named_suite_v1'||m.width!==2400||m.height!==1360||m.crs!=='EPSG:3857'||m.resampling!=='nearest'||!/^\d{10}-[a-f0-9]{12}-v1$/.test(m.generation)||JSON.stringify(m.bounds)!=='[[24,-125],[50,-66]]'||!Number.isFinite(Date.parse(m.cycle)))throw Error('Invalid GDI suite');
+ const interpolated=m?.model==='rap'&&m.resampling==='masked_bilinear'&&m.display_rendering==='rap_scalar_bilinear_v1';
+ if(m?.schema!=='gdi_named_suite_v1'||m.width!==2400||m.height!==1360||m.crs!=='EPSG:3857'||!(m.resampling==='nearest'||interpolated)||!/^\d{10}-[a-f0-9]{12}-v1$/.test(m.generation)||JSON.stringify(m.bounds)!=='[[24,-125],[50,-66]]'||!Number.isFinite(Date.parse(m.cycle)))throw Error('Invalid GDI suite');
  if(previous&&Date.parse(m.cycle)<Date.parse(previous.cycle))throw Error('Regressing suite');
  if(previous?.generation===m.generation&&JSON.stringify(previous)!==JSON.stringify(m))throw Error('Changed immutable suite');
+ if(m.status==='awaiting_hourly_inputs'){
+  if(m.kind!=='tle'||m.recipe!=='gdi_focused_v3'||Object.keys(m.assets||{}).length||Object.keys(m.products||{}).length||!m.status_message)throw Error('Invalid hourly-input status');
+  return;
+ }
  keys.forEach(k=>{if(!m.products[k]||!Number.isFinite(Date.parse(m.products[k].valid_time)))throw Error('Missing product/time');for(const suffix of ['','_numbers']){const a=m.assets[k+suffix];if(a?.path!==`generations/${m.generation}/${k+suffix}.png`||!/^[a-f0-9]{64}$/.test(a.sha256))throw Error('Invalid image');}});
 }
 function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=null,onChange=()=>{}}){
  const ui=root.GDIDisplay;
- let metadata=null,shown=null,failed=false,numbers=true,serial=0,urls=[],contourFailed=false,loading=false,lastCheck=0,refreshing=null,forecastIndex=0;
+ let metadata=null,shown=null,buffer=null,failed=false,numbers=true,serial=0,contourFailed=false,loading=false,lastCheck=0,refreshing=null,forecastIndex=0,playing=true,speed=800,timer=null,switching=false;
  const layers={};
  map.createPane(paneName);map.getPane(paneName).style.zIndex=340;map.getPane(paneName).style.pointerEvents='none';
  keys.forEach(k=>{const g=L.layerGroup();g.options.opacity=.8;g.setOpacity=v=>{g.options.opacity=v;g.eachLayer(x=>x.setOpacity(v));};layers[k]=g;});
  const selected=()=>keys.find(k=>map.hasLayer(layers[k]));
  const expired=m=>m?.expires_at&&Date.now()>=Date.parse(m.expires_at);
- function clear(){keys.forEach(k=>layers[k].clearLayers());urls.forEach(URL.revokeObjectURL);urls=[];shown=null;}
+ const release=b=>{if(b)b.frames.forEach(f=>f.urls.forEach(URL.revokeObjectURL));};
+ function stop(){if(timer!==null)clearTimeout(timer);timer=null;}
+ function clear(){stop();keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=null;shown=null;}
+ function schedule(){
+  stop();if(!playing||document.hidden||!buffer?.loop||selected()!==buffer.base||expired(buffer.m))return;
+  timer=setTimeout(()=>{timer=null;if(!buffer||expired(buffer.m)){draw();return;}forecastIndex=(forecastIndex+1)%buffer.frames.length;showFrame();},speed);
+ }
+ function showFrame(){
+  if(!buffer)return;
+  const base=selected();if(base!==buffer.base)return;
+  forecastIndex=Math.min(forecastIndex,buffer.frames.length-1);
+  const f=buffer.frames[buffer.loop?forecastIndex:0];
+  keys.forEach(k=>layers[k].clearLayers());
+  f.urls.forEach(u=>L.imageOverlay(u,buffer.m.bounds,{pane:paneName,opacity:layers[base].options.opacity,interactive:false}).addTo(layers[base]));
+  shown={m:buffer.m,k:f.key,base};onChange();schedule();
+ }
  async function draw(){
-  const base=selected(),k=forecastGroups[base]?.[forecastIndex]||base,token=++serial,m=metadata;
-  if(!base||!m){loading=false;onChange();return;}
-  if(expired(m)){clear();loading=false;onChange();return;}
+  stop();const base=selected(),token=++serial,m=metadata;
+  if(!base||!m){if(!base)clear();loading=false;onChange();return;}
+  if(expired(m)||m.status==='awaiting_hourly_inputs'){clear();loading=false;onChange();return;}
+  const want=numbers&&m.overlay_type==='labeled_contours_v1',group=forecastGroups[base];
+  if(buffer?.base===base&&buffer.m.generation===m.generation&&buffer.want===want&&!failed&&!contourFailed){showFrame();return;}
   loading=true;onChange();
-  const want=numbers&&m.overlay_type==='labeled_contours_v1';
-  const results=await Promise.allSettled([k,...(want?[k+'_numbers']:[])].map(x=>ui.image(m,x,metadataURL)));
-  const fresh=results.filter(x=>x.status==='fulfilled').map(x=>x.value);
-  if(token!==serial){fresh.forEach(URL.revokeObjectURL);return;}
+  // Complete the loop before playback: never skip a missing hour or mix generations.
+  const result=await Promise.all((group||[base]).map(async key=>{
+   const parts=await Promise.allSettled([key,...(want?[key+'_numbers']:[])].map(k=>ui.image(m,k,metadataURL)));
+   return {key,baseOK:parts[0].status==='fulfilled',contourOK:!want||parts[1].status==='fulfilled',urls:parts.filter(x=>x.status==='fulfilled').map(x=>x.value)};
+  }));
+  const fresh={m,base,want,loop:!!group,frames:result};
+  if(token!==serial){release(fresh);return;}
   loading=false;
-  if(results[0].status==='rejected'){fresh.forEach(URL.revokeObjectURL);failed=true;onChange();return;}
-  if(expired(m)){fresh.forEach(URL.revokeObjectURL);clear();onChange();return;}
-  contourFailed=want&&results[1].status==='rejected';
-  clear();fresh.forEach(u=>L.imageOverlay(u,m.bounds,{pane:paneName,opacity:layers[base].options.opacity,interactive:false}).addTo(layers[base]));
-  urls=fresh;shown={m,k,base};failed=false;onChange();
+  if(result.some(f=>!f.baseOK)){release(fresh);failed=true;onChange();schedule();return;}
+  if(expired(m)){release(fresh);clear();onChange();return;}
+  contourFailed=result.some(f=>!f.contourOK);
+  keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=fresh;failed=false;showFrame();
  }
  function refresh(){
   if(refreshing)return refreshing;
@@ -43,28 +67,42 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   finally{refreshing=null;}})();return refreshing;
  }
  map.on('layeradd layerremove',e=>{
+  if(switching)return;
   const k=keys.find(x=>layers[x]===e.layer);if(!k)return;
-  if(e.type==='layeradd')keys.filter(x=>x!==k).forEach(x=>{if(map.hasLayer(layers[x]))map.removeLayer(layers[x]);});
+  if(e.type==='layeradd'){switching=true;try{keys.filter(x=>x!==k).forEach(x=>{if(map.hasLayer(layers[x]))map.removeLayer(layers[x]);});}finally{switching=false;}}
   draw();if(e.type==='layeradd'&&(!metadata||Date.now()-lastCheck>60000))refresh();
  });
- document.addEventListener('change',e=>{if(e.target?.dataset?.gdiSuite===paneName){numbers=e.target.checked;draw();}else if(e.target?.dataset?.gdiForecast===paneName){const i=Number(e.target.value);if(Number.isInteger(i)&&i>=0&&i<3){forecastIndex=i;draw();}}});
- document.addEventListener('visibilitychange',()=>{if(!document.hidden&&selected())refresh();});
+ document.addEventListener('change',e=>{
+  if(e.target?.dataset?.gdiSuite===paneName){numbers=e.target.checked;draw();}
+  else if(e.target?.dataset?.gdiForecast===paneName){const i=Number(e.target.value),group=forecastGroups[selected()];if(Number.isInteger(i)&&i>=0&&i<(group?.length||0)){playing=false;forecastIndex=i;draw();}}
+  else if(e.target?.dataset?.gdiSpeed===paneName){const value=Number(e.target.value);if([400,800,1400].includes(value)){speed=value;schedule();}}
+ });
+ document.addEventListener('click',e=>{
+  const t=e.target?.closest?.('[data-gdi-play],[data-gdi-step]')||e.target;
+  if(t?.dataset?.gdiPlay===paneName){playing=!playing;onChange();schedule();}
+  else if(t?.dataset?.gdiStep===paneName&&buffer?.loop){playing=false;forecastIndex=(forecastIndex+Number(t.dataset.direction)+buffer.frames.length)%buffer.frames.length;showFrame();}
+ });
+ document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();else if(selected()){refresh();schedule();}});
  function legendHTML(){
   const base=selected();if(!base)return '';
-  const k=forecastGroups[base]?.[forecastIndex]||base;
+  if(metadata?.status==='awaiting_hourly_inputs')return '<div class="gdi-legend"><strong>HRRR/RRFS TLE</strong><div class="gdi-status">'+esc(metadata.status_message)+'</div><div class="gdi-note">'+(expired(metadata)?'Awaiting the current F00–F12 window. ':'Requested period '+ui.utc(metadata.window_start)+' – '+ui.utc(metadata.window_end)+'. ')+'Last source check '+ui.utc(metadata.built_at)+'.</div></div>';
+  const group=forecastGroups[base],k=group?.[forecastIndex]||base;
   const d=shown?.base===base?shown:null,m=d?.m,p=m?.products[d?.k];
-  if(!d)return '<div class="gdi-legend"><strong>'+esc(metadata?.products[k]?.label||'GDI')+'</strong><div class="gdi-status">'+(expired(metadata)?'Forecast window ended · awaiting current guidance':failed?'Data unavailable · retrying automatically':'Loading selected field…')+'</div></div>';
+  if(!d)return '<div class="gdi-legend"><strong>'+esc(metadata?.products[k]?.label||'GDI')+'</strong><div class="gdi-status">'+(expired(metadata)?'Forecast window ended · awaiting current guidance':failed?'Data unavailable · retrying automatically':group?'Loading hourly forecast loop…':'Loading selected field…')+'</div></div>';
   let html='<div class="gdi-legend"><strong>'+esc(p.label)+'</strong>';
   html+='<div class="gdi-time">'+(p.window_start?'Period '+ui.utc(p.window_start)+' – '+ui.utc(p.valid_time):'Valid '+ui.utc(p.valid_time))+'</div>';
-  html+='<div class="gdi-note">'+(p.source_label?esc(p.source_label):'Model cycle '+ui.utc(p.cycle||m.cycle))+'</div>';
+  html+='<div class="gdi-note">'+(p.source_label?esc(p.source_label):esc((m.model||'Model').toUpperCase())+' cycle '+ui.utc(p.cycle||m.cycle))+'</div>';
   if(loading)html+='<div class="gdi-status">Loading update · displayed times shown above</div>';
   else if(failed)html+='<div class="gdi-status">Update unavailable · retaining displayed data; retrying</div>';
-  if(contourFailed)html+='<div class="gdi-status">Contours unavailable · shading loaded; retrying</div>';
-  if(!m.window_start&&Date.now()-Date.parse(m.cycle)>6*3600000)html+='<div class="gdi-status">Older cycle · awaiting update</div>';
-  if(forecastGroups[base])html+='<div class="gdi-controls"><label>Valid time <select aria-label="GDI forecast valid time" data-gdi-forecast="'+paneName+'">'+forecastGroups[base].map((key,i)=>'<option value="'+i+'" '+(i===forecastIndex?'selected':'')+'>'+esc(ui.utc(metadata.products[key].valid_time))+'</option>').join('')+'</select></label></div>';
+  if(contourFailed)html+='<div class="gdi-status">Some contours unavailable · shading loaded; retrying</div>';
+  if(group){
+   html+='<div class="gdi-controls gdi-playback"><button type="button" data-gdi-step="'+paneName+'" data-direction="-1" aria-label="Previous GDI forecast frame">◀</button><button type="button" data-gdi-play="'+paneName+'" aria-label="'+(playing?'Pause':'Play')+' GDI forecast loop">'+(playing?'Pause':'Play')+'</button><button type="button" data-gdi-step="'+paneName+'" data-direction="1" aria-label="Next GDI forecast frame">▶</button><span>Frame '+(forecastIndex+1)+' / '+group.length+'</span></div>';
+   html+='<div class="gdi-controls"><label>Valid time <select aria-label="GDI forecast valid time" data-gdi-forecast="'+paneName+'">'+group.map((key,i)=>'<option value="'+i+'" '+(i===forecastIndex?'selected':'')+'>'+esc(ui.utc(m.products[key].valid_time))+'</option>').join('')+'</select></label><label>Speed <select aria-label="GDI forecast loop speed" data-gdi-speed="'+paneName+'">'+[[1400,'Slow'],[800,'Normal'],[400,'Fast']].map(([v,label])=>'<option value="'+v+'" '+(v===speed?'selected':'')+'>'+label+'</option>').join('')+'</select></label></div>';
+  }
   html+=ui.controls('data-gdi-suite="'+paneName+'"',numbers);
-  const unit=p.unit||(k.startsWith('support')?'Neighborhood support (%)':k.startsWith('persistence')?'Mean qualifying hourly samples':k==='change'?'GDI change (3 h)':'GDI');
+  const unit=p.unit||(k==='change'?'GDI change (3 h)':'GDI');
   html+=ui.scale(p.colors||[],p.edges||[],unit);
+  if(m.display_rendering==='rap_scalar_bilinear_v1')html+='<div class="gdi-note">13-km RAP · interpolated display</div>';
   html+='<div class="gdi-note">'+esc(p.legend)+'</div></div>';return html;
  }
  refresh();setInterval(()=>{if(selected()&&(failed||contourFailed||Date.now()-lastCheck>=120000||expired(metadata)))refresh();},15000);
