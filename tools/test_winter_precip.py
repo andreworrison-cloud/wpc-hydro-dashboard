@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import numpy as np
-from winter_precip import classify, colorize, RAIN, MIX, SNOW, ICE
+from winter_precip import classify, colorize, RAIN, MIX, SNOW, ICE, THRESHOLDS_DBZ, INTENSITY_COLORS
 
 # All 16 binary combinations. Sleet+freezing rain alone remains ice.
 for r,s,p,f in itertools.product((0,1),repeat=4):
@@ -27,4 +27,11 @@ assert actual.tolist() == [SNOW,RAIN] and not supported.any()
 rgba = colorize(np.array([[4,5,30,np.nan,60.]]),np.array([[RAIN,RAIN,ICE,SNOW,0]]))
 assert rgba[0,:,3].tolist() == [0,255,255,0,0]
 assert not np.array_equal(rgba[0,1,:3],rgba[0,2,:3])
+for code,colors in INTENSITY_COLORS.items():
+    probes=np.array([[4,5,9.99,10,34.99,35,74.99,75,100,np.nan]])
+    rgba=colorize(probes,np.full(probes.shape,code))
+    for j,index in ((1,0),(2,0),(3,1),(4,5),(5,6),(6,13),(7,14),(8,14)):
+        assert rgba[0,j,:3].tolist()==[int(colors[index][k:k+2],16) for k in (1,3,5)]
+    assert rgba[0,0,3]==0 and rgba[0,9,3]==0
+    assert len(set(colors))==15
 print('Winter type science contracts PASS: all phase combinations, hail exclusion, missing/dry masking, rendering.')

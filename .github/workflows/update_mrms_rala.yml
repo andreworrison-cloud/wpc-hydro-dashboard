@@ -151,7 +151,7 @@ jobs:
       - name: Report optional winter supplement failure
         if: steps.winter_type.outcome == 'failure'
         run: |
-          rm -rf "$MRMS_RALA_OUTPUT_DIR/winter_frames"
+          rm -rf "$MRMS_RALA_OUTPUT_DIR/winter_frames" "$MRMS_RALA_OUTPUT_DIR/winter_frames_v2"
           echo '::warning::Winter type supplement unavailable. Validated MRMS reflectivity will still publish.'
 
       - name: Publish current loop to history-free data branch

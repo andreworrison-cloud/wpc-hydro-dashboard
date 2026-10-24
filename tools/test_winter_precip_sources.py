@@ -25,7 +25,7 @@ assert {c.provider for c in candidates}=={'NCEP MRMS HTTPS','NOAA NODD MRMS (AWS
 assert candidates[0].timestamp==candidates[1].timestamp
 
 with tempfile.TemporaryDirectory() as td:
-    root=Path(td);rel='winter_frames/winter_20261024T053440Z.png'
+    root=Path(td);rel='winter_frames_v2/winter_20261024T053440Z.png'
     image=root/rel;image.parent.mkdir();Image.new('RGBA',(2,3),(0,255,0,255)).save(image)
     frame={'valid_time_utc':'2026-10-24T05:34:40Z'}
     display={'image_width_px':2,'image_height_px':3}
