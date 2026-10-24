@@ -9,7 +9,7 @@ import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-from guidance_contract import (UTC, RECIPE, THRESHOLDS, TLE_RUNS_PER_MODEL,
+from guidance_contract import (UTC, RECIPE, FORECAST_SAMPLING, THRESHOLDS, TLE_RUNS_PER_MODEL,
     TLE_HOURS, NEIGHBORHOOD_KM, MIN_VALID_FRACTION, PERCENT_COLORS,
     PERCENT_EDGES, MemberAccumulator, cam_ero_contract, hourly_times,
     check_grids, equal_model_mean, tle_fields, verify_spec, verify_unavailable)
@@ -28,12 +28,15 @@ def horizon(model, cycle):
     return (48 if model == 'hrrr' else 84) if cycle.hour % 6 == 0 else 18
 
 
-def probe(model, cycle, times, source_factory):
+def probe(model, cycle, times, source_factory, all_hours=False):
     leads = [int((t - cycle).total_seconds() / 3600) for t in times]
     if min(leads) < 0 or max(leads) > horizon(model, cycle):
         raise ValueError('Valid window exceeds model horizon')
     source = source_factory(model, cycle.strftime('%Y%m%d%H'))
-    for lead in sorted({leads[0], leads[-1]}):
+    # Fail quickly on missing endpoints, then check every intermediate forecast
+    # hour before choosing a run for the synchronized loops.
+    checks = sorted({leads[0], leads[-1]}) + (leads[1:-1] if all_hours else [])
+    for lead in checks:
         source.tasks(lead)
 
 
@@ -88,18 +91,15 @@ def select(mode, now, source_factory, cam=None):
             probe(model, runs[0], times, source_factory)
         return 'day1', cycles, start, end, times, cam
     if mode == 'forecast':
+        start=hour;end=start+dt.timedelta(hours=6);times=hourly_times(start,end)
         cycles={}
         for model in ('hrrr','rrfs'):
-            for age in range(7):
+            for age in range(6):
                 cycle=hour-dt.timedelta(hours=age)
-                if cycle+dt.timedelta(hours=6)<=now:continue
-                try:probe(model,cycle,hourly_times(cycle,cycle+dt.timedelta(hours=6)),source_factory)
+                try:probe(model,cycle,times,source_factory,all_hours=True)
                 except Exception:continue
                 cycles[model]=[cycle];break
-            else:raise ValueError('No complete six-hour '+model+' forecast loop')
-        start=max(v[0] for v in cycles.values());end=start+dt.timedelta(hours=6)
-        times=hourly_times(start,end)
-        for model in cycles:probe(model,cycles[model][0],times,source_factory)
+            else:raise ValueError('No complete '+model+' run covers the common six-hour window')
         return 'forecast', cycles, start, end, times, None
     times=hourly_times(hour,hour+dt.timedelta(hours=12))
     cycles,report={},{}
@@ -179,7 +179,8 @@ def main(mode, work, public, now=None, cam=None, cache_root=None):
     except HourlyInputsUnavailable as exc:return unavailable_publication(public,now,exc.report)
     signature = hashlib.sha256(json.dumps({'recipe': RECIPE, 'kind': kind,
         'cycles': {k: [c.isoformat() for c in v] for k, v in cycles.items()},
-        'times': [t.isoformat() for t in times]}, sort_keys=True).encode()).hexdigest()
+        'times': [t.isoformat() for t in times],
+        **({'forecast_sampling':FORECAST_SAMPLING} if kind=='forecast' else {})}, sort_keys=True).encode()).hexdigest()
     public = pathlib.Path(public)
     old_path = public / 'metadata.json'
     if old_path.exists():
@@ -196,8 +197,7 @@ def main(mode, work, public, now=None, cam=None, cache_root=None):
     for model in ('hrrr', 'rrfs'):
         for lag, cycle in enumerate(cycles[model]):
             acc, samples = MemberAccumulator(), []
-            own_times=hourly_times(cycle,cycle+dt.timedelta(hours=6))
-            requested_times=sorted(set(times+own_times)) if kind=='forecast' else times
+            requested_times=times
             for valid in requested_times:
                 lead = int((valid - cycle).total_seconds() / 3600)
                 field, m = frame(model, cycle, lead, cache, grids)
@@ -233,16 +233,20 @@ def main(mode, work, public, now=None, cam=None, cache_root=None):
             products[key]['window_start'] = start.isoformat()
     if kind == 'forecast':
         for h in range(7):
-            for model in ('hrrr', 'rrfs'):
-                valid=cycles[model][0]+dt.timedelta(hours=h)
-                add(f'{model}{h}', selected[model, valid], model.upper() + ' GDI',
-                    'Hourly F00–F06 forecast loop · 5-unit color bins', valid, False,
-                    cycle=cycles[model][0].isoformat(),forecast_hour=h)
-                products[f'{model}{h}']['source_label'] = model.upper() + ' cycle ' + cycles[model][0].strftime('%m-%d %HZ')
             valid=start+dt.timedelta(hours=h)
+            for model in ('hrrr', 'rrfs'):
+                lead=int((valid-cycles[model][0]).total_seconds()/3600)
+                add(f'{model}{h}', selected[model, valid], model.upper() + ' GDI',
+                    'Hourly forecast · common valid times · 5-unit color bins', valid, False,
+                    cycle=cycles[model][0].isoformat(),forecast_hour=lead)
+                products[f'{model}{h}']['source_label'] = model.upper() + ' cycle ' + cycles[model][0].strftime('%m-%d %HZ') + f' · F{lead:02d}'
             add(f'blend{h}', equal_model_mean(selected['hrrr', valid], selected['rrfs', valid]),
                 'HRRR/RRFS GDI Blend', 'Equal-weight model mean at the same valid time',
                 valid, False,forecast_hour=h)
+            products[f'blend{h}']['source_label'] = ' / '.join(model.upper() + ' ' +
+                cycles[model][0].strftime('%m-%d %HZ') +
+                f' F{int((valid-cycles[model][0]).total_seconds()/3600):02d}'
+                for model in ('hrrr','rrfs'))
     elif kind == 'day1':
         h, r = members[0]['max'], members[1]['max']
         add('hrrr_maximum', h, 'Day 1 ERO · Maximum HRRR GDI', 'Maximum HRRR GDI over the displayed ERO period')
@@ -273,10 +277,7 @@ def main(mode, work, public, now=None, cam=None, cache_root=None):
                     frequency_method='native_point_equal_member_frequency',
                     persistence_rule='at_least_2_of_3_hourly_samples')
     if kind=='forecast':
-        spec.update(forecast_sampling='hourly_f00_f06',
-                    expires_at=min(v[0]+dt.timedelta(hours=6) for v in cycles.values()).isoformat())
-        if not supplied_time and dt.datetime.fromisoformat(spec['expires_at'])<=dt.datetime.now(UTC):
-            raise ValueError('A model forecast loop expired during processing')
+        spec.update(forecast_sampling=FORECAST_SAMPLING)
     if cam is not None:
         spec['ero_cam'] = cam
         spec['ero_cam_source'] = CAM_URL

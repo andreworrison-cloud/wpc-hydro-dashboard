@@ -9,6 +9,7 @@ from scipy.signal import fftconvolve
 
 UTC = dt.timezone.utc
 RECIPE = 'gdi_focused_v3'
+FORECAST_SAMPLING = 'common_valid_hourly_v1'
 THRESHOLDS = (30, 40, 50)
 TLE_RUNS_PER_MODEL = 6
 TLE_HOURS = 12
@@ -158,7 +159,7 @@ def tle_fields(members):
     return results
 
 
-def verify_spec(m, suite):
+def verify_spec(m, suite, allow_legacy_forecast=False):
     """Validate scientific timing/aggregation provenance before publishing PNGs."""
     if m.get('recipe') != RECIPE or m.get('kind') != suite or set(m.get('products', {})) != PRODUCT_KEYS[suite]:
         raise ValueError('Unexpected focused GDI product set')
@@ -169,6 +170,8 @@ def verify_spec(m, suite):
             or utc(m['expires_at']) > end):
         raise ValueError('Incomplete/misaligned sample times')
     runs = m['source_metadata']
+    legacy_forecast = (suite == 'forecast' and allow_legacy_forecast
+                       and m.get('forecast_sampling') == 'hourly_f00_f06')
     per_model = TLE_RUNS_PER_MODEL if suite == 'tle' else 1
     expected = [(model, lag) for model in ('hrrr', 'rrfs') for lag in range(per_model)]
     if (m['member_count'] != 2 * per_model
@@ -179,7 +182,7 @@ def verify_spec(m, suite):
             raise ValueError('Duplicate member cycle')
     for run in runs:
         own_times = hourly_times(utc(run['cycle']), utc(run['cycle']) + dt.timedelta(hours=6))
-        expected_run_times = sorted(set(times + own_times)) if suite == 'forecast' else times
+        expected_run_times = sorted(set(times + own_times)) if legacy_forecast else times
         if [utc(s['valid_time']) for s in run['samples']] != expected_run_times:
             raise ValueError('Model samples do not share the same valid times')
         for s in run['samples']:
@@ -201,17 +204,31 @@ def verify_spec(m, suite):
         if m.get('persistence_rule') != 'at_least_2_of_3_hourly_samples':
             raise ValueError('Unexpected persistence rule')
     if suite == 'forecast':
-        if end != start + dt.timedelta(hours=6) or m.get('forecast_sampling') != 'hourly_f00_f06':
+        if end != start + dt.timedelta(hours=6) or (not legacy_forecast and m.get('forecast_sampling') != FORECAST_SAMPLING):
             raise ValueError('Forecast loops require seven hourly frames')
         origins = {r['model']:utc(r['cycle']) for r in runs}
-        if start != max(origins.values()):raise ValueError('Blend must start at the newest source cycle')
-        if utc(m['expires_at']) != min(v+dt.timedelta(hours=6) for v in origins.values()):
-            raise ValueError('Forecast expiry must respect the earliest model loop endpoint')
+        if legacy_forecast:
+            if start != max(origins.values()):raise ValueError('Legacy blend must start at the newest source cycle')
+            if utc(m['expires_at']) != min(v+dt.timedelta(hours=6) for v in origins.values()):
+                raise ValueError('Legacy forecast expiry differs from model loop endpoints')
+        else:
+            built_at = dt.datetime.fromisoformat(m['built_at'].replace('Z','+00:00'))
+            if built_at.tzinfo is None or start != built_at.astimezone(UTC).replace(minute=0,second=0,microsecond=0):
+                raise ValueError('Common forecast window must start at the current UTC hour')
+            if utc(m['expires_at']) != end or utc(m['cycle']) != max(origins.values()):
+                raise ValueError('Forecast expiry/source cycle mismatch')
+            if any(not start-dt.timedelta(hours=6)<v<=start for v in origins.values()):
+                raise ValueError('Forecast source cycle is future-dated or older than six hours')
         for model in ('hrrr','rrfs','blend'):
-            origin = start if model == 'blend' else origins[model]
+            origin = origins[model] if legacy_forecast and model != 'blend' else start
             for h in range(7):
-                if utc(m['products'][f'{model}{h}']['valid_time']) != origin+dt.timedelta(hours=h):
+                p = m['products'][f'{model}{h}']
+                valid = origin+dt.timedelta(hours=h)
+                if utc(p['valid_time']) != valid:
                     raise ValueError('Loop frame does not match its valid time')
+                if not legacy_forecast and model != 'blend' and (utc(p['cycle']) != origins[model]
+                        or p['forecast_hour'] != int((valid-origins[model]).total_seconds()/3600)):
+                    raise ValueError('Forecast frame cycle/lead does not match the shared valid time')
     if suite == 'day1':
         if utc(m['expires_at']) != end:raise ValueError('Day 1 expiry must match the ERO endpoint')
         built_at = dt.datetime.fromisoformat(m['built_at'].replace('Z', '+00:00'))

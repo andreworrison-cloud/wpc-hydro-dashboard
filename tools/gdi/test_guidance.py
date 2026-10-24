@@ -204,19 +204,60 @@ class Contracts(unittest.TestCase):
             self.assertEqual(result[key][3,2],0)
         self.assertEqual(result['exceedance30'][0,0],0)
 
-    def test_model_loops_keep_native_cycle_and_blend_matches_valid_time(self):
+    def test_model_loops_share_valid_times_and_keep_actual_forecast_leads(self):
         class ThreeHourly(Source):
             def tasks(self,lead):
                 if self.model=='rrfs' and self.cycle.hour%3:raise ValueError('No hourly pressure-level cycle')
                 return super().tasks(lead)
-        with tempfile.TemporaryDirectory() as temp, mock.patch.object(model_source,'PressureSource',ThreeHourly), mock.patch.object(build,'frame',fake_frame), mock.patch.object(build.subprocess,'run'):
+        def timed_frame(model,cycle,lead,cache,grids):
+            field,meta=fake_frame(model,cycle,lead,cache,grids)
+            return field+lead,meta
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(model_source,'PressureSource',ThreeHourly), mock.patch.object(build,'frame',timed_frame), mock.patch.object(build.subprocess,'run'):
             root=pathlib.Path(temp);m=build.main('forecast',root,root/'public',NOW)
-            self.assertEqual(m['products']['hrrr0']['valid_time'],NOW.replace(minute=0,second=0,microsecond=0).isoformat())
-            self.assertEqual(m['products']['rrfs0']['valid_time'],NOW.replace(hour=15,minute=0,second=0,microsecond=0).isoformat())
-            self.assertEqual(m['products']['blend6']['valid_time'],NOW.replace(hour=23,minute=0,second=0,microsecond=0).isoformat())
+            start=NOW.replace(minute=0,second=0,microsecond=0)
+            for h in range(7):
+                for model in ('hrrr','rrfs','blend'):
+                    self.assertEqual(m['products'][f'{model}{h}']['valid_time'],(start+dt.timedelta(hours=h)).isoformat())
+                self.assertEqual(m['products'][f'hrrr{h}']['forecast_hour'],h)
+                self.assertEqual(m['products'][f'rrfs{h}']['forecast_hour'],h+2)
+            self.assertEqual(m['products']['rrfs0']['cycle'],start.replace(hour=15).isoformat())
+            self.assertEqual(m['expires_at'],m['window_end'])
+            with np.load(root/'render/fields.npz') as fields:
+                for h in range(7):
+                    np.testing.assert_array_equal(fields[f'rrfs{h}'],np.full((40,40),22+h))
+                    np.testing.assert_array_equal(fields[f'blend{h}'],np.full((40,40),33.5+h))
             verify_spec(m,'forecast')
-            m['products']['rrfs6']['valid_time']=m['products']['blend6']['valid_time']
-            with self.assertRaises(ValueError):verify_spec(m,'forecast')
+            for change in ('valid_time','forecast_hour','cycle'):
+                bad=json.loads(json.dumps(m))
+                bad['products']['rrfs6'][change] = 6 if change=='forecast_hour' else start.isoformat()
+                with self.assertRaises(ValueError):verify_spec(bad,'forecast')
+
+    def test_forecast_skips_run_missing_an_intermediate_hour(self):
+        class Partial(Source):
+            def tasks(self,lead):
+                if self.model=='hrrr' and self.cycle.hour==17 and lead==3:
+                    raise ValueError('Intermediate hour missing despite complete endpoints')
+                return super().tasks(lead)
+        _,cycles,start,end,times,_=build.select('forecast',NOW,Partial)
+        self.assertEqual(cycles['hrrr'][0].hour,16)
+        self.assertEqual(start,NOW.replace(minute=0,second=0,microsecond=0))
+        self.assertEqual(end,start+dt.timedelta(hours=6))
+        self.assertEqual(len(times),7)
+
+    def test_forecast_window_rolls_across_utc_midnight(self):
+        now=NOW.replace(hour=23)
+        _,cycles,start,end,times,_=build.select('forecast',now,Source)
+        self.assertEqual(start.hour,23)
+        self.assertEqual(end.day,24)
+        self.assertEqual(end.hour,5)
+        self.assertEqual(len(times),7)
+
+    def test_legacy_forecast_can_only_be_retained_or_restored(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(model_source,'PressureSource',Source), mock.patch.object(build,'frame',fake_frame), mock.patch.object(build.subprocess,'run'):
+            root=pathlib.Path(temp);m=build.main('forecast',root,root/'public',NOW)
+        m['forecast_sampling']='hourly_f00_f06'
+        with self.assertRaises(ValueError):verify_spec(m,'forecast')
+        verify_spec(m,'forecast',allow_legacy_forecast=True)
 
     def test_day1_rejects_reference_changed_during_build(self):
         with tempfile.TemporaryDirectory() as temp, \

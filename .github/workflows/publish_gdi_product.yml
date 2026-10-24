@@ -75,7 +75,7 @@ jobs:
           sys.path.insert(0,'tools/gdi')
           from guidance_contract import verify_spec,verify_unavailable
           if m.get('status')=='awaiting_hourly_inputs':verify_unavailable(m)
-          else:verify_spec(m,m['kind'])
+          else:verify_spec(m,m['kind'],allow_legacy_forecast=True)
           if datetime.now(timezone.utc)>=datetime.fromisoformat(m['expires_at']):
               raise SystemExit('Build failed and retained suite is expired')
           print('::warning::Source incomplete; retaining verified suite with its actual source cycles and valid times.')
