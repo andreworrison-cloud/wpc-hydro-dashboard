@@ -79,6 +79,8 @@ jobs:
           python -m py_compile \
             fetch_mrms_rala.py \
             fetch_mrms_rala_loop.py \
+            fetch_mrms_winter_type.py \
+            winter_precip.py \
             tools/validate_mrms_rala_loop.py
 
       - name: Restore prior rolling-loop package from data branch
@@ -106,7 +108,10 @@ jobs:
           fi
 
       - name: Run MRMS 10-minute archive selection self-test
-        run: python fetch_mrms_rala_loop.py --self-test
+        run: |
+          python fetch_mrms_rala_loop.py --self-test
+          python tools/test_winter_precip.py
+          python tools/test_winter_precip_sources.py
 
       - name: Build rolling six-hour NOAA MRMS RALA archive
         env:
@@ -134,6 +139,20 @@ jobs:
           --max-gap-minutes 20
           --default-window-minutes 120
           --minimum-default-window-frames 12
+
+      - name: Add experimental winter precipitation type
+        id: winter_type
+        continue-on-error: true
+        run: |
+          timeout --signal=TERM 600s python fetch_mrms_winter_type.py \
+            --output-dir "$MRMS_RALA_OUTPUT_DIR" \
+            --cache-dir "$MRMS_RALA_CACHE_DIR"
+
+      - name: Report optional winter supplement failure
+        if: steps.winter_type.outcome == 'failure'
+        run: |
+          rm -rf "$MRMS_RALA_OUTPUT_DIR/winter_frames"
+          echo '::warning::Winter type supplement unavailable. Validated MRMS reflectivity will still publish.'
 
       - name: Publish current loop to history-free data branch
         shell: bash

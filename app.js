@@ -991,6 +991,9 @@ let mrmsRalaSpeedControl = null;
 let mrmsRalaSpeedSlider = null;
 let mrmsRalaSpeedValue = null;
 let mrmsRalaWindowSelect = null;
+let mrmsRalaModeSelect = null;
+let mrmsRalaDisplayMode = 'reflectivity';
+let mrmsRalaCurrentImageUrl = '';
 let mrmsRalaWindowMinutes = MRMS_RALA_DEFAULT_WINDOW_MINUTES;
 let mrmsRalaTimelineEchoTime = null;
 
@@ -1192,6 +1195,15 @@ function createMRMSRALAFrameStepControl() {
     windowSelect.addEventListener('change', event => {
         setMRMSRALAWindowMinutes(Number(event.target.value));
     });
+
+    const modeSelect = L.DomUtil.create('select', 'mrms-rala-mode-select', control);
+    modeSelect.setAttribute('aria-label', 'Radar display');
+    modeSelect.title = 'Reflectivity or experimental MRMS + HRRR precipitation type';
+    modeSelect.style.marginRight = '8px';
+    modeSelect.style.fontSize = '10px';
+    modeSelect.innerHTML = '<option value="reflectivity">Reflectivity</option><option value="ptype" disabled>Rain / Mix / Snow / Ice</option>';
+    modeSelect.addEventListener('change', event => setMRMSRALADisplayMode(event.target.value));
+    mrmsRalaModeSelect = modeSelect;
 
     const slow = L.DomUtil.create('span', 'mrms-rala-speed-label', control);
     slow.textContent = 'Slow';
@@ -4444,7 +4456,42 @@ function validateMRMSRALAManifest(manifest) {
 }
 
 function mrmsRalaFrameUrl(frame) {
-    return `${MRMS_RALA_DATA_ROOT}/${frame.png}?v=${encodeURIComponent(frame.valid_time_utc)}`;
+    const path = WinterPrecipDisplay.path(frame, mrmsRalaDisplayMode);
+    return `${MRMS_RALA_DATA_ROOT}/${path}?v=${encodeURIComponent(frame.valid_time_utc)}&mode=${mrmsRalaDisplayMode}`;
+}
+
+function syncMRMSRALADisplayMode() {
+    const available = WinterPrecipDisplay.available(mrmsRalaMetadata);
+    if (!available && mrmsRalaDisplayMode === 'ptype') {
+        mrmsRalaDisplayMode = 'reflectivity';
+        ++mrmsRalaFrameRequestSerial;
+        mrmsRalaCurrentImageUrl = '';
+        // Hide the previous type image until reflectivity has finished loading.
+        mrmsRalaVisibleLayer.setOpacity(0);
+    }
+    if (mrmsRalaModeSelect) {
+        mrmsRalaModeSelect.querySelector('option[value="ptype"]').disabled = !available;
+        mrmsRalaModeSelect.value = mrmsRalaDisplayMode;
+    }
+}
+
+async function setMRMSRALADisplayMode(mode) {
+    if (!['reflectivity', 'ptype'].includes(mode)) return;
+    if (mode === 'ptype' && !WinterPrecipDisplay.available(mrmsRalaMetadata)) return;
+    const wasPlaying = mrmsRalaAnimationPlaying;
+    stopMRMSRALAAnimation();
+    ++mrmsRalaFrameRequestSerial;
+    mrmsRalaDisplayMode = mode;
+    mrmsRalaCurrentImageUrl = '';
+    mrmsRalaVisibleLayer.setOpacity(0);
+    mrmsRalaHiddenLayer.setOpacity(0);
+    syncMRMSRALADisplayMode();
+    updateMRMSRALATimeBox();
+    updateLegends();
+    if (map.hasLayer(mrmsRalaLayer)) {
+        const shown = await showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
+        if (shown && wasPlaying) startMRMSRALAAnimation();
+    }
 }
 
 function preloadMRMSRALAFrame(frame) {
@@ -4503,7 +4550,7 @@ function loadMRMSRALAFrameIntoLayer(layer, frame) {
     if (!layer || !frame) return Promise.reject(new Error('MRMS RALA buffer load is missing a layer or frame'));
     const url = mrmsRalaFrameUrl(frame);
     const prior = mrmsRalaLayerLoadState.get(layer);
-    if (prior?.frame?.valid_time_utc === frame.valid_time_utc) {
+    if (prior?.url === url) {
         if (prior.loaded) return Promise.resolve({layer, frame, url});
         if (prior.promise) return prior.promise;
     }
@@ -4576,7 +4623,8 @@ async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
     if (!mrmsRalaReady || !mrmsRalaFresh) return false;
     const frame = nearestMRMSRALAFrame(timeMillis);
     if (!frame) return false;
-    if (!force && mrmsRalaCurrentFrame?.valid_time_utc === frame.valid_time_utc) {
+    const requestedUrl = mrmsRalaFrameUrl(frame);
+    if (!force && mrmsRalaCurrentImageUrl === requestedUrl) {
         updateMRMSRALATimeBox();
         primeNextMRMSRALABuffer(frame);
         return true;
@@ -4586,7 +4634,8 @@ async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
     const targetLayer = mrmsRalaHiddenLayer;
     try {
         await loadMRMSRALAFrameIntoLayer(targetLayer, frame);
-        if (requestSerial !== mrmsRalaFrameRequestSerial || targetLayer !== mrmsRalaHiddenLayer) return false;
+        if (requestSerial !== mrmsRalaFrameRequestSerial || targetLayer !== mrmsRalaHiddenLayer
+            || !map.hasLayer(mrmsRalaLayer) || !mrmsRalaFresh) return false;
 
         // Swap already-loaded image buffers atomically. Every source frame is
         // displayed; speed only controls how long we wait before requesting the
@@ -4600,6 +4649,7 @@ async function showMRMSRALAFrame(timeMillis, {force = false} = {}) {
         mrmsRalaHiddenLayer.setOpacity(0);
 
         mrmsRalaCurrentFrame = frame;
+        mrmsRalaCurrentImageUrl = requestedUrl;
         applyMRMSRALABrowserRendering(mrmsRalaVisibleLayer);
         updateMRMSRALATimeBox();
         primeNextMRMSRALABuffer(frame);
@@ -4663,7 +4713,7 @@ function applyMRMSRALAFreshnessState() {
     if (!mrmsRalaFresh) {
         mrmsRalaVisibleLayer.setOpacity(0);
         mrmsRalaHiddenLayer.setOpacity(0);
-    } else if (map.hasLayer(mrmsRalaLayer)) {
+    } else if (map.hasLayer(mrmsRalaLayer) && mrmsRalaCurrentImageUrl) {
         mrmsRalaVisibleLayer.setOpacity(Number(mrmsRalaOpacityTarget.options.opacity));
         mrmsRalaHiddenLayer.setOpacity(0);
     }
@@ -4688,6 +4738,11 @@ function formatMRMSRALATimeBox(metadata) {
     const cadence = Number(metadata.target_frame_cadence_minutes);
     const cadenceText = Number.isFinite(cadence) ? `${cadence.toFixed(0)}-min cadence` : 'MRMS cadence';
     const selectedHours = mrmsRalaWindowMinutes / 60;
+    const isType = mrmsRalaDisplayMode === 'ptype';
+    const phase = mrmsRalaCurrentFrame?.ptype;
+    const phaseStatus = isType
+        ? `<div style="font-size:0.8em;margin:5px 0;color:#e6d5f7;">Experimental: MRMS radar + HRRR type<br>${phase?.hrrr ? `HRRR valid: ${formatMetadataUTC(phase.hrrr.valid_time_utc)} (1-h forecast)` : 'HRRR type unavailable — MRMS rain/snow only'}${phase?.hrrr && phase.mrms_fallback_visible_pixels > 0 ? '<br>MRMS rain/snow fallback in some areas' : ''}</div>`
+        : '';
 
     if (!mrmsRalaFresh) {
         return `
@@ -4704,6 +4759,7 @@ function formatMRMSRALATimeBox(metadata) {
         <span style="color:#ffeb3b;">Latest: ${formatMetadataUTC(metadata.latest_valid_time_utc)} &bull; ${ageText}</span><br>
         <span style="font-size:0.82em;color:#d0d0d0;">${selectedHours} h selected &bull; ${activeFrameCount} frames &bull; ${cadenceText} &bull; &ge;5 dBZ</span><br>
         <span style="font-size:0.78em;color:#b8b8b8;">6 h archive available &bull; ${archiveFrameCount} retained frames</span>
+        ${phaseStatus}
         <div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.18);">
             <label for="mrms-rala-opacity-inline" style="display:flex;justify-content:space-between;gap:10px;font-size:0.82em;color:#e6e6e6;">
                 <span>Radar opacity</span><strong id="mrms-rala-opacity-inline-value">${opacity}%</strong>
@@ -4737,6 +4793,7 @@ function updateMRMSRALATimeBox() {
 }
 
 function buildMRMSRALALegendHTML() {
+    if (mrmsRalaDisplayMode === 'ptype') return WinterPrecipDisplay.legend(mrmsRalaMetadata);
     const table = mrmsRalaMetadata?.display?.color_table || [];
     if (!table.length) {
         return `
@@ -4789,6 +4846,7 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
         if (changed) {
             mrmsRalaMetadata = validated.manifest;
             mrmsRalaFrames = validated.frames;
+            syncMRMSRALADisplayMode();
             mrmsRalaLayer.setBounds(validated.bounds);
             mrmsRalaBufferLayer.setBounds(validated.bounds);
             mrmsRalaReady = true;
