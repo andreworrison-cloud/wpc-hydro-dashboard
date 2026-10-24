@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {JSDOM}=require(process.env.GDI_TEST_DOM_MODULE||'jsdom');
 const display=require('../winter_precip_display.js');
-const dom=new JSDOM('<!doctype html><div id="control"></div>');
+const dom=new JSDOM('<!doctype html><div id="control"></div><div id="mrms-rala-time-box"></div>');
 const document=dom.window.document,source=fs.readFileSync('app.js','utf8');
 const extract=name=>{const start=source.indexOf('function '+name+'(');assert.ok(start>=0);return source.slice(start,source.indexOf('\n}',start)+2);};
 const context={document,WinterPrecipDisplay:display,
@@ -12,10 +12,12 @@ const context={document,WinterPrecipDisplay:display,
  syncMRMSRALAFrameStepControl(){},syncMRMSRALAWindowControl(){},syncRadarSpeedControlVisibility(){},
  setMRMSRALAWindowMinutes(){},setMRMSRALAFrameStep(){},setMRMSRALADisplayMode:mode=>{context.changed=mode;},
  mrmsRalaMetadata:null,mrmsRalaDisplayMode:'reflectivity',mrmsRalaFrameRequestSerial:0,mrmsRalaCurrentImageUrl:'',mrmsRalaVisibleLayer:{setOpacity(){}},
+ map:{hasLayer:()=>true},mrmsRalaLayer:{},formatMRMSRALATimeBox:()=>'<strong>Radar time</strong>',bindMRMSRALAOpacityControl(){},refreshLegendDockSummary(){},
 };
 vm.createContext(context);
-vm.runInContext(extract('createMRMSRALAFrameStepControl')+'\n'+extract('syncMRMSRALADisplayMode'),context);
+vm.runInContext(['createMRMSRALAFrameStepControl','createMRMSRALADisplayModeControl','syncMRMSRALADisplayMode','updateMRMSRALATimeBox'].map(extract).join('\n'),context);
 context.createMRMSRALAFrameStepControl();
+context.updateMRMSRALATimeBox();
 const select=context.mrmsRalaModeSelect;
 assert.equal(select.options.length,2);assert.equal(select.options[1].disabled,true);
 assert.equal(select.getAttribute('aria-label'),'Radar display');
@@ -27,4 +29,9 @@ context.mrmsRalaMetadata={frames:[]};context.syncMRMSRALADisplayMode();
 assert.equal(select.value,'reflectivity');assert.equal(select.options[1].disabled,true);
 assert.equal(context.mrmsRalaCurrentImageUrl,'');assert.equal(context.mrmsRalaFrameRequestSerial,1);
 assert.equal(context.mrmsRalaModeSelect,select,'existing control survives metadata changes');
-console.log('Winter type DOM PASS: accessible mode control, unavailable state, switching, missing-supplement recovery.');
+select.focus();
+for(let i=0;i<30;i++) context.updateMRMSRALATimeBox();
+assert.equal(context.mrmsRalaModeSelect,select);assert.equal(document.activeElement,select,'animation updates preserve focus');
+assert.equal(select.closest('#mrms-rala-time-box').id,'mrms-rala-time-box');
+assert.equal(document.querySelector('#control select[aria-label="Radar display"]'),null,'playback bar stays compact');
+console.log('Winter type DOM PASS: accessible card control, availability, switching, recovery, stable focus during animation.');
