@@ -40,11 +40,12 @@ const signed=v=>v<0?'−'+number(-v):v>0?'+'+number(v):'0';
 function changeScale(colors,edges,unit){
  const n=colors.length,ranges=binRanges(edges);
  const labels=ranges.map(r=>r.lower===-Infinity?'< '+signed(r.upper):r.upper===Infinity?'≥ '+signed(r.lower):signed(r.lower)+' to < '+signed(r.upper));
- const center=ranges.findIndex(r=>r.lower<=0&&r.upper>0),neutral=ranges[center];
+ // Keep the previous legend accurate while its images are being replaced.
+ const center=ranges.findIndex(r=>r.lower<0&&r.upper>0),neutral=ranges[center];
  let html='<div class="gdi-scale-unit">'+esc(unit)+'</div><div class="gdi-scale gdi-change-scale" role="img" aria-label="'+esc(unit+' color intervals: '+labels.join('; '))+'"><div class="gdi-scale-bar">';
  colors.forEach((color,i)=>{html+='<span style="background:'+(/^#[0-9a-f]{6}$/i.test(color)?color:'#000000')+'" title="'+esc(labels[i]+' '+unit)+'"></span>';});
- html+='</div><div class="gdi-scale-ticks gdi-change-scale-ticks">';
- edges.slice(1).forEach((v,i)=>{html+='<span style="left:'+(100*(i+1)/n)+'%">'+esc(signed(v))+'</span>';});
+ html+='</div><div class="gdi-scale-ticks gdi-change-scale-ticks'+(neutral?' gdi-change-neutral-ticks':'')+'">';
+ edges.slice(1).forEach((v,i)=>{html+='<span'+(v===0?' class="gdi-change-zero"':'')+' style="left:'+(100*(i+1)/n)+'%">'+esc(signed(v))+'</span>';});
  if(neutral&&Number.isFinite(neutral.lower)&&Number.isFinite(neutral.upper)){
   const position=100*(center+(0-neutral.lower)/(neutral.upper-neutral.lower))/n;
   html+='<span class="gdi-change-zero" style="left:'+position+'%">0</span>';
