@@ -23,21 +23,25 @@ class SurfaceTests(unittest.TestCase):
         np.testing.assert_allclose(science.display_values("temperature", [273.15, 293.15]), [32, 68], atol=.001)
         np.testing.assert_allclose(science.display_values("dewpoint", [263.15]), [14], atol=.001)
         np.testing.assert_allclose(science.display_values("wind_speed", [0, 10]), [0, 19.438445], atol=.001)
-        for key in science.PRODUCTS:
+        np.testing.assert_allclose(science.display_values("wind_gust", [10]), [19.438445], atol=.001)
+        np.testing.assert_allclose(science.display_values("surface_pressure", [101325,70000]), [1013.25,700], atol=.001)
+        np.testing.assert_allclose(science.display_values("wind_direction", [0,90,360]), [0,90,0], atol=.001)
+        for key in science.SOURCE_FIELDS:
             self.assertTrue(np.isnan(science.display_values(key, [np.nan, -999, 999999])).all())
         self.assertTrue(np.isnan(science.display_values("wind_speed", [-1])[0]))
 
     def test_palette_endpoints_and_no_missing_fill(self):
         for key, p in science.PRODUCTS.items():
-            result = science.colorize(key, [p["stops"][0]-100, p["stops"][-1]+100, np.nan])
+            probes=[p["stops"][0],p["stops"][-1],np.nan] if p.get("cyclic") else [p["stops"][0]-100,p["stops"][-1]+100,np.nan]
+            result = science.colorize(key, probes)
             self.assertEqual(result[:, 3].tolist(), [255, 255, 0])
             for row, c in zip(result[:2], [p["colors"][0], p["colors"][-1]]):
                 self.assertEqual(row[:3].tolist(), [int(c[i:i+2], 16) for i in (1,3,5)])
 
     def test_metar_qc_latest_report_and_real_time(self):
-        fields = ['raw_text','station_id','observation_time','latitude','longitude','temp_c','dewpoint_c','wind_dir_degrees','wind_speed_kt','wind_gust_kt','metar_type']
+        fields = ['raw_text','station_id','observation_time','latitude','longitude','temp_c','dewpoint_c','wind_dir_degrees','wind_speed_kt','wind_gust_kt','sea_level_pressure_mb','altim_in_hg','metar_type']
         stream = io.StringIO(); w = csv.DictWriter(stream, fieldnames=fields);w.writeheader()
-        base = dict(raw_text='METAR KTEST', station_id='KAAA', observation_time='2026-10-24T14:00:00Z', latitude=39, longitude=-100, temp_c=10, dewpoint_c=5, wind_speed_kt=0, metar_type='METAR')
+        base = dict(raw_text='METAR KTEST', station_id='KAAA', observation_time='2026-10-24T14:00:00Z', latitude=39, longitude=-100, temp_c=10, dewpoint_c=5, wind_speed_kt=0, wind_dir_degrees=0, sea_level_pressure_mb=1013.2,metar_type='METAR')
         rows = [base, {**base,'temp_c':20,'observation_time':'2026-10-24T14:55:00Z','metar_type':'SPECI'},
                 {**base,'station_id':'KFUT','observation_time':'2026-10-24T15:01:00Z'},
                 {**base,'station_id':'KOLD','observation_time':'2026-10-24T13:29:59Z'},
@@ -45,22 +49,83 @@ class SurfaceTests(unittest.TestCase):
                 {**base,'station_id':'KMIS','temp_c':'','dewpoint_c':'','wind_speed_kt':8},
                 {**base,'station_id':'KOUT','latitude':60},
                 {**base,'station_id':'KTAF','metar_type':'TAF'},
-                {**base,'station_id':'KLIM','observation_time':'2026-10-24T13:30:00Z'}]
+                {**base,'station_id':'KLIM','observation_time':'2026-10-24T13:30:00Z'},
+                {**base,'station_id':'KDIR','wind_speed_kt':10,'wind_dir_degrees':360,'wind_gust_kt':25},
+                {**base,'station_id':'KVRB','wind_speed_kt':10,'wind_dir_degrees':'VRB'},
+                {**base,'station_id':'KALT','sea_level_pressure_mb':'','altim_in_hg':30.1}]
         w.writerows(rows); points = {p['id']:p for p in science.parse_metars('preamble\n'+stream.getvalue(), NOW)}
-        self.assertEqual(set(points), {'KAAA','KQCC','KMIS','KLIM'})
+        self.assertEqual(set(points), {'KAAA','KQCC','KMIS','KLIM','KDIR','KVRB','KALT'})
         self.assertEqual(points['KAAA']['temperature'],68)
         self.assertEqual(points['KAAA']['wind_speed'],0)
         self.assertIsNone(points['KQCC']['dewpoint']);self.assertIsNone(points['KQCC']['wind_speed'])
         self.assertIsNone(points['KMIS']['temperature']);self.assertEqual(points['KMIS']['wind_speed'],8)
         self.assertEqual(points['KAAA']['time'],'2026-10-24T14:55:00Z')
+        self.assertIsNone(points['KAAA']['wind_direction']);self.assertIsNone(points['KVRB']['wind_direction'])
+        self.assertEqual(points['KDIR']['wind_direction'],0);self.assertEqual(points['KDIR']['wind_gust'],25)
+        self.assertEqual(points['KDIR']['mslp'],1013.2);self.assertIsNone(points['KALT']['mslp'],'altimeter must not be relabeled MSLP')
+        self.assertAlmostEqual(points['KDIR']['relative_humidity'],71.1,places=1)
+        self.assertIsNone(points['KAAA']['heat_index']);self.assertIsNone(points['KAAA']['wind_chill'])
+
+    def test_derived_values_and_validity_boundaries(self):
+        self.assertAlmostEqual(float(science.relative_humidity(68,50)),52.54132558,places=6)
+        self.assertEqual(float(science.relative_humidity(32,32)),100)
+        self.assertEqual(float(science.relative_humidity(68,68.5)),100)
+        self.assertTrue(np.isnan(science.relative_humidity(68,72)))
+        self.assertTrue(np.isnan(science.relative_humidity(np.nan,50)))
+        self.assertAlmostEqual(float(science.heat_index(90,70)),105.9220206,places=6)
+        self.assertAlmostEqual(float(science.heat_index(100,10)),94.12248266,places=6)
+        self.assertAlmostEqual(float(science.heat_index(85,90)),101.7808036,places=6)
+        # Independently published NCL/NWS examples (warm, non-adjustment cases).
+        for t,r,expected in [(104,55,137.361),(100,65,135.868),(92,60,104.684),(92,90,131.256),(80,75,83.5751)]:
+            self.assertAlmostEqual(float(science.heat_index(t,r)),expected,delta=.001)
+        self.assertTrue(np.isnan(science.heat_index(70,90)))
+        self.assertTrue(np.isnan(science.heat_index(90,np.nan)))
+        self.assertTrue(np.isnan(science.heat_index(90,101)))
+        # The exact WPC preliminary screen, rather than temperature alone.
+        self.assertTrue(np.isfinite(science.heat_index(79,100)))
+        mph_to_kt=1/1.1507794480235
+        self.assertAlmostEqual(float(science.wind_chill(0,15*mph_to_kt)),-19.39795411,places=6)
+        self.assertTrue(np.isnan(science.wind_chill(50.01,15*mph_to_kt)))
+        self.assertTrue(np.isnan(science.wind_chill(50,3*mph_to_kt)))
+        self.assertTrue(np.isfinite(science.wind_chill(50,3.001*mph_to_kt)))
+        self.assertTrue(np.isnan(science.wind_chill(30,np.nan)))
+        # No valid heat-index conditions is a valid transparent product.
+        fields={k:np.full((2,2),v,dtype='float32') for k,v in [('temperature',40),('dewpoint',32),('wind_speed',10)]}
+        derived=science.derive_products(fields)
+        self.assertTrue(np.isnan(derived['heat_index']).all());self.assertTrue(np.isfinite(derived['wind_chill']).all())
+        self.assertTrue((science.colorize('heat_index',derived['heat_index'])[...,3]==0).all())
+
+    def test_circular_direction_reprojection(self):
+        from rasterio.transform import from_bounds
+        native=from_bounds(0,0,2,2,2,2);target=from_bounds(0,0,2,2,1,1)
+        fields={'wind_direction':np.array([[359,1],[359,1]],dtype='float32'),'wind_speed':np.full((2,2),10,dtype='float32')}
+        output=source.project_fields(fields,native,'EPSG:3857',target,1,1)
+        degree=float(output['wind_direction'][0,0]);self.assertLess(min(degree,360-degree),.01)
+        self.assertLess(np.abs(science.colorize('wind_direction',np.array([359,1]))[0,:3].astype(int)-science.colorize('wind_direction',np.array([359,1]))[1,:3].astype(int)).max(),7)
+        self.assertTrue(np.isnan(science.direction_from_components(0,0,10)))
+        self.assertTrue(np.isnan(science.direction_from_components(0,1,0)))
+        self.assertEqual(float(science.direction_from_components(1,0,10)),90)
 
     def test_provider_specific_inventory(self):
         def inventory(offset):
-            return f'1:0:d=2026102415:HGT:surface:anl:\n2:{offset}:d=2026102415:TMP:2 m above ground:anl:\n3:{offset+100}:d=2026102415:DPT:2 m above ground:anl:\n4:{offset+200}:d=2026102415:WIND:10 m above ground:anl:\n5:{offset+300}:d=2026102415:GUST:10 m above ground:anl:\n'
+            fields=[('TMP','2 m above ground'),('DPT','2 m above ground'),('WIND','10 m above ground'),('WDIR','10 m above ground'),('GUST','10 m above ground'),('PRES','surface'),('VIS','surface')]
+            return '1:0:d=2026102415:HGT:surface:anl:\n'+''.join(f'{i+2}:{offset+i*100}:d=2026102415:{param}:{level}:anl:\n' for i,(param,level) in enumerate(fields))
         self.assertEqual(source.inventory(inventory(1000),NOW)['wind_speed'],(1200,1299))
         self.assertEqual(source.inventory(inventory(3000),NOW)['wind_speed'],(3200,3299))
         for bad in [inventory(1000).replace('2 m above ground','surface'), inventory(1000).replace('d=2026102415','d=2026102414'),inventory(1000).replace(':anl:',':1 hour fcst:')]:
             with self.assertRaises(ValueError):source.inventory(bad,NOW)
+
+    def test_metar_age_uses_retrieval_clock_after_rendering(self):
+        rows='raw_text,station_id,observation_time,latitude,longitude,temp_c,dewpoint_c,wind_speed_kt,metar_type\n'
+        rows+=''.join(f'METAR,K{i:04},2026-10-24T15:02:00Z,39,-100,20,10,5,METAR\n' for i in range(500))
+        class Response:
+            content=rows.encode()
+            def raise_for_status(self):pass
+        with tempfile.TemporaryDirectory() as d,patch.object(source,'build_analysis',side_effect=RuntimeError('no RTMA')),patch.object(source,'session') as fake:
+            fake.return_value.get.return_value=Response()
+            result=source.build(Path(d),NOW,clock=lambda:NOW+timedelta(minutes=3))
+        self.assertEqual(result['observations']['count'],500)
+        self.assertEqual(result['observations']['fetched_at'],'2026-10-24T15:03:00Z')
 
     def test_midnight_fallback_and_no_regression(self):
         class Missing:
@@ -89,6 +154,27 @@ class SurfaceTests(unittest.TestCase):
             self.assertEqual(p.read_bytes(),data)
             p.write_bytes(b'corrupt')
             with self.assertRaises(ValueError):source.validate_package(root)
+
+
+    def test_legacy_analysis_survives_failed_expansion(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);generation='2026102414-1234567890abcdef'
+            folder=root/'generations'/generation;folder.mkdir(parents=True)
+            a={'revision':'rtma-surface-v1','valid_time':'2026-10-24T14:00:00Z','generation':generation,
+               'width':3600,'height':2024,'crs':'EPSG:3857','bounds':science.BOUNDS,'products':{}}
+            for key in science.LEGACY_KEYS:
+                p=folder/(key+'.png');Image.new('RGBA',(3600,2024),(0,0,0,0)).save(p)
+                a['products'][key]={'path':str(p.relative_to(root)),'sha256':source.sha(p.read_bytes())}
+            old={'schema':'surface-suite-v1','policy':{'analysis_warn_minutes':150,'analysis_hide_minutes':240,'station_hide_minutes':90},'analysis':a}
+            (root/'metadata.json').write_text(json.dumps(old));source.validate_package(root)
+            with patch.object(source,'session') as fake:
+                fake.return_value.get.side_effect=RuntimeError('offline')
+                result=source.build(root,NOW)
+            self.assertEqual(result['analysis'],a)
+            self.assertFalse(result['last_attempt']['analysis']['ok'])
+            bad=json.loads(json.dumps(old));bad['analysis']['revision']=science.REVISION
+            with self.assertRaises(ValueError):source.validate_package(root,bad)
 
 
 if __name__=='__main__':unittest.main()
