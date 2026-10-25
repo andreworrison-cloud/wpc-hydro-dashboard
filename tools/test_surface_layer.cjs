@@ -13,21 +13,32 @@ const fresh={...point,id:'KBBB',time:at(10)};const thinned=S.thinPoints([point,f
 assert.equal(thinned.length,2);assert.equal(thinned[0].id,'KBBB');
 assert.equal(S.thinPoints([point,fresh],'temperature',now,p=>({x:p.id==='KAAA'?51:53,y:25}),()=>true).length,1,'adjacent pixel cells still reject overlapping labels');
 Object.entries(palettes).forEach(([key,p])=>{
- assert.equal(S.color(p,p.stops[0]-100),p.colors[0]);assert.equal(S.color(p,p.stops.at(-1)+100),p.colors.at(-1));
+ if(p.cyclic){assert.equal(S.color(p,360),S.color(p,0));assert.equal(S.color(p,-90),S.color(p,270));}
+ else {assert.equal(S.color(p,p.stops[0]-100),p.colors[0]);assert.equal(S.color(p,p.stops.at(-1)+100),p.colors.at(-1));}
  p.stops.forEach((value,i)=>assert.equal(S.color(p,value),p.colors[i]));
- const html=S.scale(p);p.colors.forEach(c=>assert.ok(html.includes(c)));assert.ok(html.includes('≤'));assert.ok(html.includes('≥'));
+ const html=S.scale(p);p.colors.forEach(c=>assert.ok(html.includes(c)));
+ if(p.cyclic){assert.match(html,/N 0°/);assert.match(html,/E 90°/);assert.match(html,/N 360°/);assert.ok(!html.includes('≤'));}
+ else {assert.ok(html.includes('≤'));assert.ok(html.includes('≥'));}
 });
+assert.equal(S.keys.length,9);assert.ok(S.stationKeys.includes('mslp'));assert.ok(!S.stationKeys.includes('surface_pressure'));
+assert.equal(S.cardinal(0),'N');assert.equal(S.cardinal(360),'N');assert.equal(S.cardinal(270),'W');assert.equal(S.cardinal(45),'NE');
+assert.equal(S.valueLabel('mslp',1013.2),'1013.2');assert.equal(S.units.surface_pressure,'hPa');
+assert.equal(S.freshPoint({...point,wind_direction:0},'wind_direction',now),false,'calm is not north');
+assert.equal(S.freshPoint({...point,wind_direction:0,wind_speed:5},'wind_direction',now),true,'north is valid with wind');
 assert.match(S.popup({...point,raw:'<img onerror=alert(1)>'},now),/&lt;img/);assert.match(S.popup(point,now),/Calm/);
-const a={revision:'rtma-surface-v1',crs:'EPSG:3857',width:3600,height:2024,native_spacing_km:2.5,bounds:[[24,-125],[50,-66]],valid_time:at(60),generation:'2026102414-1234567890abcdef',products:{}};
-for(const k of S.keys)a.products[k]={...palettes[k],path:`generations/${a.generation}/${k}.png`,sha256:'a'.repeat(64)};
+assert.match(S.popup({...point,mslp:1013.2,relative_humidity:60},now),/Reported MSLP: 1013.2 hPa/);
+assert.match(S.popup({...point,relative_humidity:60},now),/RH \(calculated\): 60 %/);
+const a={revision:'rtma-surface-v2',crs:'EPSG:3857',width:3600,height:2024,native_spacing_km:2.5,bounds:[[24,-125],[50,-66]],valid_time:at(60),generation:'2026102414-1234567890abcdef',products:{}};
+for(const k of S.keys)a.products[k]={...palettes[k],path:`generations/${a.generation}/${k}.png`,sha256:'a'.repeat(64),applicable_pixels:k==='heat_index'?0:100};
 const m={schema:'surface-suite-v1',policy:{analysis_warn_minutes:150,analysis_hide_minutes:240,station_hide_minutes:90},analysis:a};
 S.validate(m);assert.throws(()=>S.validate({...m,analysis:{...a,bounds:[[0,0],[1,1]]}}));assert.throws(()=>S.validate({...m,analysis:{...a,products:{temperature:a.products.temperature}}}));
+S.validate({...m,analysis:{...a,revision:'rtma-surface-v1',products:Object.fromEntries(['temperature','dewpoint','wind_speed'].map(k=>[k,a.products[k]]))}});
 assert.throws(()=>S.validate({...m,analysis:{...a,valid_time:at(120)}},m));
 assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temperature:{...a.products.temperature,path:'../secret'}}}}));
 
 // Lifecycle uses the real adapter with mock Leaflet, network and decoded images.
 (async()=>{
- const handlers={},onMap=new Set(),panes={};let calls=0,clock=now;const nodes=[];
+ const handlers={},onMap=new Set(),panes={},changeHandlers=[];let calls=0,clock=now;const nodes=[];
  const map={createPane:n=>panes[n]={style:{}},getPane:n=>panes[n],hasLayer:l=>onMap.has(l),getZoom:()=>8,getBounds:()=>({contains:()=>true}),latLngToContainerPoint:()=>({x:5,y:5}),on:(events,f)=>events.split(' ').forEach(e=>(handlers[e]??=[]).push(f))};
  function group(){const children=new Set();return {options:{},hasLayer:l=>children.has(l),addLayer(l){children.add(l);return this},removeLayer:l=>children.delete(l),clearLayers:()=>children.clear(),eachLayer:f=>[...children].forEach(f),addTo:()=>{}};}
  const markerInstances=[];
@@ -37,8 +48,8 @@ assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temper
  const points={schema:'surface-stations-v1',fetched_at:at(0),points:[point]};const pointBytes=new TextEncoder().encode(JSON.stringify(points));const pointSha=Buffer.from(await crypto.subtle.digest('SHA-256',pointBytes)).toString('hex');
  mock.observations={path:'stations/20261024150000-1234567890abcdef.json',sha256:pointSha,count:500,fetched_at:at(0)};
  // Manifest minimum is 500, so build 500 distinct station reports; screen thinning still shows one.
- points.points=Array.from({length:500},(_,i)=>({...point,id:'K'+String(i).padStart(3,'0')}));const allBytes=new TextEncoder().encode(JSON.stringify(points));mock.observations.sha256=Buffer.from(await crypto.subtle.digest('SHA-256',allBytes)).toString('hex');
- const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(){}},fetch:async url=>{calls++;const text=String(url);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:bytes.buffer}}};
+ points.points=Array.from({length:500},(_,i)=>({...point,id:'K'+String(i).padStart(3,'0'),mslp:1013.2,relative_humidity:60}));const allBytes=new TextEncoder().encode(JSON.stringify(points));mock.observations.sha256=Buffer.from(await crypto.subtle.digest('SHA-256',allBytes)).toString('hex');
+ const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(event,f){if(event==='change')changeHandlers.push(f);}},fetch:async url=>{calls++;const text=String(url);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:bytes.buffer}}};
  c.URL.createObjectURL=()=>`blob:${nodes.push(1)}`;c.URL.revokeObjectURL=()=>{};
  vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),c);
  const suite=c.SurfaceSuite.create({map,metadataURL:'https://example.org/metadata.json',now:()=>clock});
@@ -46,6 +57,17 @@ assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temper
  assert.equal(suite.layers.temperature.hasLayer(undefined),false);let n=0;suite.layers.temperature.eachLayer(()=>n++);assert.equal(n,1);let s=0;suite.stations.eachLayer(()=>s++);assert.equal(s,1);assert.ok(calls>=3);
  clock=now+60000;await suite.refresh();assert.equal(markerInstances.length,1,'refresh retains marker identity and open popup');
  handlers.moveend.forEach(f=>f());assert.equal(markerInstances.length,1,'popup auto-pan does not recreate markers');
+ for(const key of S.keys){
+  S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers[key]);await suite.refresh();
+  n=0;suite.layers[key].eachLayer(()=>n++);assert.equal(n,1,`loads ${key}`);assert.ok(suite.legendHTML().includes(S.units[key]));
+ }
+ assert.match(suite.legendHTML(),/Wind chill/);
+ S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers.heat_index);await suite.refresh();assert.match(suite.legendHTML(),/No qualifying conditions/);
+ onMap.delete(suite.layers.heat_index);onMap.add(suite.layers.surface_pressure);await suite.refresh();
+ assert.match(suite.legendHTML(),/Surface pressure is not reported/);s=0;suite.stations.eachLayer(()=>s++);assert.equal(s,0);
+ changeHandlers[0]({target:{matches:()=>true,value:'mslp'}});assert.match(suite.legendHTML(),/Reported MSLP/);
+ s=0;suite.stations.eachLayer(()=>s++);assert.equal(s,1,'reported MSLP available independently of surface-pressure fill');
+ changeHandlers[0]({target:{matches:()=>true,value:'auto'}});onMap.delete(suite.layers.surface_pressure);onMap.add(suite.layers.temperature);await suite.refresh();
  clock=now+241*60000;await suite.refresh();n=0;suite.layers.temperature.eachLayer(()=>n++);assert.equal(n,0,'expired analysis hides');s=0;suite.stations.eachLayer(()=>s++);assert.equal(s,0,'individual old reports hide');
  suite.stop();onMap.clear();clock=now;
  // An unavailable image must not prevent usable, independent station values.
@@ -60,5 +82,5 @@ assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temper
  const rows=[{id:'temperature',exclusiveGroup:'surface-analysis'},{id:'dewpoint',exclusiveGroup:'surface-analysis'},{id:'stations'}];const off=[];
  const exclusive=vm.runInNewContext(app.slice(start,end)+'\nenforceExclusiveSurfaceSelection',{getAllDashboardLayerEntries:()=>rows,setDashboardLayerActive:(entry,value)=>off.push([entry.id,value])});
  exclusive(rows[1]);assert.deepEqual(off,[['temperature',false]]);
- console.log('Surface checks passed: units/palettes, time cutoffs, point thinning, safe paths, decoded overlays, independent component failures and field exclusivity.');
+ console.log('Surface checks passed: nine fields, cyclic direction, pressure types, derived labels, valid-domain transparency, migration, expiry, stable popups and independent failures.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

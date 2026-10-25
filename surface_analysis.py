@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-REVISION = "rtma-surface-v1"
+REVISION = "rtma-surface-v2"
+LEGACY_KEYS = ("temperature", "dewpoint", "wind_speed")
 BOUNDS = [[24.0, -125.0], [50.0, -66.0]]
 ANALYSIS_WARN_MINUTES = 150
 ANALYSIS_HIDE_MINUTES = 240
@@ -34,6 +35,113 @@ PRODUCTS = {
     },
 }
 
+PRODUCTS.update({
+    "wind_direction": {
+        "label": "10-m Wind Direction", "unit": "°", "parameter": "WDIR", "level": 10,
+        "stops": [0,45,90,135,180,225,270,315,360],
+        "colors": ["#527fd1","#42bac6","#53af78","#b5c65c","#efbf56","#e5825b","#bd6dbe","#855fc4","#527fd1"],
+        "ticks": [0,90,180,270,360], "cyclic": True,
+        "note": "Direction wind comes FROM, relative to true north. Calm winds below 1 kt and undefined directions are transparent.",
+    },
+    "wind_gust": {
+        "label": "10-m Wind Gust", "unit": "kt", "parameter": "GUST", "level": 10,
+        "stops": [0,5,10,15,20,30,40,50,60,80],
+        "colors": list(PRODUCTS["wind_speed"]["colors"]), "ticks": [0,10,20,40,60,80],
+        "note": "RTMA wind-gust analysis at the displayed valid time; not an hourly maximum accumulation.",
+    },
+    "surface_pressure": {
+        "label": "Surface Pressure", "unit": "hPa", "parameter": "PRES", "level": 0,
+        "stops": [600,700,800,850,900,950,980,1000,1020,1040,1060],
+        "colors": ["#8268b5","#6268af","#497eae","#4b9daf","#65b7a3","#9cc896","#c8d69c","#e0d28b","#e8b56f","#da8565","#b35c70"],
+        "ticks": [600,700,800,900,1000,1060],
+        "note": "Pressure at the terrain surface. Elevation strongly affects this field; it is not reduced to mean sea level.",
+    },
+    "relative_humidity": {
+        "label": "2-m Relative Humidity", "unit": "%", "derived_from": ["temperature","dewpoint"],
+        "stops": [0,10,20,30,40,50,60,70,80,90,100],
+        "colors": ["#9f6844","#bb8655","#d0a775","#ddc699","#e4dfbe","#cdddb6","#a3d2a2","#6ebd9e","#449fae","#3878b2","#55509a"],
+        "ticks": [0,20,40,60,80,100],
+        "method": "August-Roche-Magnus: 100*exp(17.625*Td/(243.04+Td)-17.625*T/(243.04+T)); T/Td in Celsius; RH relative to liquid water",
+        "note": "Calculated from temperature and dewpoint; relative humidity with respect to liquid water, bounded to 0–100%.",
+    },
+    "heat_index": {
+        "label": "Heat Index", "unit": "°F", "derived_from": ["temperature","relative_humidity"],
+        "stops": [80,85,90,95,100,105,110,115,120,130,140],
+        "colors": ["#e7dc7a","#edcb64","#f1b553","#ee9b48","#e97b40","#de5941","#cc3e4c","#b82d66","#9a286f","#7c286e","#572861"],
+        "ticks": [80,90,100,110,120,140],
+        "method": "NWS/WPC Rothfusz regression with low/high humidity adjustments; displayed only when preliminary averaged Steadman HI >=80 F",
+        "note": "Calculated for warm conditions passing the NWS preliminary 80°F heat-index screen. Other areas are transparent. Assumes shade/light wind.",
+    },
+    "wind_chill": {
+        "label": "Wind Chill", "unit": "°F", "derived_from": ["temperature","wind_speed"],
+        "stops": [-60,-40,-20,0,10,20,30,40,50],
+        "colors": ["#77449d","#7657b4","#5869bc","#417ebd","#439dcc","#6bb9d0","#a0d3d4","#c6e1d6","#e0e9d6"],
+        "ticks": [-60,-40,-20,0,20,30,40,50],
+        "method": "NWS: 35.74+0.6215*T-35.75*V^0.16+0.4275*T*V^0.16; T in F; V in mph; T<=50 F and V>3 mph",
+        "note": "Calculated only at temperatures ≤50°F and sustained winds >3 mph. Other areas are transparent; gusts are not used.",
+    },
+})
+
+SOURCE_FIELDS = {
+    key: {**PRODUCTS[key], "type": "surface" if key=="surface_pressure" else "heightAboveGround",
+          "grib": grib, "source_units": units}
+    for key, grib, units in (
+        ("temperature", (0,0,0), "K"), ("dewpoint", (0,0,6), "K"),
+        ("wind_speed", (0,2,1), "m s**-1"), ("wind_direction", (0,2,0), "Degree true"),
+        ("wind_gust", (0,2,22), "m s**-1"), ("surface_pressure", (0,3,0), "Pa"),
+    )
+}
+
+
+def relative_humidity(temperature_f, dewpoint_f):
+    t, d = np.broadcast_arrays(np.asarray(temperature_f,dtype="float64"), np.asarray(dewpoint_f,dtype="float64"))
+    t, d = (t-32)/1.8, (d-32)/1.8
+    valid = np.isfinite(t) & np.isfinite(d) & (t>=-90) & (t<=60) & (d>=-100) & (d<=t+.5)
+    with np.errstate(invalid="ignore", over="ignore"):
+        rh = 100*np.exp(17.625*d/(243.04+d)-17.625*t/(243.04+t))
+    return np.where(valid,np.clip(rh,0,100),np.nan)
+
+
+def heat_index(temperature_f, rh):
+    """WPC screening and adjusted Rothfusz; cooler conditions remain missing."""
+    t, r = np.broadcast_arrays(np.asarray(temperature_f,dtype="float64"),np.asarray(rh,dtype="float64"))
+    preliminary = (.5*(t+61+1.2*(t-68)+.094*r)+t)/2
+    valid = np.isfinite(t)&np.isfinite(r)&(r>=0)&(r<=100)&(t<=140)&(preliminary>=80)
+    with np.errstate(invalid="ignore", over="ignore"):
+        hi = (-42.379+2.04901523*t+10.14333127*r-.22475541*t*r-.00683783*t*t
+              -.05481717*r*r+.00122874*t*t*r+.00085282*t*r*r-.00000199*t*t*r*r)
+        dry = ((13-r)/4)*np.sqrt(np.maximum(0,(17-np.abs(t-95))/17))
+        wet = ((r-85)/10)*((87-t)/5)
+        hi = hi-np.where((r<13)&(t>=80)&(t<=112),dry,0)+np.where((r>85)&(t>=80)&(t<=87),wet,0)
+    return np.where(valid,hi,np.nan)
+
+
+def wind_chill(temperature_f, wind_kt):
+    t, k = np.broadcast_arrays(np.asarray(temperature_f,dtype="float64"),np.asarray(wind_kt,dtype="float64"))
+    mph = k*1.1507794480235
+    valid = np.isfinite(t)&np.isfinite(k)&(t>=-130)&(t<=50)&(mph>3)&(k<=250)
+    v = np.maximum(mph,0)**.16
+    return np.where(valid,35.74+.6215*t-35.75*v+.4275*t*v,np.nan)
+
+
+def direction_components(degrees):
+    a = np.asarray(degrees,dtype="float32")
+    return np.sin(np.deg2rad(a)),np.cos(np.deg2rad(a))
+
+
+def direction_from_components(sine, cosine, wind_kt):
+    s,c,k = np.broadcast_arrays(sine,cosine,wind_kt)
+    valid = np.isfinite(s)&np.isfinite(c)&np.isfinite(k)&(k>=1)&(np.hypot(s,c)>1e-3)
+    angle=np.mod(np.degrees(np.arctan2(s,c)),360).astype("float32")
+    return np.where(valid,np.mod(angle,360),np.nan)
+
+
+def derive_products(fields):
+    rh=relative_humidity(fields["temperature"],fields["dewpoint"])
+    return {**fields,"relative_humidity":rh.astype("float32"),
+            "heat_index":heat_index(fields["temperature"],rh).astype("float32"),
+            "wind_chill":wind_chill(fields["temperature"],fields["wind_speed"]).astype("float32")}
+
 
 def iso(value):
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -52,8 +160,12 @@ def display_values(key, values):
         low = 173.15 if key == "dewpoint" else 183.15
         a = np.where((a >= low) & (a <= 333.15), a, np.nan)
         return (a - 273.15) * (9 / 5) + 32
-    if key == "wind_speed":
+    if key in ("wind_speed", "wind_gust"):
         return np.where((a >= 0) & (a <= 130), a * 1.9438444924406, np.nan)
+    if key == "wind_direction":
+        return np.where((a>=0)&(a<=360),np.mod(a,360),np.nan)
+    if key == "surface_pressure":
+        return np.where((a>=40000)&(a<=110000),a/100,np.nan)
     raise ValueError("Unknown surface product")
 
 
@@ -62,7 +174,7 @@ def colorize(key, values):
     rgb = np.array([[int(c[i:i+2], 16) for i in (1, 3, 5)] for c in p["colors"]])
     a = np.asarray(values)
     finite = np.isfinite(a)
-    safe = np.where(finite, a, p["stops"][0])
+    safe = np.where(finite, np.mod(a,360) if p.get("cyclic") else a, p["stops"][0])
     result = np.zeros(a.shape + (4,), dtype="uint8")
     for channel in range(3):
         result[..., channel] = np.rint(np.interp(safe, p["stops"], rgb[:, channel])).astype("uint8")
@@ -108,12 +220,24 @@ def parse_metars(text, now):
         if temp is not None and dew is not None and dew > temp + .5:
             dew = None
         speed = number(row.get("wind_speed_kt"), 0, 250)
-        if temp is None and dew is None and speed is None:
+        gust = number(row.get("wind_gust_kt"), 0, 300)
+        mslp = number(row.get("sea_level_pressure_mb"), 850, 1100)
+        direction = number(row.get("wind_dir_degrees"),0,360)
+        if speed is None or speed<1:
+            direction=None
+        elif direction is not None:
+            direction=direction%360
+        if temp is None and dew is None and speed is None and gust is None and mslp is None:
             continue
+        tf = None if temp is None else temp*1.8+32
+        df = None if dew is None else dew*1.8+32
+        rh = float(relative_humidity(np.nan if tf is None else tf,np.nan if df is None else df))
+        hi = float(heat_index(np.nan if tf is None else tf,rh))
+        wc = float(wind_chill(np.nan if tf is None else tf,np.nan if speed is None else speed))
+        optional = lambda n: round(n,1) if math.isfinite(n) else None
         points.append({"id": station, "lat": lat, "lon": lon, "time": iso(time),
-                       "temperature": None if temp is None else round(temp * 1.8 + 32, 1),
-                       "dewpoint": None if dew is None else round(dew * 1.8 + 32, 1),
-                       "wind_speed": speed, "wind_gust": number(row.get("wind_gust_kt"), 0, 300),
-                       "wind_direction": number(row.get("wind_dir_degrees"), 0, 360),
+                       "temperature": None if tf is None else round(tf,1), "dewpoint": None if df is None else round(df,1),
+                       "wind_speed": speed, "wind_gust": gust, "wind_direction": direction,
+                       "mslp": mslp, "relative_humidity":optional(rh), "heat_index":optional(hi), "wind_chill":optional(wc),
                        "raw": row.get("raw_text", "")[:500]})
     return points

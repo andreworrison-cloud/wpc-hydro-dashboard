@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Atomic RTMA hourly filled analyses and independently timed METAR observations.
 
-NOMADS and NOAA NODD/AWS use their own inventories and byte offsets. All three
-fields must share a valid time and grid; failed attempts retain previous assets.
+NOMADS and NOAA NODD/AWS use their own inventories and byte offsets. All inputs
+share a valid time and grid; failed attempts retain previous assets.
 """
 from __future__ import annotations
 
@@ -26,9 +26,10 @@ from eccodes import codes_new_from_message, codes_get, codes_get_array, codes_re
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from surface_analysis import (REVISION, BOUNDS, PRODUCTS, ANALYSIS_WARN_MINUTES,
+from surface_analysis import (REVISION, LEGACY_KEYS, BOUNDS, PRODUCTS, SOURCE_FIELDS, ANALYSIS_WARN_MINUTES,
                               ANALYSIS_HIDE_MINUTES, STATION_HIDE_MINUTES,
-                              colorize, display_values, iso, parse_time, parse_metars)
+                              colorize, display_values, iso, parse_time, parse_metars,
+                              derive_products, direction_components, direction_from_components)
 
 UTC = timezone.utc
 METAR_URL = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
@@ -53,10 +54,11 @@ def inventory(text, cycle):
     if offsets != sorted(set(offsets)):
         raise ValueError("Invalid RTMA inventory offsets")
     result = {}
-    for key, p in PRODUCTS.items():
+    for key, p in SOURCE_FIELDS.items():
+        level = "surface" if p["type"] == "surface" else f'{p["level"]} m above ground'
         found = [i for i, r in enumerate(rows) if len(r) >= 6 and
                  r[2] == "d=" + cycle.strftime("%Y%m%d%H") and r[3] == p["parameter"] and
-                 r[4] == f'{p["level"]} m above ground' and r[5] == "anl"]
+                 r[4] == level and r[5] == "anl"]
         if len(found) != 1 or found[0] == len(rows) - 1:
             raise ValueError(f"Missing/ambiguous RTMA analysis field: {key}")
         i = found[0]
@@ -79,13 +81,11 @@ def decode(raw, key, cycle):
     h = codes_new_from_message(raw)
     try:
         get = lambda k: codes_get(h, k)
-        p = PRODUCTS[key]
-        expected_name = {"temperature": "2t", "dewpoint": "2d", "wind_speed": "10si"}[key]
-        # ecCodes versions may use generic short names with the same level.
-        aliases = {"temperature": {"2t", "t"}, "dewpoint": {"2d", "dpt"}, "wind_speed": {"10si", "si", "ws"}}
-        if get("shortName") not in aliases[key] or get("typeOfLevel") != "heightAboveGround" or get("level") != p["level"]:
-            raise ValueError(f"Wrong RTMA parameter/level: {get('shortName')} (expected {expected_name})")
-        if get("units") != ("m s**-1" if key == "wind_speed" else "K"):
+        p = SOURCE_FIELDS[key]
+        grib = tuple(int(get(k)) for k in ("discipline","parameterCategory","parameterNumber"))
+        if grib != p["grib"] or get("typeOfLevel") != p["type"] or get("level") != p["level"]:
+            raise ValueError(f"Wrong RTMA parameter/level for {key}: {get('shortName')}")
+        if get("units") != p["source_units"]:
             raise ValueError("Unexpected RTMA source units")
         for prefix in ("data", "validity"):
             if int(get(prefix+"Date")) != int(cycle.strftime("%Y%m%d")) or int(get(prefix+"Time")) != cycle.hour * 100:
@@ -106,6 +106,22 @@ def decode(raw, key, cycle):
         return display_values(key, a), transform, crs, get("md5GridSection"), [ny, nx]
     finally:
         codes_release(h)
+
+
+def project_fields(fields, transform, crs, target, width, height):
+    """Reproject scalars and circular direction components; never average degrees."""
+    def project(a):
+        output = np.full((height,width),np.nan,dtype="float32")
+        reproject(a,output,src_transform=transform,src_crs=crs,dst_transform=target,
+                  dst_crs="EPSG:3857",src_nodata=np.nan,dst_nodata=np.nan,resampling=Resampling.bilinear)
+        return output
+    result={key:project(a) for key,a in fields.items() if key!="wind_direction"}
+    if any(np.isfinite(a).mean()<.85 for a in result.values()):
+        raise ValueError("Incomplete RTMA display coverage")
+    if "wind_direction" in fields:
+        sine,cosine=direction_components(fields["wind_direction"])
+        result["wind_direction"]=direction_from_components(project(sine),project(cosine),result["wind_speed"])
+    return result
 
 
 def build_analysis(s, root, now, previous):
@@ -143,17 +159,16 @@ def build_analysis(s, root, now, previous):
                 w, south = merc.transform(BOUNDS[0][1], BOUNDS[0][0]); east, north = merc.transform(BOUNDS[1][1], BOUNDS[1][0])
                 height = round(WIDTH * (north-south)/(east-w))
                 target = from_bounds(w, south, east, north, WIDTH, height)
+                display = derive_products(project_fields(fields,transform,crs,target,WIDTH,height))
                 products = {}
-                for key, a in fields.items():
-                    output = np.full((height, WIDTH), np.nan, dtype="float32")
-                    reproject(a, output, src_transform=transform, src_crs=crs,
-                              dst_transform=target, dst_crs="EPSG:3857", src_nodata=np.nan,
-                              dst_nodata=np.nan, resampling=Resampling.bilinear)
-                    if np.isfinite(output).mean() < .85:
-                        raise ValueError("Incomplete RTMA display coverage")
+                for key in PRODUCTS:
+                    output=display[key]
                     path = dest / (key + ".png")
                     Image.fromarray(colorize(key, output)).save(path, optimize=True)
-                    products[key] = {**PRODUCTS[key], "path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes())}
+                    valid=np.isfinite(output)
+                    products[key] = {**PRODUCTS[key], "path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes()),
+                                     "applicable_pixels":int(valid.sum()),
+                                     "resampling":"circular components bilinear" if key=="wind_direction" else "bilinear scalar display"}
                 return {"valid_time": iso(cycle), "revision": REVISION, "generation": gen,
                         "native_spacing_km": 2.5, "native_shape": shape, "grid_id": grid,
                         "width": WIDTH, "height": height, "bounds": BOUNDS, "crs": "EPSG:3857",
@@ -170,7 +185,8 @@ def validate_package(root, metadata=None):
     if m.get("schema") != "surface-suite-v1" or m.get("policy") != {"analysis_warn_minutes": 150, "analysis_hide_minutes": 240, "station_hide_minutes": 90}:
         raise ValueError("Wrong surface schema")
     a = m.get("analysis")
-    if a and (set(a["products"]) != set(PRODUCTS) or a["revision"] != REVISION or
+    expected={"rtma-surface-v1":set(LEGACY_KEYS),REVISION:set(PRODUCTS)}
+    if a and (set(a["products"]) != expected.get(a["revision"]) or
               a["bounds"] != BOUNDS or a["crs"] != "EPSG:3857" or
               (a["width"], a["height"]) != (3600, 2024)):
         raise ValueError("Incomplete RTMA surface suite/grid")
@@ -194,7 +210,7 @@ def validate_package(root, metadata=None):
     return m
 
 
-def build(root, now):
+def build(root, now, clock=None):
     root.mkdir(parents=True, exist_ok=True)
     previous = validate_package(root) if (root/"metadata.json").exists() else {}
     m = {**previous, "schema": "surface-suite-v1", "updated_at": iso(now),
@@ -212,14 +228,17 @@ def build(root, now):
         r = s.get(METAR_URL, timeout=(10, 45)); r.raise_for_status()
         raw = r.content
         text = (gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw).decode("utf-8-sig")
-        points = parse_metars(text, now)
+        # Rendering the expanded suite can span a few minutes. Check reports
+        # against retrieval time, not the earlier RTMA processing start time.
+        observed_now=clock() if clock else now
+        points = parse_metars(text, observed_now)
         if len(points) < 500:
             raise ValueError("METAR cache has fewer than 500 usable CONUS reports")
-        data = json.dumps({"schema": "surface-stations-v1", "fetched_at": iso(now), "points": points}, separators=(",", ":")).encode()
-        path = root / "stations" / (now.strftime("%Y%m%d%H%M%S")+"-"+sha(data)[:16]+".json")
+        data = json.dumps({"schema": "surface-stations-v1", "fetched_at": iso(observed_now), "points": points}, separators=(",", ":")).encode()
+        path = root / "stations" / (observed_now.strftime("%Y%m%d%H%M%S")+"-"+sha(data)[:16]+".json")
         path.parent.mkdir(exist_ok=True); path.write_bytes(data)
         m["observations"] = {"path": path.relative_to(root).as_posix(), "sha256": sha(data),
-                             "count": len(points), "fetched_at": iso(now), "source": METAR_URL}
+                             "count": len(points), "fetched_at": iso(observed_now), "source": METAR_URL}
         m["last_attempt"]["observations"] = {"ok": True}
         print("METAR observations:", len(points), flush=True)
     except Exception as e:
@@ -253,4 +272,4 @@ if __name__ == "__main__":
     if args.validate_only:
         validate_package(args.output); print("Surface package verified")
     else:
-        build(args.output, datetime.now(UTC))
+        build(args.output, datetime.now(UTC), clock=lambda:datetime.now(UTC))

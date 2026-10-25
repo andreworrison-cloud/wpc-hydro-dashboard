@@ -7493,7 +7493,7 @@ function updateLegends() {
     const legendContainer = document.getElementById('legend-container');
     if (!legendContainer) return;
 
-    const previousGDI = new Map(Array.from(legendContainer.children).map(block => [block.querySelector('[data-gdi-pane]')?.dataset.gdiPane, block]));
+    const previousGDI = new Map(Array.from(legendContainer.children).map(block => [block.querySelector('[data-gdi-pane]')?.dataset.gdiPane || block.querySelector('[data-surface-pane]')?.dataset.surfacePane, block]));
     const nextBlocks = [];
     let hasLegend = false;
 
@@ -7501,7 +7501,7 @@ function updateLegends() {
         const fresh = document.createElement('div');
         fresh.className = 'legend-block';
         fresh.innerHTML = htmlContent;
-        const key = fresh.querySelector('[data-gdi-pane]')?.dataset.gdiPane;
+        const key = fresh.querySelector('[data-gdi-pane]')?.dataset.gdiPane || fresh.querySelector('[data-surface-pane]')?.dataset.surfacePane;
         const div = key && previousGDI.get(key) || fresh;
         if (div !== fresh) patchGDILegendNode(div, fresh);
         nextBlocks.push(div);
@@ -8114,7 +8114,13 @@ const dashboardSections = [
             {id: 'surface-temperature', label: 'RTMA 2-m Temperature', layer: surfaceSuite.layers.temperature, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface temperature hourly analysis observations 2.5 km Fahrenheit'},
             {id: 'surface-dewpoint', label: 'RTMA 2-m Dewpoint', layer: surfaceSuite.layers.dewpoint, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface moisture dewpoint hourly analysis observations 2.5 km Fahrenheit'},
             {id: 'surface-wind-speed', label: 'RTMA 10-m Wind Speed', layer: surfaceSuite.layers.wind_speed, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface wind speed hourly analysis observations 2.5 km knots'},
-            {id: 'surface-stations', label: 'METAR Station Values (Zoom In)', layer: surfaceSuite.stations, kind: 'vector', keywords: 'surface observations METAR ASOS AWOS station data points temperature dewpoint wind speed'}
+            {id: 'surface-wind-direction', label: 'RTMA 10-m Wind Direction', layer: surfaceSuite.layers.wind_direction, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface hourly analysis 2.5 km direction true north compass'},
+            {id: 'surface-wind-gust', label: 'RTMA 10-m Wind Gust', layer: surfaceSuite.layers.wind_gust, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface hourly analysis 2.5 km gust knots'},
+            {id: 'surface-pressure', label: 'RTMA Surface Pressure', layer: surfaceSuite.layers.surface_pressure, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface hourly analysis 2.5 km pressure hPa terrain'},
+            {id: 'surface-relative-humidity', label: 'RTMA Relative Humidity', layer: surfaceSuite.layers.relative_humidity, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface hourly analysis 2.5 km humidity moisture percent calculated'},
+            {id: 'surface-heat-index', label: 'RTMA Heat Index', layer: surfaceSuite.layers.heat_index, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface hourly analysis 2.5 km heat index apparent temperature calculated Fahrenheit'},
+            {id: 'surface-wind-chill', label: 'RTMA Wind Chill', layer: surfaceSuite.layers.wind_chill, kind: 'raster', exclusiveGroup: 'surface-analysis', onActivate: enforceExclusiveSurfaceSelection, keywords: 'surface hourly analysis 2.5 km wind chill apparent temperature calculated Fahrenheit'},
+            {id: 'surface-stations', label: 'METAR Station Values (Zoom In)', layer: surfaceSuite.stations, kind: 'vector', keywords: 'surface observations METAR ASOS AWOS station data points temperature dewpoint wind speed direction gust humidity MSLP pressure heat index wind chill'}
         ]
     },
     {
