@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Atomic RTMA hourly filled analyses and independently timed METAR observations.
+"""RTMA fills, HRRR sea-level pressure and independently timed METAR reports.
 
 NOMADS and NOAA NODD/AWS use their own inventories and byte offsets. All inputs
-share a valid time and grid; failed attempts retain previous assets.
+use validated native grids. Each component retains its previous assets on failure.
 """
 from __future__ import annotations
 
@@ -26,14 +26,15 @@ from eccodes import codes_new_from_message, codes_get, codes_get_array, codes_re
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from surface_analysis import (REVISION, LEGACY_KEYS, BOUNDS, PRODUCTS, SOURCE_FIELDS, ANALYSIS_WARN_MINUTES,
+from surface_analysis import (REVISION, PRESSURE_REVISION, LEGACY_KEYS, V2_KEYS, RTMA_KEYS, BOUNDS, PRODUCTS, SOURCE_FIELDS, ANALYSIS_WARN_MINUTES,
                               ANALYSIS_HIDE_MINUTES, STATION_HIDE_MINUTES,
                               colorize, display_values, iso, parse_time, parse_metars,
-                              derive_products, direction_components, direction_from_components)
+                              derive_products)
 
 UTC = timezone.utc
 METAR_URL = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
 WIDTH = 3600
+PRESSURE_FIELD = {**PRODUCTS["mslp"], "type": "meanSea", "grib": (0,3,198), "source_units": "Pa"}
 
 
 def sha(data):
@@ -48,19 +49,19 @@ def session():
     return s
 
 
-def inventory(text, cycle):
+def inventory(text, cycle, fields=None):
     rows = [line.split(":") for line in text.splitlines() if line.strip()]
     offsets = [int(r[1]) for r in rows]
     if offsets != sorted(set(offsets)):
-        raise ValueError("Invalid RTMA inventory offsets")
+        raise ValueError("Invalid analysis inventory offsets")
     result = {}
-    for key, p in SOURCE_FIELDS.items():
-        level = "surface" if p["type"] == "surface" else f'{p["level"]} m above ground'
+    for key, p in (SOURCE_FIELDS if fields is None else fields).items():
+        level = "mean sea level" if p["type"] == "meanSea" else f'{p["level"]} m above ground'
         found = [i for i, r in enumerate(rows) if len(r) >= 6 and
                  r[2] == "d=" + cycle.strftime("%Y%m%d%H") and r[3] == p["parameter"] and
                  r[4] == level and r[5] == "anl"]
         if len(found) != 1 or found[0] == len(rows) - 1:
-            raise ValueError(f"Missing/ambiguous RTMA analysis field: {key}")
+            raise ValueError(f"Missing/ambiguous analysis field: {key}")
         i = found[0]
         result[key] = (offsets[i], offsets[i+1] - 1)
     return result
@@ -70,7 +71,7 @@ def fetch_range(s, url, start, end):
     r = s.get(url, headers={"Range": f"bytes={start}-{end}"}, timeout=(10, 60))
     r.raise_for_status()
     if r.status_code != 206 or not r.headers.get("Content-Range", "").startswith(f"bytes {start}-{end}/"):
-        raise ValueError("Server did not honor RTMA byte range")
+        raise ValueError("Server did not honor analysis byte range")
     raw = r.content
     if len(raw) != end-start+1 or raw[:4] != b"GRIB" or raw[7] != 2 or raw[-4:] != b"7777" or int.from_bytes(raw[8:16], "big") != len(raw):
         raise ValueError("Truncated or unexpected GRIB2 message")
@@ -81,21 +82,22 @@ def decode(raw, key, cycle):
     h = codes_new_from_message(raw)
     try:
         get = lambda k: codes_get(h, k)
-        p = SOURCE_FIELDS[key]
+        p = PRESSURE_FIELD if key == "mslp" else SOURCE_FIELDS[key]
         grib = tuple(int(get(k)) for k in ("discipline","parameterCategory","parameterNumber"))
         if grib != p["grib"] or get("typeOfLevel") != p["type"] or get("level") != p["level"]:
-            raise ValueError(f"Wrong RTMA parameter/level for {key}: {get('shortName')}")
+            raise ValueError(f"Wrong analysis parameter/level for {key}: {get('shortName')}")
         if get("units") != p["source_units"]:
-            raise ValueError("Unexpected RTMA source units")
+            raise ValueError("Unexpected analysis source units")
         for prefix in ("data", "validity"):
             if int(get(prefix+"Date")) != int(cycle.strftime("%Y%m%d")) or int(get(prefix+"Time")) != cycle.hour * 100:
-                raise ValueError("RTMA GRIB valid time differs from inventory")
+                raise ValueError("Analysis GRIB valid time differs from inventory")
         if get("step") != 0 or get("gridType") != "lambert" or get("jPointsAreConsecutive") or get("alternativeRowScanning"):
-            raise ValueError("Unexpected RTMA grid or forecast lead")
+            raise ValueError("Unexpected analysis grid or forecast lead")
         nx, ny = int(get("Nx")), int(get("Ny"))
         dx, dy = float(get("DxInMetres")), float(get("DyInMetres"))
-        if nx < 2000 or ny < 1000 or abs(dx - 2539.703) > 50 or abs(dy - dx) > .1:
-            raise ValueError("Not the CONUS 2.5-km RTMA grid")
+        expected = (1799,1059,3000) if key == "mslp" else (2345,1597,2539.703)
+        if (nx,ny) != expected[:2] or abs(dx-expected[2]) > 1 or abs(dy-dx) > .1:
+            raise ValueError("Unexpected CONUS native grid")
         crs = CRS.from_proj4(f"+proj=lcc +lat_1={get('Latin1InDegrees')} +lat_2={get('Latin2InDegrees')} +lat_0={get('LaDInDegrees')} +lon_0={get('LoVInDegrees')} +R={get('radius')} +units=m")
         x, y = Transformer.from_crs(4326, crs, always_xy=True).transform(get("longitudeOfFirstGridPointInDegrees"), get("latitudeOfFirstGridPointInDegrees"))
         sx = -dx if get("iScansNegatively") else dx
@@ -109,19 +111,34 @@ def decode(raw, key, cycle):
 
 
 def project_fields(fields, transform, crs, target, width, height):
-    """Reproject scalars and circular direction components; never average degrees."""
+    """Bilinearly reproject scalar fields before colorization."""
     def project(a):
         output = np.full((height,width),np.nan,dtype="float32")
         reproject(a,output,src_transform=transform,src_crs=crs,dst_transform=target,
                   dst_crs="EPSG:3857",src_nodata=np.nan,dst_nodata=np.nan,resampling=Resampling.bilinear)
         return output
-    result={key:project(a) for key,a in fields.items() if key!="wind_direction"}
+    result={key:project(a) for key,a in fields.items()}
     if any(np.isfinite(a).mean()<.85 for a in result.values()):
-        raise ValueError("Incomplete RTMA display coverage")
-    if "wind_direction" in fields:
-        sine,cosine=direction_components(fields["wind_direction"])
-        result["wind_direction"]=direction_from_components(project(sine),project(cosine),result["wind_speed"])
+        raise ValueError("Incomplete analysis display coverage")
     return result
+
+
+def display_grid():
+    merc = Transformer.from_crs(4326,3857,always_xy=True)
+    west,south=merc.transform(BOUNDS[0][1],BOUNDS[0][0]);east,north=merc.transform(BOUNDS[1][1],BOUNDS[1][0])
+    height=round(WIDTH*(north-south)/(east-west))
+    return from_bounds(west,south,east,north,WIDTH,height),height
+
+
+def write_products(root, dest, display):
+    dest.mkdir(parents=True,exist_ok=True)
+    products={}
+    for key,output in display.items():
+        path=dest/(key+".png")
+        Image.fromarray(colorize(key,output)).save(path,optimize=True)
+        products[key]={**PRODUCTS[key],"path":path.relative_to(root).as_posix(),"sha256":sha(path.read_bytes()),
+                       "applicable_pixels":int(np.isfinite(output).sum()),"resampling":"bilinear scalar display"}
+    return products
 
 
 def build_analysis(s, root, now, previous):
@@ -154,21 +171,10 @@ def build_analysis(s, root, now, previous):
                                        "byte_range": [start, end], "sha256": sha(raw)})
                     print("Decoded", cycle.isoformat(), key, provider, flush=True)
                 gen = cycle.strftime("%Y%m%d%H") + "-" + sha((REVISION+json.dumps(provenance)).encode())[:16]
-                dest = root / "generations" / gen; dest.mkdir(parents=True, exist_ok=True)
-                merc = Transformer.from_crs(4326, 3857, always_xy=True)
-                w, south = merc.transform(BOUNDS[0][1], BOUNDS[0][0]); east, north = merc.transform(BOUNDS[1][1], BOUNDS[1][0])
-                height = round(WIDTH * (north-south)/(east-w))
-                target = from_bounds(w, south, east, north, WIDTH, height)
+                dest = root / "generations" / gen
+                target,height = display_grid()
                 display = derive_products(project_fields(fields,transform,crs,target,WIDTH,height))
-                products = {}
-                for key in PRODUCTS:
-                    output=display[key]
-                    path = dest / (key + ".png")
-                    Image.fromarray(colorize(key, output)).save(path, optimize=True)
-                    valid=np.isfinite(output)
-                    products[key] = {**PRODUCTS[key], "path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes()),
-                                     "applicable_pixels":int(valid.sum()),
-                                     "resampling":"circular components bilinear" if key=="wind_direction" else "bilinear scalar display"}
+                products = write_products(root,dest,display)
                 return {"valid_time": iso(cycle), "revision": REVISION, "generation": gen,
                         "native_spacing_km": 2.5, "native_shape": shape, "grid_id": grid,
                         "width": WIDTH, "height": height, "bounds": BOUNDS, "crs": "EPSG:3857",
@@ -180,17 +186,58 @@ def build_analysis(s, root, now, previous):
     raise RuntimeError("; ".join(errors[-4:]) or "No non-regressing RTMA analysis available")
 
 
+def build_pressure_analysis(s, root, now, previous):
+    """Native HRRR f00 MSLMA, never terrain PRES or an altimeter substitution."""
+    errors=[]
+    old=previous.get("pressure_analysis")
+    for lag in range(5):
+        cycle=now.replace(minute=0,second=0,microsecond=0)-timedelta(hours=lag)
+        if (now-cycle).total_seconds()>=ANALYSIS_HIDE_MINUTES*60:
+            continue
+        if old and parse_time(old["valid_time"])>cycle:
+            break
+        if old and old["revision"]==PRESSURE_REVISION and parse_time(old["valid_time"])==cycle:
+            return old,"Retained current complete pressure analysis"
+        name=f"hrrr.{cycle:%Y%m%d}/conus/hrrr.t{cycle:%H}z.wrfsfcf00.grib2"
+        for provider,base in (("NOAA NODD/AWS","https://noaa-hrrr-bdp-pds.s3.amazonaws.com/"),
+                              ("NOMADS","https://nomads.ncep.noaa.gov/pub/data/nccf/com/hrrr/prod/")):
+            url=base+name
+            try:
+                r=s.get(url+".idx",timeout=(10,25));r.raise_for_status()
+                start,end=inventory(r.text,cycle,{"mslp":PRESSURE_FIELD})["mslp"]
+                raw=fetch_range(s,url,start,end)
+                a,transform,crs,grid,shape=decode(raw,"mslp",cycle)
+                provenance=[{"key":"mslp","provider":provider,"url":url,"byte_range":[start,end],"sha256":sha(raw)}]
+                gen=cycle.strftime("%Y%m%d%H")+"-"+sha((PRESSURE_REVISION+json.dumps(provenance)).encode())[:16]
+                target,height=display_grid()
+                products=write_products(root,root/"pressure"/gen,project_fields({"mslp":a},transform,crs,target,WIDTH,height))
+                print("Decoded",cycle.isoformat(),"mslp",provider,flush=True)
+                return {"valid_time":iso(cycle),"revision":PRESSURE_REVISION,"generation":gen,
+                        "native_spacing_km":3,"native_shape":shape,"grid_id":grid,
+                        "width":WIDTH,"height":height,"bounds":BOUNDS,"crs":"EPSG:3857",
+                        "resampling":"bilinear scalar display","products":products,"sources":provenance},"Complete hourly pressure analysis"
+            except Exception as e:
+                message=f"{cycle:%Y%m%d%H} {provider}: {e}"
+                errors.append(message);print(message,flush=True)
+    raise RuntimeError("; ".join(errors[-4:]) or "No non-regressing pressure analysis available")
+
+
 def validate_package(root, metadata=None):
     m = metadata if metadata is not None else json.loads((root / "metadata.json").read_text())
     if m.get("schema") != "surface-suite-v1" or m.get("policy") != {"analysis_warn_minutes": 150, "analysis_hide_minutes": 240, "station_hide_minutes": 90}:
         raise ValueError("Wrong surface schema")
     a = m.get("analysis")
-    expected={"rtma-surface-v1":set(LEGACY_KEYS),REVISION:set(PRODUCTS)}
+    expected={"rtma-surface-v1":set(LEGACY_KEYS),"rtma-surface-v2":set(V2_KEYS),REVISION:set(RTMA_KEYS)}
     if a and (set(a["products"]) != expected.get(a["revision"]) or
               a["bounds"] != BOUNDS or a["crs"] != "EPSG:3857" or
               (a["width"], a["height"]) != (3600, 2024)):
         raise ValueError("Incomplete RTMA surface suite/grid")
-    for obj in (m.get("analysis"), m.get("observations")):
+    pressure=m.get("pressure_analysis")
+    if pressure and (pressure.get("revision")!=PRESSURE_REVISION or set(pressure.get("products",{}))!={"mslp"} or
+                     pressure.get("native_spacing_km")!=3 or pressure.get("bounds")!=BOUNDS or
+                     pressure.get("crs")!="EPSG:3857" or (pressure.get("width"),pressure.get("height"))!=(3600,2024)):
+        raise ValueError("Invalid HRRR pressure analysis")
+    for obj in (m.get("analysis"), pressure, m.get("observations")):
         if not obj:
             continue
         assets = obj["products"].values() if "products" in obj else [obj]
@@ -225,6 +272,12 @@ def build(root, now, clock=None):
         m["last_attempt"]["analysis"] = {"ok": False, "message": str(e)}
         print("Retaining previous RTMA:", e, flush=True)
     try:
+        m["pressure_analysis"],message=build_pressure_analysis(s,root,now,previous)
+        m["last_attempt"]["pressure_analysis"]={"ok":True,"message":message}
+    except Exception as e:
+        m["last_attempt"]["pressure_analysis"]={"ok":False,"message":str(e)}
+        print("Retaining previous pressure analysis:",e,flush=True)
+    try:
         r = s.get(METAR_URL, timeout=(10, 45)); r.raise_for_status()
         raw = r.content
         text = (gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw).decode("utf-8-sig")
@@ -244,15 +297,16 @@ def build(root, now, clock=None):
     except Exception as e:
         m["last_attempt"]["observations"] = {"ok": False, "message": str(e)}
         print("Retaining previous station observations:", e, flush=True)
-    if not m.get("analysis") and not m.get("observations"):
+    if not any(m.get(k) for k in ("analysis","pressure_analysis","observations")):
         raise RuntimeError("No validated surface products to publish")
     validate_package(root, m)
     tmp = root / "metadata.tmp"; tmp.write_text(json.dumps(m, indent=2)); tmp.replace(root/"metadata.json")
     validate_package(root)
     # Keep current plus two previous immutable packages for cached readers.
-    for directory in (root/"generations", root/"stations"):
+    for directory in (root/"generations", root/"pressure", root/"stations"):
         items = sorted(directory.glob("*"), key=lambda p: p.name, reverse=True)
-        active = m.get("analysis", {}).get("generation") if directory.name == "generations" else Path(m.get("observations", {}).get("path", "")).name
+        active = (m.get("analysis" if directory.name=="generations" else "pressure_analysis",{}).get("generation")
+                  if directory.name!="stations" else Path(m.get("observations",{}).get("path","")).name)
         keep = {active}
         keep.update(p.name for p in [p for p in items if p.name != active][:2])
         for old in items:

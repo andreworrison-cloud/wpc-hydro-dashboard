@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-REVISION = "rtma-surface-v2"
+REVISION = "rtma-surface-v3"
+PRESSURE_REVISION = "hrrr-mslp-v1"
 LEGACY_KEYS = ("temperature", "dewpoint", "wind_speed")
+V2_KEYS = (*LEGACY_KEYS, "wind_direction", "wind_gust", "surface_pressure", "relative_humidity", "heat_index", "wind_chill")
 BOUNDS = [[24.0, -125.0], [50.0, -66.0]]
 ANALYSIS_WARN_MINUTES = 150
 ANALYSIS_HIDE_MINUTES = 240
@@ -36,25 +38,18 @@ PRODUCTS = {
 }
 
 PRODUCTS.update({
-    "wind_direction": {
-        "label": "10-m Wind Direction", "unit": "°", "parameter": "WDIR", "level": 10,
-        "stops": [0,45,90,135,180,225,270,315,360],
-        "colors": ["#527fd1","#42bac6","#53af78","#b5c65c","#efbf56","#e5825b","#bd6dbe","#855fc4","#527fd1"],
-        "ticks": [0,90,180,270,360], "cyclic": True,
-        "note": "Direction wind comes FROM, relative to true north. Calm winds below 1 kt and undefined directions are transparent.",
-    },
     "wind_gust": {
         "label": "10-m Wind Gust", "unit": "kt", "parameter": "GUST", "level": 10,
         "stops": [0,5,10,15,20,30,40,50,60,80],
         "colors": list(PRODUCTS["wind_speed"]["colors"]), "ticks": [0,10,20,40,60,80],
         "note": "RTMA wind-gust analysis at the displayed valid time; not an hourly maximum accumulation.",
     },
-    "surface_pressure": {
-        "label": "Surface Pressure", "unit": "hPa", "parameter": "PRES", "level": 0,
-        "stops": [600,700,800,850,900,950,980,1000,1020,1040,1060],
-        "colors": ["#8268b5","#6268af","#497eae","#4b9daf","#65b7a3","#9cc896","#c8d69c","#e0d28b","#e8b56f","#da8565","#b35c70"],
-        "ticks": [600,700,800,900,1000,1060],
-        "note": "Pressure at the terrain surface. Elevation strongly affects this field; it is not reduced to mean sea level.",
+    "mslp": {
+        "label": "Barometric Pressure (MSLP)", "unit": "hPa", "parameter": "MSLMA", "level": 0,
+        "stops": [960,980,990,1000,1008,1016,1024,1032,1040,1050,1060],
+        "colors": ["#6a4796","#4956ae","#407db5","#5daac2","#94cbd2","#d5e3d4","#e5d393","#e4b56b","#d58a57","#bc605c","#8f4765"],
+        "ticks": [960,980,1000,1020,1040,1060],
+        "note": "Pressure reduced to mean sea level to compare the weather pattern across elevations. HRRR analysis uses MAPS sea-level reduction; station points show reported MSLP.",
     },
     "relative_humidity": {
         "label": "2-m Relative Humidity", "unit": "%", "derived_from": ["temperature","dewpoint"],
@@ -82,13 +77,13 @@ PRODUCTS.update({
     },
 })
 
+RTMA_KEYS = tuple(key for key in PRODUCTS if key != "mslp")
 SOURCE_FIELDS = {
-    key: {**PRODUCTS[key], "type": "surface" if key=="surface_pressure" else "heightAboveGround",
+    key: {**PRODUCTS[key], "type": "heightAboveGround",
           "grib": grib, "source_units": units}
     for key, grib, units in (
         ("temperature", (0,0,0), "K"), ("dewpoint", (0,0,6), "K"),
-        ("wind_speed", (0,2,1), "m s**-1"), ("wind_direction", (0,2,0), "Degree true"),
-        ("wind_gust", (0,2,22), "m s**-1"), ("surface_pressure", (0,3,0), "Pa"),
+        ("wind_speed", (0,2,1), "m s**-1"), ("wind_gust", (0,2,22), "m s**-1"),
     )
 }
 
@@ -124,18 +119,6 @@ def wind_chill(temperature_f, wind_kt):
     return np.where(valid,35.74+.6215*t-35.75*v+.4275*t*v,np.nan)
 
 
-def direction_components(degrees):
-    a = np.asarray(degrees,dtype="float32")
-    return np.sin(np.deg2rad(a)),np.cos(np.deg2rad(a))
-
-
-def direction_from_components(sine, cosine, wind_kt):
-    s,c,k = np.broadcast_arrays(sine,cosine,wind_kt)
-    valid = np.isfinite(s)&np.isfinite(c)&np.isfinite(k)&(k>=1)&(np.hypot(s,c)>1e-3)
-    angle=np.mod(np.degrees(np.arctan2(s,c)),360).astype("float32")
-    return np.where(valid,np.mod(angle,360),np.nan)
-
-
 def derive_products(fields):
     rh=relative_humidity(fields["temperature"],fields["dewpoint"])
     return {**fields,"relative_humidity":rh.astype("float32"),
@@ -162,10 +145,8 @@ def display_values(key, values):
         return (a - 273.15) * (9 / 5) + 32
     if key in ("wind_speed", "wind_gust"):
         return np.where((a >= 0) & (a <= 130), a * 1.9438444924406, np.nan)
-    if key == "wind_direction":
-        return np.where((a>=0)&(a<=360),np.mod(a,360),np.nan)
-    if key == "surface_pressure":
-        return np.where((a>=40000)&(a<=110000),a/100,np.nan)
+    if key == "mslp":
+        return np.where((a>=85000)&(a<=110000),a/100,np.nan)
     raise ValueError("Unknown surface product")
 
 

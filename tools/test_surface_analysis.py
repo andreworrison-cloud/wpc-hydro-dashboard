@@ -24,8 +24,8 @@ class SurfaceTests(unittest.TestCase):
         np.testing.assert_allclose(science.display_values("dewpoint", [263.15]), [14], atol=.001)
         np.testing.assert_allclose(science.display_values("wind_speed", [0, 10]), [0, 19.438445], atol=.001)
         np.testing.assert_allclose(science.display_values("wind_gust", [10]), [19.438445], atol=.001)
-        np.testing.assert_allclose(science.display_values("surface_pressure", [101325,70000]), [1013.25,700], atol=.001)
-        np.testing.assert_allclose(science.display_values("wind_direction", [0,90,360]), [0,90,0], atol=.001)
+        np.testing.assert_allclose(science.display_values("mslp", [101325,102560]), [1013.25,1025.6], atol=.001)
+        self.assertTrue(np.isnan(science.display_values("mslp",[70000])[0]),'terrain pressure cannot masquerade as MSLP')
         for key in science.SOURCE_FIELDS:
             self.assertTrue(np.isnan(science.display_values(key, [np.nan, -999, 999999])).all())
         self.assertTrue(np.isnan(science.display_values("wind_speed", [-1])[0]))
@@ -95,16 +95,12 @@ class SurfaceTests(unittest.TestCase):
         self.assertTrue(np.isnan(derived['heat_index']).all());self.assertTrue(np.isfinite(derived['wind_chill']).all())
         self.assertTrue((science.colorize('heat_index',derived['heat_index'])[...,3]==0).all())
 
-    def test_circular_direction_reprojection(self):
+    def test_scalar_pressure_reprojection(self):
         from rasterio.transform import from_bounds
         native=from_bounds(0,0,2,2,2,2);target=from_bounds(0,0,2,2,1,1)
-        fields={'wind_direction':np.array([[359,1],[359,1]],dtype='float32'),'wind_speed':np.full((2,2),10,dtype='float32')}
+        fields={'mslp':np.array([[1000,1020],[1000,1020]],dtype='float32')}
         output=source.project_fields(fields,native,'EPSG:3857',target,1,1)
-        degree=float(output['wind_direction'][0,0]);self.assertLess(min(degree,360-degree),.01)
-        self.assertLess(np.abs(science.colorize('wind_direction',np.array([359,1]))[0,:3].astype(int)-science.colorize('wind_direction',np.array([359,1]))[1,:3].astype(int)).max(),7)
-        self.assertTrue(np.isnan(science.direction_from_components(0,0,10)))
-        self.assertTrue(np.isnan(science.direction_from_components(0,1,0)))
-        self.assertEqual(float(science.direction_from_components(1,0,10)),90)
+        self.assertAlmostEqual(float(output['mslp'][0,0]),1010,places=4)
 
     def test_provider_specific_inventory(self):
         def inventory(offset):
@@ -114,6 +110,17 @@ class SurfaceTests(unittest.TestCase):
         self.assertEqual(source.inventory(inventory(3000),NOW)['wind_speed'],(3200,3299))
         for bad in [inventory(1000).replace('2 m above ground','surface'), inventory(1000).replace('d=2026102415','d=2026102414'),inventory(1000).replace(':anl:',':1 hour fcst:')]:
             with self.assertRaises(ValueError):source.inventory(bad,NOW)
+
+    def test_pressure_inventory_rejects_terrain_and_forecasts(self):
+        idx='1:0:d=2026102415:PRES:surface:anl:\n2:1000:d=2026102415:MSLMA:mean sea level:anl:\n3:2000:d=2026102415:HGT:1000 mb:anl:\n'
+        self.assertEqual(source.inventory(idx,NOW,{'mslp':source.PRESSURE_FIELD}),{'mslp':(1000,1999)})
+        for bad in [idx.replace(':MSLMA:',':PRES:'),idx.replace('mean sea level','surface'),idx.replace(':anl:',':1 hour fcst:'),idx.replace('2026102415','2026102414')]:
+            with self.assertRaises(ValueError):source.inventory(bad,NOW,{'mslp':source.PRESSURE_FIELD})
+        # Decode must check the GRIB parameter/level itself, not just its index.
+        for grib,level in [((0,3,0),'surface'),((0,3,198),'surface'),((0,3,1),'meanSea')]:
+            values=dict(zip(('discipline','parameterCategory','parameterNumber'),grib),typeOfLevel=level,level=0,shortName='wrong')
+            with patch.object(source,'codes_new_from_message',return_value=object()),patch.object(source,'codes_get',side_effect=lambda h,k:values[k]),patch.object(source,'codes_release'):
+                with self.assertRaises(ValueError):source.decode(b'not used','mslp',NOW)
 
     def test_metar_age_uses_retrieval_clock_after_rendering(self):
         rows='raw_text,station_id,observation_time,latitude,longitude,temp_c,dewpoint_c,wind_speed_kt,metar_type\n'
@@ -174,6 +181,31 @@ class SurfaceTests(unittest.TestCase):
             self.assertEqual(result['analysis'],a)
             self.assertFalse(result['last_attempt']['analysis']['ok'])
             bad=json.loads(json.dumps(old));bad['analysis']['revision']=science.REVISION
+            with self.assertRaises(ValueError):source.validate_package(root,bad)
+
+    def test_pressure_retains_independently_and_never_regresses(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);gen='2026102415-1234567890abcdef';folder=root/'pressure'/gen;folder.mkdir(parents=True)
+            path=folder/'mslp.png';Image.new('RGBA',(3600,2024),(1,2,3,255)).save(path)
+            pressure={'revision':science.PRESSURE_REVISION,'valid_time':science.iso(NOW),'generation':gen,
+                'native_spacing_km':3,'width':3600,'height':2024,'crs':'EPSG:3857','bounds':science.BOUNDS,
+                'products':{'mslp':{**science.PRODUCTS['mslp'],'path':str(path.relative_to(root)),'sha256':source.sha(path.read_bytes())}}}
+            previous={'schema':'surface-suite-v1','policy':{'analysis_warn_minutes':150,'analysis_hide_minutes':240,'station_hide_minutes':90},'pressure_analysis':pressure}
+            (root/'metadata.json').write_text(json.dumps(previous))
+            with patch.object(source,'session') as fake:
+                fake.return_value.get.side_effect=RuntimeError('offline')
+                result=source.build(root,NOW+timedelta(hours=1))
+            self.assertEqual(result['pressure_analysis'],pressure)
+            self.assertTrue(result['last_attempt']['pressure_analysis']['ok'])
+            self.assertFalse(result['last_attempt']['analysis']['ok'])
+            self.assertFalse(result['last_attempt']['observations']['ok'])
+            self.assertTrue(path.exists())
+            with patch.object(source,'session') as fake:
+                fake.return_value.get.side_effect=RuntimeError('offline')
+                with self.assertRaises(RuntimeError):source.build_pressure_analysis(fake.return_value,root,NOW-timedelta(hours=1),result)
+                fake.return_value.get.assert_not_called()
+            bad=json.loads(json.dumps(result));bad['pressure_analysis']['products']={'surface_pressure':pressure['products']['mslp']}
             with self.assertRaises(ValueError):source.validate_package(root,bad)
 
 

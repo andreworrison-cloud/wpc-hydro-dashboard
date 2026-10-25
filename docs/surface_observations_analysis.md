@@ -1,41 +1,54 @@
 # Surface observations and hourly analysis
 
 The **Surface Observations & Analysis** section follows Radar and Satellite Data.
-It provides nine mutually exclusive filled fields and a separate optional
-**METAR Station Values (Zoom In)** checkbox. Temperature and dewpoint use °F;
+It provides eight mutually exclusive filled fields, an independent **METAR Wind
+Barbs** overlay, and an optional **METAR Station Values (Zoom In)** checkbox. Temperature and dewpoint use °F;
 wind speed and gust use knots; pressure uses hPa. All surface layers start off.
 
 ## Filled fields: NOAA RTMA
 
 - Source: CONUS hourly RTMA `rtma2p5.tHHz.2dvaranl_ndfd.grb2_wexp`.
 - Native inputs: 2-m temperature (`TMP`) and dewpoint (`DPT`), 10-m sustained wind
-  speed (`WIND`), wind direction (`WDIR`), wind gust (`GUST`), and surface pressure
-  (`PRES`, surface level). GRIB discipline/category/parameter number, units and
-  level are validated. MSLP is not substituted for surface pressure.
+  speed (`WIND`) and wind gust (`GUST`). GRIB discipline/category/parameter number,
+  units and level are validated. RTMA direction and terrain pressure fills have
+  been replaced by observed barbs and a separate sea-level-pressure analysis.
 - Nominal native spacing: 2.5 km (actual grid increment 2539.703 m); 2345 × 1597
   Lambert conformal grid. This is an observation-assimilating surface analysis
   with a model background, not a measurement at every pixel or a forecast.
-- Units convert K → °F, m/s → kt, Pa → hPa. Missing and implausible values remain
+- Units convert K → °F and m/s → kt. Missing and implausible values remain
   missing. Native gust analyses are not labeled hourly maximum gusts.
 - Scalar fields undergo bilinear reprojection to EPSG:3857 before colorization.
   The 3600 × 2024 image covers 24–50°N, 125–66°W. Display pixels do not increase
   scientific resolution; unsupported edges remain transparent. Palettes have
   continuous linear RGB interpolation with clamped endpoint colors. Legend
   gradients use the exact product palette and show the endpoint tails.
-- Wind direction uses separately reprojected sine/cosine components and an
-  `atan2` reconstruction, rather than scalar averaging of degrees. Directions
-  are meteorological **from**, relative to true north. Northerly 359°/1° values
-  interpolate through 0°, not 180°. Near-opposite unresolved vectors and winds
-  below 1 kt are transparent. The cyclic palette and compass legend meet at north.
-- Surface pressure is actual pressure at the model terrain surface. Its strong
-  terrain dependence is labeled explicitly; it is not mean-sea-level pressure.
 - Newest nonfuture, complete hour is selected from a bounded four-hour search,
   including the previous UTC day. NOAA NODD/AWS is preferred, with NOMADS fallback
   at the same hour before stepping back. Each provider's own `.idx` byte offsets
   are used. HTTP 206/content range, GRIB framing/length, parameter, height, units,
   analysis lead, source/valid time and common native grid are checked.
-- All six native inputs and all nine display fields publish together. No valid-time regression is accepted.
+- Four native inputs and seven RTMA display fields publish together. No valid-time regression is accepted.
   The analysis age warning begins at 150 minutes; images hide at 240 minutes.
+
+## Barometric pressure: NOAA HRRR mean-sea-level analysis
+
+- **Barometric Pressure (MSLP)** uses native HRRR CONUS f00 `MSLMA`, mean-sea-level
+  pressure with MAPS system reduction. It compares the weather-related pressure
+  pattern across elevations. It is neither terrain-surface `PRES` nor aviation
+  altimeter setting. The fill is an analysis, not interpolated METAR measurements.
+- Source: `hrrr.YYYYMMDD/conus/hrrr.tHHz.wrfsfcf00.grib2`, nominal 3-km native
+  grid (1799 × 1059). Validate GRIB parameter `(0,3,198)`, `meanSea` level 0,
+  Pa units, matching source/valid UTC hour, zero lead, and native grid geometry.
+- NOAA NODD/AWS is preferred; NOMADS uses its own inventory at the same hour
+  before stepping backward. Pressure has its own valid time, immutable generation,
+  failure state and 150/240-minute age policy. A pressure-source failure does not
+  block fresh RTMA fills or METAR reports, and no component's valid time regresses.
+- Convert Pa to hPa before bilinear reprojection and colorization on the same
+  3600 × 2024 display canvas. Labels identify HRRR and its 3-km native spacing.
+  Sea-level reduction can retain terrain-related artifacts over high elevations;
+  it does not produce a direct pressure observation at each display pixel.
+- **Follow selected analysis** automatically shows actual reported MSLP points
+  when this fill is selected. Reports retain their own observation times.
 
 ## Derived analysis fields
 
@@ -82,10 +95,8 @@ These points do not interpolate the fill or supply artificial additional sites.
   Direction points show compass names with exact degrees available in titles and
   popups. Calm/variable reports do not invent a direction; absent gusts stay absent.
 - Reported MSLP comes only from AWC `sea_level_pressure_mb` (numerically hPa).
-  Altimeter settings are not relabeled as MSLP or station pressure. The feed
-  does not report actual surface pressure: following that fill shows an explicit
-  message and offers **Reported MSLP** as a separate station choice. The fill and
-  station headings always identify their quantities separately.
+  Altimeter settings are not relabeled as MSLP or station pressure. The fill and
+  station headings identify the gridded analysis and actual reported quantity.
 - Points carry their actual report times, independent of RTMA time. Popups show
   ID, observation UTC time, age, temperature, dewpoint, wind/gust, direction and
   MSLP when reported, calculated humidity/heat index/wind chill, and the escaped
@@ -100,6 +111,24 @@ These points do not interpolate the fill or supply artificial additional sites.
   while maps are rendering is not rejected against an obsolete processing-start
   clock. Truly future reports remain rejected.
 
+## Wind barbs: observed, independent of shading
+
+- **METAR Wind Barbs** is a separate vector checkbox that stays on when switching
+  between sustained-wind and gust fills. It also works without a fill or numeric
+  station layer. Barbs use each station's reported sustained speed and true-north
+  **from** direction, not the gust value or a model wind interpolated to a station.
+- The shaft points toward the direction wind comes from. A half feather is 5 kt,
+  full feather 10 kt, triangle 50 kt; speed rounds to the nearest 5 kt. Explicit
+  calm reports use a circle; light nonzero reports retain their direction even
+  if rounding leaves a bare shaft. Missing/variable directions are not invented.
+- Barbs appear at national scale, with screen-space thinning in both dimensions.
+  More stations appear naturally as users zoom. White halos and dark strokes
+  preserve contrast over either fill and the map. Numeric station labels move
+  below the station anchor while barbs are enabled.
+- The same 90-minute report-age limit applies to barbs. Clicking opens the actual
+  report's time, wind, gust and raw METAR. Open barb popups and marker identities
+  survive map movement and routine refresh while fresh.
+
 ## Updating and publication
 
 `update_surface_analysis.yml` is reusable and callable manually. The existing
@@ -108,18 +137,19 @@ existing cron-job.org hourly trigger without a new scheduler or dependency on
 RAP success. Source changes also trigger one build on main for initialization.
 
 The parentless `surface-data` branch holds `surface_publish/metadata.json`,
-immutable generation images and immutable station JSON packages. The existing
+immutable RTMA `generations/`, HRRR `pressure/` images and immutable station JSON packages. The existing
 bounded snapshot publisher uses a lease to protect concurrent writes. Main and
 Pages hold source code, not operational surface data. Three asset generations
-are retained for cached readers. Backend validation checks all referenced asset
+per component are retained for cached readers. Backend validation checks all referenced asset
 checksums and image sizes before atomically replacing metadata. Frontend fetches
 and decodes selected images, checks SHA-256 and dimensions, and retains an older
 validated image with its own valid time on failure. Images load only on demand.
 Each component can retain its previous usable data if its upstream source fails.
-The v2 renderer rebuilds a complete nine-product suite even at the same valid hour
-as a restored v1 three-product package. Restoring or retaining v1 is supported
-when expansion inputs fail. The new browser accepts both formats and identifies
-new fields as waiting until a complete expanded generation is available.
+The v3 RTMA renderer rebuilds the seven retained fields even at the same valid
+hour as a restored v1/v2 package. Backend and browser accept legacy packages
+during migration. Legacy terrain pressure is never used as the new MSLP fill,
+and the direction raster is no longer exposed as a layer. Pressure initializes
+independently as its own `hrrr-mslp-v1` component.
 
 Browser metadata checks run every five minutes while a surface layer is selected.
 The UI is a latest-hour view; there is no surface animation or historical station
@@ -133,16 +163,20 @@ UTC midnight fallback, non-regression, retention and corruption detection.
 `node tools/test_surface_layer.cjs` checks both time cutoffs, palette agreement,
 point thinning, safe paths, popup escaping and the actual adapter's decoded
 image/station lifecycle. Dashboard and radar regression checks remain in CI.
-Expanded checks cover reference formula values and domain boundaries, actual
-359°/1° circular reprojection, calm/variable winds, pressure-unit conversion,
+Expanded checks cover reference formula values and domain boundaries, scalar
+pressure reprojection, calm/variable winds, pressure-unit conversion,
 reported MSLP versus altimeter settings, legacy retention, post-render report
-ages, nine-field switching and the independent station selector.
+ages, eight-field switching, pressure-source rejection and independent retention,
+barb geometry/orientation and 5/10/50-kt symbols, overlay independence and the station selector.
 
 Sources:
 
 - https://www.emc.ncep.noaa.gov/emc/pages/numerical_forecast_systems/rtma.php
 - https://www.nco.ncep.noaa.gov/pmb/products/rtma/
 - https://registry.opendata.aws/noaa-rtma/
+- https://www.nco.ncep.noaa.gov/pmb/products/hrrr/hrrr.t00z.wrfsfcf00.grib2.shtml
+- https://registry.opendata.aws/noaa-hrrr-pds/
+- https://www.weather.gov/bou/pressure_definitions
 - https://aviationweather.gov/data/api/
 - https://qed.epa.gov/hms/meteorology/humidity/algorithms/
 - https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
