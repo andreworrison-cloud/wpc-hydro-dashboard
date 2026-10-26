@@ -62,7 +62,8 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  const handlers={},onMap=new Set(),panes={},changeHandlers=[];let calls=0,clock=now,zoom=4;const nodes=[];
  const add=l=>{onMap.add(l);l.eachLayer?.(add);return l},remove=l=>{onMap.delete(l);l.eachLayer?.(remove)};
  const map={createPane:n=>panes[n]={style:{}},getPane:n=>panes[n],hasLayer:l=>onMap.has(l),getZoom:()=>zoom,getSize:()=>({x:1200,y:900}),getBounds:()=>({contains:()=>true}),latLngToContainerPoint:()=>({x:5,y:5}),containerPointToLatLng:p=>p,removeLayer:remove,addLayer:add,on:(events,f)=>events.split(' ').forEach(e=>(handlers[e]??=[]).push(f))};
- function group(initial=[]){const children=new Set(initial);return {options:{},hasLayer:l=>children.has(l),addLayer(l){children.add(l);if(onMap.has(this))add(l);return this},removeLayer(l){children.delete(l);if(onMap.has(this))remove(l)},clearLayers(){[...children].forEach(l=>this.removeLayer(l))},eachLayer:f=>[...children].forEach(f),addTo(parent){if(parent===map)add(this);else parent.addLayer(this);return this}};}
+ let onRemove=()=>{};
+ function group(initial=[]){const children=new Set(initial);return {options:{},hasLayer:l=>children.has(l),addLayer(l){children.add(l);if(onMap.has(this))add(l);return this},removeLayer(l){onRemove();children.delete(l);if(onMap.has(this))remove(l)},clearLayers(){[...children].forEach(l=>this.removeLayer(l))},eachLayer:f=>[...children].forEach(f),addTo(parent){if(parent===map)add(this);else parent.addLayer(this);return this}};}
  const markerInstances=[];
  const L={layerGroup:group,geoJSON:()=>group(),imageOverlay:()=>({setOpacity(){}}),divIcon:x=>x,marker:(latlon,options)=>{const marker={options,bindPopup(content){this.content=content;return this},setPopupContent(content){this.content=content},setLatLng(){},setIcon(icon){this.options.icon=icon},isPopupOpen:()=>true,addTo(g){g.addLayer(this);return this}};markerInstances.push(marker);return marker;}};
  const count=group=>{let n=0;group.eachLayer(()=>n++);return n};
@@ -91,7 +92,8 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  const station=markerInstances[1];assert.equal(station.options.icon.iconAnchor[1],-15,'numeric labels are offset from the barbs');
  assert.match(station.options.icon.html,/W 10/);assert.equal(zoom,4,'numeric station values are visible at national scale');
  const change=(selector,value,checked)=>changeHandlers[0]({target:{matches:s=>s===selector,value,checked}});
- change('[data-surface-wind]','wind_gust');await suite.refresh();
+ const windTarget={matches:s=>s==='[data-surface-wind]',value:'wind_gust'};
+ onRemove=()=>{windTarget.value='wind_speed';};changeHandlers[0]({target:windTarget});onRemove=()=>{};await suite.refresh();
  assert.equal(onMap.has(suite.layers.wind_speed),false);assert.equal(onMap.has(suite.layers.wind_gust),true);assert.equal(count(suite.barbs),1,'barbs persist across shading changes');
  assert.match(suite.legendHTML(),/Surface wind shading/);assert.match(suite.legendHTML(),/value="wind_gust" selected/);
  change('[data-surface-barbs]',undefined,false);assert.equal(count(suite.barbs),0);assert.equal(count(suite.layers.wind_gust),1);
@@ -101,6 +103,8 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  for(const key of S.keys){
   S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers[key]);await suite.refresh();
   assert.equal(count(suite.layers[key]),1,`loads ${key}`);assert.ok(suite.legendHTML().includes(S.units[key]));
+  assert.ok(suite.legendHTML().includes(`${key==='mslp'?4:palettes[key].contour_interval*2} ${S.units[key]==='hPa'?'mb':S.units[key]} intervals`),'national legend matches displayed contour spacing');
+  zoom=6;assert.ok(suite.legendHTML().includes(`${palettes[key].contour_interval} ${S.units[key]==='hPa'?'mb':S.units[key]} intervals`),'zoomed legend matches full contour spacing');zoom=4;
  }
  S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers.heat_index);await suite.refresh();assert.match(suite.legendHTML(),/No qualifying conditions/);
  onMap.delete(suite.layers.heat_index);onMap.add(suite.layers.mslp);await suite.refresh();
