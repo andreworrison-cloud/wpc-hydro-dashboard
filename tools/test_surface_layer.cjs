@@ -63,7 +63,7 @@ assert.throws(()=>S.validate({...m,analysis:{...a,products:{...a.products,temper
 assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp:{...pressure.products.mslp,parameter:'PRES'}}}}));
 
 (async()=>{
- const handlers={},onMap=new Set(),panes={},changeHandlers=[];let calls=0,clock=now,zoom=4;const nodes=[];
+ const handlers={},onMap=new Set(),panes={},changeHandlers=[],clickHandlers=[];let calls=0,clock=now,zoom=4;const nodes=[];
  const add=l=>{onMap.add(l);l.eachLayer?.(add);return l},remove=l=>{onMap.delete(l);l.eachLayer?.(remove)};
  const map={createPane:n=>panes[n]={style:{}},getPane:n=>panes[n],hasLayer:l=>onMap.has(l),getZoom:()=>zoom,getSize:()=>({x:1200,y:900}),getBounds:()=>({contains:()=>true}),latLngToContainerPoint:()=>({x:5,y:5}),containerPointToLatLng:p=>p,removeLayer:remove,addLayer:add,on:(events,f)=>events.split(' ').forEach(e=>(handlers[e]??=[]).push(f))};
  let onRemove=()=>{};
@@ -81,10 +81,11 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  const points={schema:'surface-stations-v1',fetched_at:at(0),points:Array.from({length:500},(_,i)=>({...point,id:'K'+String(i).padStart(3,'0'),wind_speed:10,wind_direction:270,mslp:1013.2,relative_humidity:60}))};
  const allBytes=new TextEncoder().encode(JSON.stringify(points));
  mock.observations={path:'stations/20261024150000-1234567890abcdef.json',sha256:Buffer.from(await crypto.subtle.digest('SHA-256',allBytes)).toString('hex'),count:500,fetched_at:at(0)};
- const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(event,f){if(event==='change')changeHandlers.push(f);}},fetch:async url=>{calls++;const text=String(url),contour=contourBytes.get(new URL(text).pathname);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:contour?contour.buffer:bytes.buffer}}};
+ const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(event,f){if(event==='change')changeHandlers.push(f);if(event==='click')clickHandlers.push(f);}},fetch:async url=>{calls++;const text=String(url),contour=contourBytes.get(new URL(text).pathname);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:contour?contour.buffer:bytes.buffer}}};
  c.URL.createObjectURL=()=>`blob:${nodes.push(1)}`;c.URL.revokeObjectURL=()=>{};
  vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),c);vm.runInNewContext(fs.readFileSync('surface_sampling.js','utf8'),c);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),c);
  const suite=c.SurfaceSuite.create({map,metadataURL:'https://example.org/metadata.json',now:()=>clock});
+ const consumed=[];clickHandlers[0]({target:{matches:s=>s==='[data-surface-unpin]'},preventDefault:()=>consumed.push('prevent'),stopPropagation:()=>consumed.push('stop')});assert.deepEqual(consumed,['prevent','stop'],'clear-pin clicks are consumed before a redraw can detach their target and let the map repin');
  onMap.add(suite.barbs);await suite.refresh();
  assert.equal(count(suite.barbs),1,'barbs work without any fill or numeric station layer');assert.equal(calls,2,'barbs fetch only metadata and observations');
  assert.match(suite.legendHTML(),/METAR Wind Barbs/);assert.match(suite.legendHTML(),/gust shading/i);
