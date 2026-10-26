@@ -101,6 +101,8 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  for(const key of S.keys){
   S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers[key]);await suite.refresh();
   assert.equal(count(suite.layers[key]),1,`loads ${key}`);assert.ok(suite.legendHTML().includes(S.units[key]));
+  assert.ok(suite.legendHTML().includes(`${key==='mslp'?4:palettes[key].contour_interval*2} ${S.units[key]==='hPa'?'mb':S.units[key]} intervals`),'national legend matches displayed contour spacing');
+  zoom=6;assert.ok(suite.legendHTML().includes(`${palettes[key].contour_interval} ${S.units[key]==='hPa'?'mb':S.units[key]} intervals`),'zoomed legend matches full contour spacing');zoom=4;
  }
  S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers.heat_index);await suite.refresh();assert.match(suite.legendHTML(),/No qualifying conditions/);
  onMap.delete(suite.layers.heat_index);onMap.add(suite.layers.mslp);await suite.refresh();

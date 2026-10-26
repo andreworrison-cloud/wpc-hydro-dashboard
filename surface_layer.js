@@ -278,7 +278,7 @@
                 if(p?.applicable_pixels===0 && loaded)status+=' · No qualifying conditions in this analysis';
                 html+=`<div class="surface-card-heading">${esc(p?.label||(key==='mslp'?'Barometric Pressure (MSLP)':names[key]))} · ${units[key]}</div><div class="surface-status">${esc(status)}</div>`;
                 if(p)html+=scale(p);
-                html+=`<div class="surface-contour-controls"><label><input type="checkbox" data-surface-contours ${contoursEnabled?'checked':''}> ${key==='mslp'?'Isobars & H/L':'Contours'}</label>${p?.contours?`<span>${p.contours.interval} ${units[key]==='hPa'?'mb':units[key]} intervals</span>`:''}</div>`;
+                html+=`<div class="surface-contour-controls"><label><input type="checkbox" data-surface-contours ${contoursEnabled?'checked':''}> ${key==='mslp'?'Isobars & H/L':'Contours'}</label>${p?.contours?`<span>${p.contours.interval*(key!=='mslp'&&map.getZoom()<6?2:1)} ${units[key]==='hPa'?'mb':units[key]} intervals</span>`:''}</div>`;
                 if(loaded?.contourError)html+='<p class="surface-note">Contours unavailable · fill shown. Retrying on refresh.</p>';
                 else if(p?.contours&&loaded&&!loaded.contours)html+='<p class="surface-note">Loading contours…</p>';
                 else if(!p?.contours)html+='<p class="surface-note">New contours are updating.</p>';
