@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-REVISION = "rtma-surface-v3"
-PRESSURE_REVISION = "hrrr-mslp-v1"
+REVISION = "rtma-surface-v4"
+PRESSURE_REVISION = "hrrr-mslp-v2"
 LEGACY_KEYS = ("temperature", "dewpoint", "wind_speed")
 V2_KEYS = (*LEGACY_KEYS, "wind_direction", "wind_gust", "surface_pressure", "relative_humidity", "heat_index", "wind_chill")
 BOUNDS = [[24.0, -125.0], [50.0, -66.0]]
@@ -20,20 +20,23 @@ PRODUCTS = {
     "temperature": {
         "label": "2-m Temperature", "unit": "°F", "parameter": "TMP", "level": 2,
         "stops": [-40, -20, 0, 20, 32, 40, 50, 60, 70, 80, 90, 100, 110, 120],
-        "colors": ["#e1d9ff", "#9d67c9", "#5444aa", "#2865b0", "#36b7dc", "#69cdb7", "#66bd63", "#b8cf55", "#f3dc54", "#f6a342", "#ed6639", "#ca3038", "#9e1855", "#691256"],
+        "colors": ["#6b1f91", "#843abf", "#2c40bd", "#0066e5", "#00b7f0", "#00c8b0", "#00a855", "#83c900", "#e7df00", "#ffb000", "#ff5b00", "#ee1515", "#c50070", "#7c009c"],
         "ticks": [-40, 0, 32, 60, 90, 120],
+        "contour_interval": 10,
     },
     "dewpoint": {
         "label": "2-m Dewpoint", "unit": "°F", "parameter": "DPT", "level": 2,
         "stops": [-20, 0, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80],
-        "colors": ["#70523c", "#a17b50", "#c0a57a", "#d8cfac", "#c9d8b6", "#9acb85", "#66ba70", "#329e83", "#208eab", "#3067b3", "#6651a8", "#963ba0"],
+        "colors": ["#7a2c18", "#aa4a1c", "#cf7922", "#e9b13a", "#dad447", "#80c500", "#18b234", "#00a77f", "#009fc9", "#0069d9", "#3d36bb", "#9023b3"],
         "ticks": [-20, 0, 20, 40, 60, 80],
+        "contour_interval": 10,
     },
     "wind_speed": {
         "label": "10-m Wind Speed", "unit": "kt", "parameter": "WIND", "level": 10,
         "stops": [0, 5, 10, 15, 20, 30, 40, 50, 60, 80],
-        "colors": ["#d9e2e7", "#a1d7df", "#58bfc4", "#48ab84", "#90bd60", "#e6d554", "#f3a444", "#e46b40", "#bd3e66", "#783d9d"],
+        "colors": ["#0f2850", "#004fd1", "#00a6e8", "#00c4a1", "#55c928", "#e5dc00", "#ff9c00", "#f54015", "#cc157e", "#7413ae"],
         "ticks": [0, 10, 20, 40, 60, 80],
+        "contour_interval": 10,
     },
 }
 
@@ -42,36 +45,41 @@ PRODUCTS.update({
         "label": "10-m Wind Gust", "unit": "kt", "parameter": "GUST", "level": 10,
         "stops": [0,5,10,15,20,30,40,50,60,80],
         "colors": list(PRODUCTS["wind_speed"]["colors"]), "ticks": [0,10,20,40,60,80],
+        "contour_interval": 10,
         "note": "RTMA wind-gust analysis at the displayed valid time; not an hourly maximum accumulation.",
     },
     "mslp": {
         "label": "Barometric Pressure (MSLP)", "unit": "hPa", "parameter": "MSLMA", "level": 0,
-        "stops": [960,980,990,1000,1008,1016,1024,1032,1040,1050,1060],
-        "colors": ["#6a4796","#4956ae","#407db5","#5daac2","#94cbd2","#d5e3d4","#e5d393","#e4b56b","#d58a57","#bc605c","#8f4765"],
+        "stops": [960,980,992,1000,1008,1012,1016,1020,1024,1028,1032,1040,1052,1060],
+        "colors": ["#76148f","#4425ba","#144bdd","#007adb","#00afd3","#00c9b1","#35c45a","#a7d51b","#ffe000","#ffa000","#f45c13","#df2251","#ae218d","#641a93"],
         "ticks": [960,980,1000,1020,1040,1060],
+        "contour_interval": 4, "smoothing_km": 18,
         "note": "Pressure reduced to mean sea level to compare the weather pattern across elevations. HRRR analysis uses MAPS sea-level reduction; station points show reported MSLP.",
     },
     "relative_humidity": {
         "label": "2-m Relative Humidity", "unit": "%", "derived_from": ["temperature","dewpoint"],
         "stops": [0,10,20,30,40,50,60,70,80,90,100],
-        "colors": ["#9f6844","#bb8655","#d0a775","#ddc699","#e4dfbe","#cdddb6","#a3d2a2","#6ebd9e","#449fae","#3878b2","#55509a"],
+        "colors": ["#aa3815","#cf5b10","#ec8b00","#f1be00","#d5db08","#80c61b","#12b34e","#00b293","#009cc8","#0067d9","#5130ba"],
         "ticks": [0,20,40,60,80,100],
+        "contour_interval": 10,
         "method": "August-Roche-Magnus: 100*exp(17.625*Td/(243.04+Td)-17.625*T/(243.04+T)); T/Td in Celsius; RH relative to liquid water",
         "note": "Calculated from temperature and dewpoint; relative humidity with respect to liquid water, bounded to 0–100%.",
     },
     "heat_index": {
         "label": "Heat Index", "unit": "°F", "derived_from": ["temperature","relative_humidity"],
         "stops": [80,85,90,95,100,105,110,115,120,130,140],
-        "colors": ["#e7dc7a","#edcb64","#f1b553","#ee9b48","#e97b40","#de5941","#cc3e4c","#b82d66","#9a286f","#7c286e","#572861"],
+        "colors": ["#ffe000","#ffc000","#ff9800","#ff6600","#f53313","#e31330","#cc075c","#ac0a8c","#8b0eaa","#650c91","#410766"],
         "ticks": [80,90,100,110,120,140],
+        "contour_interval": 5,
         "method": "NWS/WPC Rothfusz regression with low/high humidity adjustments; displayed only when preliminary averaged Steadman HI >=80 F",
         "note": "Calculated for warm conditions passing the NWS preliminary 80°F heat-index screen. Other areas are transparent. Assumes shade/light wind.",
     },
     "wind_chill": {
         "label": "Wind Chill", "unit": "°F", "derived_from": ["temperature","wind_speed"],
         "stops": [-60,-40,-20,0,10,20,30,40,50],
-        "colors": ["#77449d","#7657b4","#5869bc","#417ebd","#439dcc","#6bb9d0","#a0d3d4","#c6e1d6","#e0e9d6"],
+        "colors": ["#7c0b98","#5a19bb","#243bdd","#006fe5","#009fdf","#00c3c6","#00bc86","#50c446","#bbd917"],
         "ticks": [-60,-40,-20,0,20,30,40,50],
+        "contour_interval": 10,
         "method": "NWS: 35.74+0.6215*T-35.75*V^0.16+0.4275*T*V^0.16; T in F; V in mph; T<=50 F and V>3 mph",
         "note": "Calculated only at temperatures ≤50°F and sustained winds >3 mph. Other areas are transparent; gusts are not used.",
     },

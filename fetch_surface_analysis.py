@@ -30,6 +30,7 @@ from surface_analysis import (REVISION, PRESSURE_REVISION, LEGACY_KEYS, V2_KEYS,
                               ANALYSIS_HIDE_MINUTES, STATION_HIDE_MINUTES,
                               colorize, display_values, iso, parse_time, parse_metars,
                               derive_products)
+from surface_contours import smooth_masked, pressure_centers, contour_collection, validate_collection
 
 UTC = timezone.utc
 METAR_URL = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
@@ -130,7 +131,7 @@ def display_grid():
     return from_bounds(west,south,east,north,WIDTH,height),height
 
 
-def write_products(root, dest, display):
+def write_products(root, dest, display, target, cycle, centers=()):
     dest.mkdir(parents=True,exist_ok=True)
     products={}
     for key,output in display.items():
@@ -138,6 +139,12 @@ def write_products(root, dest, display):
         Image.fromarray(colorize(key,output)).save(path,optimize=True)
         products[key]={**PRODUCTS[key],"path":path.relative_to(root).as_posix(),"sha256":sha(path.read_bytes()),
                        "applicable_pixels":int(np.isfinite(output).sum()),"resampling":"bilinear scalar display"}
+        contours=contour_collection(key,output,target,iso(cycle),centers if key=="mslp" else ())
+        validate_collection(contours,key,iso(cycle))
+        contour_path=dest/(key+"_contours.geojson")
+        contour_path.write_text(json.dumps(contours,separators=(",",":"),allow_nan=False))
+        products[key]["contours"]={"path":contour_path.relative_to(root).as_posix(),"sha256":sha(contour_path.read_bytes()),
+                                    "interval":PRODUCTS[key]["contour_interval"],"feature_count":len(contours["features"])}
     return products
 
 
@@ -174,7 +181,7 @@ def build_analysis(s, root, now, previous):
                 dest = root / "generations" / gen
                 target,height = display_grid()
                 display = derive_products(project_fields(fields,transform,crs,target,WIDTH,height))
-                products = write_products(root,dest,display)
+                products = write_products(root,dest,display,target,cycle)
                 return {"valid_time": iso(cycle), "revision": REVISION, "generation": gen,
                         "native_spacing_km": 2.5, "native_shape": shape, "grid_id": grid,
                         "width": WIDTH, "height": height, "bounds": BOUNDS, "crs": "EPSG:3857",
@@ -207,10 +214,12 @@ def build_pressure_analysis(s, root, now, previous):
                 start,end=inventory(r.text,cycle,{"mslp":PRESSURE_FIELD})["mslp"]
                 raw=fetch_range(s,url,start,end)
                 a,transform,crs,grid,shape=decode(raw,"mslp",cycle)
+                a=smooth_masked(a,PRODUCTS["mslp"]["smoothing_km"]*1000/abs(transform.a))
+                centers=pressure_centers(a,transform,crs)
                 provenance=[{"key":"mslp","provider":provider,"url":url,"byte_range":[start,end],"sha256":sha(raw)}]
                 gen=cycle.strftime("%Y%m%d%H")+"-"+sha((PRESSURE_REVISION+json.dumps(provenance)).encode())[:16]
                 target,height=display_grid()
-                products=write_products(root,root/"pressure"/gen,project_fields({"mslp":a},transform,crs,target,WIDTH,height))
+                products=write_products(root,root/"pressure"/gen,project_fields({"mslp":a},transform,crs,target,WIDTH,height),target,cycle,centers)
                 print("Decoded",cycle.isoformat(),"mslp",provider,flush=True)
                 return {"valid_time":iso(cycle),"revision":PRESSURE_REVISION,"generation":gen,
                         "native_spacing_km":3,"native_shape":shape,"grid_id":grid,
@@ -227,13 +236,13 @@ def validate_package(root, metadata=None):
     if m.get("schema") != "surface-suite-v1" or m.get("policy") != {"analysis_warn_minutes": 150, "analysis_hide_minutes": 240, "station_hide_minutes": 90}:
         raise ValueError("Wrong surface schema")
     a = m.get("analysis")
-    expected={"rtma-surface-v1":set(LEGACY_KEYS),"rtma-surface-v2":set(V2_KEYS),REVISION:set(RTMA_KEYS)}
+    expected={"rtma-surface-v1":set(LEGACY_KEYS),"rtma-surface-v2":set(V2_KEYS),"rtma-surface-v3":set(RTMA_KEYS),REVISION:set(RTMA_KEYS)}
     if a and (set(a["products"]) != expected.get(a["revision"]) or
               a["bounds"] != BOUNDS or a["crs"] != "EPSG:3857" or
               (a["width"], a["height"]) != (3600, 2024)):
         raise ValueError("Incomplete RTMA surface suite/grid")
     pressure=m.get("pressure_analysis")
-    if pressure and (pressure.get("revision")!=PRESSURE_REVISION or set(pressure.get("products",{}))!={"mslp"} or
+    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
                      pressure.get("native_spacing_km")!=3 or pressure.get("bounds")!=BOUNDS or
                      pressure.get("crs")!="EPSG:3857" or (pressure.get("width"),pressure.get("height"))!=(3600,2024)):
         raise ValueError("Invalid HRRR pressure analysis")
@@ -241,6 +250,19 @@ def validate_package(root, metadata=None):
         if not obj:
             continue
         assets = obj["products"].values() if "products" in obj else [obj]
+        if "products" in obj:
+            for key,p in obj["products"].items():
+                contour=p.get("contours")
+                if obj["revision"] in (REVISION,PRESSURE_REVISION) and not contour:
+                    raise ValueError("Missing surface contour asset")
+                if contour:
+                    rel=Path(contour["path"])
+                    prefix="pressure" if key=="mslp" else "generations"
+                    if rel.as_posix()!=f'{prefix}/{obj["generation"]}/{key}_contours.geojson' or sha((root/rel).read_bytes())!=contour["sha256"]:
+                        raise ValueError("Contour asset path/checksum mismatch")
+                    data=validate_collection(json.loads((root/rel).read_text()),key,obj["valid_time"])
+                    if contour.get("feature_count")!=len(data["features"]) or contour.get("interval")!=PRODUCTS[key]["contour_interval"]:
+                        raise ValueError("Contour asset count/interval mismatch")
         for p in assets:
             rel = Path(p["path"])
             if rel.is_absolute() or ".." in rel.parts or sha((root/rel).read_bytes()) != p["sha256"]:

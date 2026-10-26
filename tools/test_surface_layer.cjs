@@ -1,6 +1,6 @@
 /* Actual adapter: pressure sources, observed barbs, freshness and layer lifecycle. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{execFileSync}=require('node:child_process');
-const context={};vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),context);const S=context.SurfaceSuite;
+const context={};vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),context);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),context);const S=context.SurfaceSuite;
 const palettes=JSON.parse(execFileSync('python',['-c','import json,surface_analysis;print(json.dumps(surface_analysis.PRODUCTS))'],{encoding:'utf8'}));
 const now=Date.parse('2026-10-24T15:00:00Z'),at=min=>new Date(now-min*60000).toISOString();
 assert.equal(S.state(null,now).visible,false);assert.equal(S.state({valid_time:at(-1)},now).visible,false);
@@ -19,6 +19,10 @@ Object.entries(palettes).forEach(([key,p])=>{
  const html=S.scale(p);p.colors.forEach(c=>assert.ok(html.includes(c)));assert.ok(html.includes('≤'));assert.ok(html.includes('≥'));
 });
 assert.equal(S.keys.length,8);assert.ok(S.stationKeys.includes('mslp'));assert.ok(!S.keys.includes('wind_direction'));assert.ok(!S.keys.includes('surface_pressure'));
+assert.ok(S.stationKeys.includes('wind'));assert.ok(!S.stationKeys.includes('wind_gust'));
+assert.equal(S.windLabel({...point,wind_speed:12,wind_direction:45,wind_gust:20}),'NE 12 G20');
+assert.equal(S.windLabel(point),'Calm');assert.equal(S.windLabel({...point,wind_speed:5}),'VRB 5');
+assert.ok(S.stationSpacing(4,'temperature').width>S.stationSpacing(7,'temperature').width);
 assert.equal(S.cardinal(0),'N');assert.equal(S.cardinal(360),'N');assert.equal(S.cardinal(270),'W');assert.equal(S.cardinal(45),'NE');
 assert.equal(S.valueLabel('mslp',1013.2),'1013.2');assert.equal(S.units.mslp,'hPa');
 assert.equal(S.freshPoint({...point,wind_direction:0},'wind_direction',now),false,'calm is not north');
@@ -38,10 +42,10 @@ assert.match(S.popup({...point,raw:'<img onerror=alert(1)>'},now),/&lt;img/);ass
 assert.match(S.popup({...point,mslp:1013.2,relative_humidity:60},now),/Reported MSLP: 1013.2 hPa/);
 assert.match(S.popup({...point,relative_humidity:60},now),/RH \(calculated\): 60 %/);
 
-const a={revision:'rtma-surface-v3',crs:'EPSG:3857',width:3600,height:2024,native_spacing_km:2.5,bounds:[[24,-125],[50,-66]],valid_time:at(60),generation:'2026102414-1234567890abcdef',products:{}};
-for(const k of S.rtmaKeys)a.products[k]={...palettes[k],path:`generations/${a.generation}/${k}.png`,sha256:'a'.repeat(64),applicable_pixels:k==='heat_index'?0:100};
-const pressure={...a,revision:'hrrr-mslp-v1',native_spacing_km:3,valid_time:at(0),generation:'2026102415-abcdef1234567890',products:{}};
-pressure.products.mslp={...palettes.mslp,path:`pressure/${pressure.generation}/mslp.png`,sha256:'a'.repeat(64),applicable_pixels:100};
+const a={revision:'rtma-surface-v4',crs:'EPSG:3857',width:3600,height:2024,native_spacing_km:2.5,bounds:[[24,-125],[50,-66]],valid_time:at(60),generation:'2026102414-1234567890abcdef',products:{}};
+for(const k of S.rtmaKeys)a.products[k]={...palettes[k],path:`generations/${a.generation}/${k}.png`,sha256:'a'.repeat(64),applicable_pixels:k==='heat_index'?0:100,contours:{path:`generations/${a.generation}/${k}_contours.geojson`,sha256:'a'.repeat(64),interval:palettes[k].contour_interval,feature_count:0}};
+const pressure={...a,revision:'hrrr-mslp-v2',native_spacing_km:3,valid_time:at(0),generation:'2026102415-abcdef1234567890',products:{}};
+pressure.products.mslp={...palettes.mslp,path:`pressure/${pressure.generation}/mslp.png`,sha256:'a'.repeat(64),applicable_pixels:100,contours:{path:`pressure/${pressure.generation}/mslp_contours.geojson`,sha256:'a'.repeat(64),interval:4,feature_count:0}};
 const m={schema:'surface-suite-v1',policy:{analysis_warn_minutes:150,analysis_hide_minutes:240,station_hide_minutes:90},analysis:a,pressure_analysis:pressure};
 S.validate(m);assert.throws(()=>S.validate({...m,analysis:{...a,bounds:[[0,0],[1,1]]}}));assert.throws(()=>S.validate({...m,analysis:{...a,products:{temperature:a.products.temperature}}}));
 S.validate({...m,analysis:{...a,revision:'rtma-surface-v1',products:Object.fromEntries(['temperature','dewpoint','wind_speed'].map(k=>[k,a.products[k]]))}});
@@ -56,19 +60,25 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
 
 (async()=>{
  const handlers={},onMap=new Set(),panes={},changeHandlers=[];let calls=0,clock=now,zoom=4;const nodes=[];
- const map={createPane:n=>panes[n]={style:{}},getPane:n=>panes[n],hasLayer:l=>onMap.has(l),getZoom:()=>zoom,getBounds:()=>({contains:()=>true}),latLngToContainerPoint:()=>({x:5,y:5}),on:(events,f)=>events.split(' ').forEach(e=>(handlers[e]??=[]).push(f))};
- function group(){const children=new Set();return {options:{},hasLayer:l=>children.has(l),addLayer(l){children.add(l);return this},removeLayer:l=>children.delete(l),clearLayers:()=>children.clear(),eachLayer:f=>[...children].forEach(f),addTo:()=>{}};}
+ const add=l=>{onMap.add(l);l.eachLayer?.(add);return l},remove=l=>{onMap.delete(l);l.eachLayer?.(remove)};
+ const map={createPane:n=>panes[n]={style:{}},getPane:n=>panes[n],hasLayer:l=>onMap.has(l),getZoom:()=>zoom,getSize:()=>({x:1200,y:900}),getBounds:()=>({contains:()=>true}),latLngToContainerPoint:()=>({x:5,y:5}),containerPointToLatLng:p=>p,removeLayer:remove,addLayer:add,on:(events,f)=>events.split(' ').forEach(e=>(handlers[e]??=[]).push(f))};
+ function group(initial=[]){const children=new Set(initial);return {options:{},hasLayer:l=>children.has(l),addLayer(l){children.add(l);if(onMap.has(this))add(l);return this},removeLayer(l){children.delete(l);if(onMap.has(this))remove(l)},clearLayers(){[...children].forEach(l=>this.removeLayer(l))},eachLayer:f=>[...children].forEach(f),addTo(parent){if(parent===map)add(this);else parent.addLayer(this);return this}};}
  const markerInstances=[];
- const L={layerGroup:group,imageOverlay:()=>({setOpacity(){}}),divIcon:x=>x,marker:(latlon,options)=>{const marker={options,bindPopup(content){this.content=content;return this},setPopupContent(content){this.content=content},setLatLng(){},setIcon(icon){this.options.icon=icon},isPopupOpen:()=>true,addTo(g){g.addLayer(this);return this}};markerInstances.push(marker);return marker;}};
+ const L={layerGroup:group,geoJSON:()=>group(),imageOverlay:()=>({setOpacity(){}}),divIcon:x=>x,marker:(latlon,options)=>{const marker={options,bindPopup(content){this.content=content;return this},setPopupContent(content){this.content=content},setLatLng(){},setIcon(icon){this.options.icon=icon},isPopupOpen:()=>true,addTo(g){g.addLayer(this);return this}};markerInstances.push(marker);return marker;}};
  const count=group=>{let n=0;group.eachLayer(()=>n++);return n};
  const crypto=require('node:crypto').webcrypto,bytes=new Uint8Array([1,2,3]);const hash=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
  const mock=JSON.parse(JSON.stringify(m));for(const k of S.rtmaKeys)mock.analysis.products[k].sha256=hash;mock.pressure_analysis.products.mslp.sha256=hash;
+ const contourBytes=new Map();
+ for(const analysis of [mock.analysis,mock.pressure_analysis])for(const [key,p] of Object.entries(analysis.products)){
+  const data={type:'FeatureCollection',schema:'surface-contours-v1',key,valid_time:analysis.valid_time,interval:p.contour_interval,features:[]},bytes=new TextEncoder().encode(JSON.stringify(data));
+  contourBytes.set('/'+p.contours.path,bytes);p.contours.sha256=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
+ }
  const points={schema:'surface-stations-v1',fetched_at:at(0),points:Array.from({length:500},(_,i)=>({...point,id:'K'+String(i).padStart(3,'0'),wind_speed:10,wind_direction:270,mslp:1013.2,relative_humidity:60}))};
  const allBytes=new TextEncoder().encode(JSON.stringify(points));
  mock.observations={path:'stations/20261024150000-1234567890abcdef.json',sha256:Buffer.from(await crypto.subtle.digest('SHA-256',allBytes)).toString('hex'),count:500,fetched_at:at(0)};
- const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(event,f){if(event==='change')changeHandlers.push(f);}},fetch:async url=>{calls++;const text=String(url);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:bytes.buffer}}};
+ const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(event,f){if(event==='change')changeHandlers.push(f);}},fetch:async url=>{calls++;const text=String(url),contour=contourBytes.get(new URL(text).pathname);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:contour?contour.buffer:bytes.buffer}}};
  c.URL.createObjectURL=()=>`blob:${nodes.push(1)}`;c.URL.revokeObjectURL=()=>{};
- vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),c);
+ vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),c);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),c);
  const suite=c.SurfaceSuite.create({map,metadataURL:'https://example.org/metadata.json',now:()=>clock});
  onMap.add(suite.barbs);await suite.refresh();
  assert.equal(count(suite.barbs),1,'barbs work without any fill or numeric station layer');assert.equal(calls,2,'barbs fetch only metadata and observations');
@@ -76,13 +86,21 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  const firstBarb=markerInstances[0];assert.match(firstBarb.options.icon.html,/rotate\(270\)/);
  clock=now+60000;await suite.refresh();handlers.moveend.forEach(f=>f());
  assert.equal(markerInstances[0],firstBarb);assert.equal(markerInstances.length,1,'barb identity and open popup survive refresh and map movement');
- onMap.add(suite.layers.wind_speed);onMap.add(suite.stations);zoom=8;await suite.refresh();
+ onMap.delete(suite.barbs);add(suite.wind);onMap.add(suite.stations);await suite.refresh();
  assert.equal(count(suite.layers.wind_speed),1);assert.equal(count(suite.barbs),1);assert.equal(count(suite.stations),1);
  const station=markerInstances[1];assert.equal(station.options.icon.iconAnchor[1],-15,'numeric labels are offset from the barbs');
- handlers.moveend.forEach(f=>f());assert.equal(markerInstances.length,2);
+ assert.match(station.options.icon.html,/W 10/);assert.equal(zoom,4,'numeric station values are visible at national scale');
+ const change=(selector,value,checked)=>changeHandlers[0]({target:{matches:s=>s===selector,value,checked}});
+ change('[data-surface-wind]','wind_gust');await suite.refresh();
+ assert.equal(onMap.has(suite.layers.wind_speed),false);assert.equal(onMap.has(suite.layers.wind_gust),true);assert.equal(count(suite.barbs),1,'barbs persist across shading changes');
+ assert.match(suite.legendHTML(),/Surface wind shading/);assert.match(suite.legendHTML(),/value="wind_gust" selected/);
+ change('[data-surface-barbs]',undefined,false);assert.equal(count(suite.barbs),0);assert.equal(count(suite.layers.wind_gust),1);
+ change('[data-surface-barbs]',undefined,true);assert.equal(count(suite.barbs),1);
+ const afterControlChanges=markerInstances.length;handlers.moveend.forEach(f=>f());assert.equal(markerInstances.length,afterControlChanges,'map movement preserves markers after changing wind controls');
+ remove(suite.wind);
  for(const key of S.keys){
   S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers[key]);await suite.refresh();
-  assert.equal(count(suite.layers[key]),1,`loads ${key}`);assert.equal(count(suite.barbs),1,'barbs persist when switching fills');assert.ok(suite.legendHTML().includes(S.units[key]));
+  assert.equal(count(suite.layers[key]),1,`loads ${key}`);assert.ok(suite.legendHTML().includes(S.units[key]));
  }
  S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers.heat_index);await suite.refresh();assert.match(suite.legendHTML(),/No qualifying conditions/);
  onMap.delete(suite.layers.heat_index);onMap.add(suite.layers.mslp);await suite.refresh();
@@ -98,13 +116,17 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  const partial=c.SurfaceSuite.create({map,metadataURL:'https://example.org/metadata.json',now:()=>clock});
  onMap.add(partial.layers.mslp);onMap.add(partial.barbs);onMap.add(partial.stations);await partial.refresh();
  assert.equal(count(partial.layers.mslp),0);assert.equal(count(partial.barbs),1);assert.equal(count(partial.stations),1);assert.match(partial.legendHTML(),/Analysis unavailable/);
+ const validContourHash=mock.analysis.products.wind_gust.contours.sha256;mock.analysis.products.wind_gust.contours.sha256='c'.repeat(64);
  onMap.delete(partial.layers.mslp);onMap.add(partial.layers.wind_gust);await partial.refresh();
  assert.equal(count(partial.layers.wind_gust),1);assert.equal(count(partial.barbs),1);assert.ok(!partial.legendHTML().includes('Analysis unavailable'));
+ assert.match(partial.legendHTML(),/Contours unavailable/,'contour failure does not hide valid shading');
+ mock.analysis.products.wind_gust.contours.sha256=validContourHash;await partial.refresh();assert.ok(!partial.legendHTML().includes('Contours unavailable'),'contours recover independently');
  partial.stop();
  // The dashboard keeps barbs outside the filled-field exclusivity group.
  const app=fs.readFileSync('app.js','utf8'),start=app.indexOf('function enforceExclusiveSurfaceSelection('),end=app.indexOf('\nconst dashboardSections',start);
- const rows=[{id:'temperature',exclusiveGroup:'surface-analysis'},{id:'wind_gust',exclusiveGroup:'surface-analysis'},{id:'barbs'},{id:'stations'}];const off=[];
+ const rows=[{id:'temperature',exclusiveGroup:'surface-analysis'},{id:'wind',exclusiveGroup:'surface-analysis'},{id:'stations'}];const off=[];
  const exclusive=vm.runInNewContext(app.slice(start,end)+'\nenforceExclusiveSurfaceSelection',{getAllDashboardLayerEntries:()=>rows,setDashboardLayerActive:(entry,value)=>off.push([entry.id,value])});
  exclusive(rows[1]);assert.deepEqual(off,[['temperature',false]]);
- console.log('Surface checks passed: eight fills, independent sea-level pressure, observed wind-barb geometry, calm/variable winds, zoom thinning, migration, expiry, stable popups and source failures.');
+ assert.ok(app.includes("id: 'surface-wind', label: 'Surface Wind'"));assert.ok(!app.includes("id: 'surface-wind-speed'"));assert.ok(!app.includes('METAR Station Values (Zoom In)'));
+ console.log('Surface checks passed: consolidated wind controls, national station values, eight fills, independent pressure, observed wind-barb geometry, zoom thinning, migration, expiry, stable popups and failures.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,8 +1,10 @@
 # Surface observations and hourly analysis
 
 The **Surface Observations & Analysis** section follows Radar and Satellite Data.
-It provides eight mutually exclusive filled fields, an independent **METAR Wind
-Barbs** overlay, and an optional **METAR Station Values (Zoom In)** checkbox. Temperature and dewpoint use °F;
+It provides seven mutually exclusive map choices covering eight filled fields.
+**Surface Wind** combines sustained-speed/gust shading and observed wind barbs
+in one menu item. **METAR Station Values** is an independent optional checkbox
+that works at national scale and becomes denser as users zoom. Temperature and dewpoint use °F;
 wind speed and gust use knots; pressure uses hPa. All surface layers start off.
 
 ## Filled fields: NOAA RTMA
@@ -22,6 +24,9 @@ wind speed and gust use knots; pressure uses hPa. All surface layers start off.
   scientific resolution; unsupported edges remain transparent. Palettes have
   continuous linear RGB interpolation with clamped endpoint colors. Legend
   gradients use the exact product palette and show the endpoint tails.
+- Saturated, fixed physical color scales replace the pastel palettes. The same
+  palette colors the fill, station dots and legend; scales do not normalize to
+  the current frame. Default fill opacity is 93%.
 - Newest nonfuture, complete hour is selected from a bounded four-hour search,
   including the previous UTC day. NOAA NODD/AWS is preferred, with NOMADS fallback
   at the same hour before stepping back. Each provider's own `.idx` byte offsets
@@ -47,6 +52,15 @@ wind speed and gust use knots; pressure uses hPa. All surface layers start off.
   3600 × 2024 display canvas. Labels identify HRRR and its 3-km native spacing.
   Sea-level reduction can retain terrain-related artifacts over high elevations;
   it does not produce a direct pressure observation at each display pixel.
+- Pressure fill, 4-mb isobars and automated centers use the same pressure field
+  after a Gaussian filter with sigma 18 km on the native 3-km grid. Missing native
+  cells remain unsupported; smoothing never fills them. This is a cartographic
+  treatment of the existing HRRR analysis, not a new station-based reanalysis.
+- Automated H/L centers must be a local extremum with a fully supported 300-km
+  ring at least 1 hPa lower/higher in every sampled direction. Grid edges,
+  missing-data margins, open ridges/troughs and flat fields are rejected. Nearby
+  same-type centers within 500 km are suppressed. H is blue, L red; central
+  pressure is shown in whole hPa. These are not WPC's manually analyzed centers.
 - **Follow selected analysis** automatically shows actual reported MSLP points
   when this fill is selected. Reports retain their own observation times.
 
@@ -88,11 +102,12 @@ These points do not interpolate the fill or supply artificial additional sites.
   impossible fields. Dewpoint exceeding temperature by more than 0.5°C is
   excluded; missing fields remain missing. This is basic ingest checking,
   not a claim that the dashboard independently performs full observing-system QC.
-- Station values are optional and appear at Leaflet zoom 7 and above. The
+- Station values are optional and appear at every zoom. The
   default **Follow selected analysis** mode determines the point variable. A
   persistent legend selector can independently choose temperature, dewpoint,
-  wind speed/direction/gust, calculated RH/heat index/wind chill, or reported MSLP.
-  Direction points show compass names with exact degrees available in titles and
+  a combined wind value, calculated RH/heat index/wind chill, or reported MSLP.
+  Wind values combine compass direction, sustained knots and reported gusts
+  (for example `NE 12 G20`). Exact degrees are available in
   popups. Calm/variable reports do not invent a direction; absent gusts stay absent.
 - Reported MSLP comes only from AWC `sea_level_pressure_mb` (numerically hPa).
   Altimeter settings are not relabeled as MSLP or station pressure. The fill and
@@ -113,9 +128,11 @@ These points do not interpolate the fill or supply artificial additional sites.
 
 ## Wind barbs: observed, independent of shading
 
-- **METAR Wind Barbs** is a separate vector checkbox that stays on when switching
-  between sustained-wind and gust fills. It also works without a fill or numeric
-  station layer. Barbs use each station's reported sustained speed and true-north
+- **Surface Wind** is one map checkbox. Its legend selects sustained-speed or
+  gust shading, with an independent **Wind barbs** checkbox in that same control.
+  Barbs default on and stay on when switching shading. Removing Surface Wind
+  removes its fill and barbs together. Numeric station values remain optional.
+  Barbs use each station's reported sustained speed and true-north
   **from** direction, not the gust value or a model wind interpolated to a station.
 - The shaft points toward the direction wind comes from. A half feather is 5 kt,
   full feather 10 kt, triangle 50 kt; speed rounds to the nearest 5 kt. Explicit
@@ -128,6 +145,30 @@ These points do not interpolate the fill or supply artificial additional sites.
 - The same 90-minute report-age limit applies to barbs. Clicking opens the actual
   report's time, wind, gust and raw METAR. Open barb popups and marker identities
   survive map movement and routine refresh while fresh.
+
+## Vector contours and labels
+
+- Every new filled product publishes a checksum-verified GeoJSON sidecar tied to
+  that exact generation, field, unit and valid time. Isobars are always 4 hPa
+  apart, anchored at 1000 hPa. Temperature/dewpoint/wind chill use 10°F intervals;
+  temperature also includes the 32°F isotherm. Wind speed/gust use 10 kt, RH 10%,
+  and heat index 5°F. At national scale, alternate nonpressure contours are
+  omitted to reduce clutter; zooming reveals all intervals.
+- Other than the already smoothed pressure field, contour computation lightly
+  smooths a sampled display grid (sigma 1.25 cells at a four-display-pixel stride).
+  RTMA fills and station values keep their source detail. Contours stop at missing
+  support, including heat-index/wind-chill applicability masks; no bridging of
+  missing corridors. Display-space line simplification uses 1.1-km Mercator
+  tolerance and does not change contour values.
+- Contours have a white halo and dark stroke. Labels follow visible line segments,
+  align to their local direction, and use screen-space collision checks against
+  other labels and station values. Pressure labels are available nationally;
+  other labels appear from zoom 5. More labels become available in a smaller
+  geographic region as users zoom. H/L symbols take priority over numeric points.
+- The legend's **Contours** checkbox (pressure: **Isobars & H/L**) hides vectors
+  independently of the fill and METAR values. Sidecar loading/failure does not
+  delay or hide a verified fill, and contours from another time are never paired
+  with it. Failed sidecars retry independently.
 
 ## Updating and publication
 
@@ -145,11 +186,13 @@ checksums and image sizes before atomically replacing metadata. Frontend fetches
 and decodes selected images, checks SHA-256 and dimensions, and retains an older
 validated image with its own valid time on failure. Images load only on demand.
 Each component can retain its previous usable data if its upstream source fails.
-The v3 RTMA renderer rebuilds the seven retained fields even at the same valid
+The v4 RTMA renderer rebuilds the seven retained fields even at the same valid
 hour as a restored v1/v2 package. Backend and browser accept legacy packages
 during migration. Legacy terrain pressure is never used as the new MSLP fill,
 and the direction raster is no longer exposed as a layer. Pressure initializes
-independently as its own `hrrr-mslp-v1` component.
+independently as its own `hrrr-mslp-v2` component. The new revisions require
+their contour sidecars. Restored v1/v2/v3 RTMA and v1 pressure packages remain
+readable during migration, with a clear updating message for absent vectors.
 
 Browser metadata checks run every five minutes while a surface layer is selected.
 The UI is a latest-hour view; there is no surface animation or historical station
@@ -168,6 +211,12 @@ pressure reprojection, calm/variable winds, pressure-unit conversion,
 reported MSLP versus altimeter settings, legacy retention, post-render report
 ages, eight-field switching, pressure-source rejection and independent retention,
 barb geometry/orientation and 5/10/50-kt symbols, overlay independence and the station selector.
+`python tools/test_surface_contours.py` uses analytic gradients, closed highs/lows,
+open ridges, missing rings and corridors to check 4-mb contours, masking, center
+selection and field/time/coordinate validation. `node tools/test_surface_cartography.cjs`
+checks viewport clipping, labels, zoom intervals, collisions and sidecar identity.
+Adapter checks cover consolidated wind controls, national station visibility,
+contour failure/recovery and source-independent expiry.
 
 Sources:
 
@@ -177,6 +226,8 @@ Sources:
 - https://www.nco.ncep.noaa.gov/pmb/products/hrrr/hrrr.t00z.wrfsfcf00.grib2.shtml
 - https://registry.opendata.aws/noaa-hrrr-pds/
 - https://www.weather.gov/bou/pressure_definitions
+- https://www.noaa.gov/jetstream/analyze-appair-pressure-map
+- https://contourpy.readthedocs.io/en/v1.3.3/api/contourpy/contour_generator.html
 - https://aviationweather.gov/data/api/
 - https://qed.epa.gov/hms/meteorology/humidity/algorithms/
 - https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
