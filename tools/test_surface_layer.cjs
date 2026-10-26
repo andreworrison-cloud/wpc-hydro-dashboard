@@ -1,6 +1,6 @@
 /* Actual adapter: pressure sources, observed barbs, freshness and layer lifecycle. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{execFileSync}=require('node:child_process');
-const context={};vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),context);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),context);const S=context.SurfaceSuite;
+const context={};vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),context);vm.runInNewContext(fs.readFileSync('surface_sampling.js','utf8'),context);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),context);const S=context.SurfaceSuite;
 const palettes=JSON.parse(execFileSync('python',['-c','import json,surface_analysis;print(json.dumps(surface_analysis.PRODUCTS))'],{encoding:'utf8'}));
 const now=Date.parse('2026-10-24T15:00:00Z'),at=min=>new Date(now-min*60000).toISOString();
 assert.equal(S.state(null,now).visible,false);assert.equal(S.state({valid_time:at(-1)},now).visible,false);
@@ -47,6 +47,10 @@ for(const k of S.rtmaKeys)a.products[k]={...palettes[k],path:`generations/${a.ge
 const pressure={...a,revision:'hrrr-mslp-v2',native_spacing_km:3,valid_time:at(0),generation:'2026102415-abcdef1234567890',products:{}};
 pressure.products.mslp={...palettes.mslp,path:`pressure/${pressure.generation}/mslp.png`,sha256:'a'.repeat(64),applicable_pixels:100,contours:{path:`pressure/${pressure.generation}/mslp_contours.geojson`,sha256:'a'.repeat(64),interval:4,feature_count:0}};
 const m={schema:'surface-suite-v1',policy:{analysis_warn_minutes:150,analysis_hide_minutes:240,station_hide_minutes:90},analysis:a,pressure_analysis:pressure};
+const numeric=JSON.parse(JSON.stringify(m));numeric.analysis.revision='rtma-surface-v5';numeric.pressure_analysis.revision='hrrr-mslp-v3';
+for(const analysis of [numeric.analysis,numeric.pressure_analysis])for(const [key,p] of Object.entries(analysis.products))p.sampling={path:`${key==='mslp'?'pressure':'generations'}/${analysis.generation}/${key}_samples.bin.gz`,sha256:'a'.repeat(64),encoding:'gzip-int16-v1'};
+S.validate(numeric);const incomplete=JSON.parse(JSON.stringify(numeric));delete incomplete.analysis.products.temperature.sampling;assert.throws(()=>S.validate(incomplete));
+const invalid=JSON.parse(JSON.stringify(numeric));invalid.pressure_analysis.products.mslp.sampling.path='../bad';assert.throws(()=>S.validate(invalid));
 S.validate(m);assert.throws(()=>S.validate({...m,analysis:{...a,bounds:[[0,0],[1,1]]}}));assert.throws(()=>S.validate({...m,analysis:{...a,products:{temperature:a.products.temperature}}}));
 S.validate({...m,analysis:{...a,revision:'rtma-surface-v1',products:Object.fromEntries(['temperature','dewpoint','wind_speed'].map(k=>[k,a.products[k]]))}});
 const legacy=JSON.parse(JSON.stringify(a));legacy.revision='rtma-surface-v2';
@@ -79,7 +83,7 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  mock.observations={path:'stations/20261024150000-1234567890abcdef.json',sha256:Buffer.from(await crypto.subtle.digest('SHA-256',allBytes)).toString('hex'),count:500,fetched_at:at(0)};
  const c={L,Image:class{constructor(){this.naturalWidth=3600;this.naturalHeight=2024;}decode(){return Promise.resolve()}},Blob,URL,TextDecoder,crypto,AbortController,console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval:()=>{},document:{baseURI:'https://example.org/',addEventListener(event,f){if(event==='change')changeHandlers.push(f);}},fetch:async url=>{calls++;const text=String(url),contour=contourBytes.get(new URL(text).pathname);return {ok:true,json:async()=>mock,arrayBuffer:async()=>text.includes('stations/')?allBytes.buffer:contour?contour.buffer:bytes.buffer}}};
  c.URL.createObjectURL=()=>`blob:${nodes.push(1)}`;c.URL.revokeObjectURL=()=>{};
- vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),c);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),c);
+ vm.runInNewContext(fs.readFileSync('surface_cartography.js','utf8'),c);vm.runInNewContext(fs.readFileSync('surface_sampling.js','utf8'),c);vm.runInNewContext(fs.readFileSync('surface_layer.js','utf8'),c);
  const suite=c.SurfaceSuite.create({map,metadataURL:'https://example.org/metadata.json',now:()=>clock});
  onMap.add(suite.barbs);await suite.refresh();
  assert.equal(count(suite.barbs),1,'barbs work without any fill or numeric station layer');assert.equal(calls,2,'barbs fetch only metadata and observations');

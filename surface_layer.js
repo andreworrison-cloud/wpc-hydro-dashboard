@@ -26,7 +26,7 @@
         if (m?.schema !== 'surface-suite-v1' || m.policy?.analysis_warn_minutes !== 150 || m.policy?.analysis_hide_minutes !== 240 || m.policy?.station_hide_minutes !== 90) throw Error('Invalid surface suite policy');
         const a = m.analysis;
         if (a) {
-            const expected=a.revision==='rtma-surface-v1'?legacyKeys:a.revision==='rtma-surface-v2'?v2Keys:['rtma-surface-v3','rtma-surface-v4'].includes(a.revision)?rtmaKeys:null;
+            const expected=a.revision==='rtma-surface-v1'?legacyKeys:a.revision==='rtma-surface-v2'?v2Keys:['rtma-surface-v3','rtma-surface-v4','rtma-surface-v5'].includes(a.revision)?rtmaKeys:null;
             if (!expected || a.crs !== 'EPSG:3857' || a.width !== 3600 || a.height !== 2024 || a.native_spacing_km !== 2.5 || JSON.stringify(a.bounds) !== JSON.stringify(bounds) || !Number.isFinite(Date.parse(a.valid_time)) || !/^\d{10}-[a-f0-9]{16}$/.test(a.generation)) throw Error('Invalid RTMA display grid/time');
             if (Object.keys(a.products || {}).sort().join() !== [...expected].sort().join()) throw Error('Incomplete RTMA surface suite');
             expected.forEach(key => {
@@ -35,8 +35,10 @@
                 if (!Array.isArray(p.stops) || p.stops.length !== p.colors?.length || p.stops.length < 3 || !p.stops.every((v,i)=>Number.isFinite(v) && (!i || v > p.stops[i-1])) || !p.colors.every(c=>/^#[a-f0-9]{6}$/i.test(c)) || !p.ticks?.every(Number.isFinite)) throw Error('Invalid surface palette');
                 if(key==='wind_direction' && (p.cyclic!==true || p.stops[0]!==0 || p.stops.at(-1)!==360 || p.colors[0]!==p.colors.at(-1)))throw Error('Invalid cyclic wind-direction palette');
                 if(a.revision!=='rtma-surface-v1' && (!Number.isInteger(p.applicable_pixels)||p.applicable_pixels<0||p.applicable_pixels>a.width*a.height))throw Error('Invalid surface applicability count');
-                if(a.revision==='rtma-surface-v4'&&!p.contours)throw Error('Missing surface contours');
+                if(['rtma-surface-v4','rtma-surface-v5'].includes(a.revision)&&!p.contours)throw Error('Missing surface contours');
                 carto.descriptor(p.contours,a,key);
+                if(a.revision==='rtma-surface-v5'&&!p.sampling)throw Error('Missing numeric surface grid');
+                root.SurfaceSampling.descriptor(p.sampling,a,key);
             });
             if (previous?.analysis && Date.parse(a.valid_time) < Date.parse(previous.analysis.valid_time)) throw Error('Regressing RTMA time');
             if (previous?.analysis?.generation === a.generation && JSON.stringify(previous.analysis) !== JSON.stringify(a)) throw Error('Immutable RTMA generation changed');
@@ -44,12 +46,14 @@
         const pressure=m.pressure_analysis;
         if(pressure){
             const p=pressure.products?.mslp;
-            if(!['hrrr-mslp-v1','hrrr-mslp-v2'].includes(pressure.revision) || pressure.native_spacing_km!==3 || pressure.crs!=='EPSG:3857' || pressure.width!==3600 || pressure.height!==2024 || JSON.stringify(pressure.bounds)!==JSON.stringify(bounds) || !Number.isFinite(Date.parse(pressure.valid_time)) || !/^\d{10}-[a-f0-9]{16}$/.test(pressure.generation))throw Error('Invalid pressure analysis grid/time');
+            if(!['hrrr-mslp-v1','hrrr-mslp-v2','hrrr-mslp-v3'].includes(pressure.revision) || pressure.native_spacing_km!==3 || pressure.crs!=='EPSG:3857' || pressure.width!==3600 || pressure.height!==2024 || JSON.stringify(pressure.bounds)!==JSON.stringify(bounds) || !Number.isFinite(Date.parse(pressure.valid_time)) || !/^\d{10}-[a-f0-9]{16}$/.test(pressure.generation))throw Error('Invalid pressure analysis grid/time');
             if(Object.keys(pressure.products||{}).join()!=='mslp' || p.path!==`pressure/${pressure.generation}/mslp.png` || !/^[a-f0-9]{64}$/.test(p.sha256) || p.unit!=='hPa' || p.parameter!=='MSLMA')throw Error('Invalid mean-sea-level pressure asset');
             if(!Array.isArray(p.stops)||p.stops.length!==p.colors?.length||p.stops.length<3||!p.stops.every((v,i)=>Number.isFinite(v)&&(!i||v>p.stops[i-1]))||!p.colors.every(c=>/^#[a-f0-9]{6}$/i.test(c))||!p.ticks?.every(Number.isFinite))throw Error('Invalid pressure palette');
             if(!Number.isInteger(p.applicable_pixels)||p.applicable_pixels<0||p.applicable_pixels>pressure.width*pressure.height)throw Error('Invalid pressure coverage');
-            if(pressure.revision==='hrrr-mslp-v2'&&!p.contours)throw Error('Missing pressure isobars');
+            if(['hrrr-mslp-v2','hrrr-mslp-v3'].includes(pressure.revision)&&!p.contours)throw Error('Missing pressure isobars');
             carto.descriptor(p.contours,pressure,'mslp');
+            if(pressure.revision==='hrrr-mslp-v3'&&!p.sampling)throw Error('Missing numeric pressure grid');
+            root.SurfaceSampling.descriptor(p.sampling,pressure,'mslp');
             if(previous?.pressure_analysis && Date.parse(pressure.valid_time)<Date.parse(previous.pressure_analysis.valid_time))throw Error('Regressing pressure time');
             if(previous?.pressure_analysis?.generation===pressure.generation && JSON.stringify(previous.pressure_analysis)!==JSON.stringify(pressure))throw Error('Immutable pressure generation changed');
         }
@@ -135,6 +139,10 @@
         const analysisFor=key=>key==='mslp'?metadata?.pressure_analysis:metadata?.analysis;
         const item=key=>cache.get(`${analysisFor(key)?.generation}/${key}`);
         const current=key=>Array.from(cache.values()).filter(v=>v.key===key).at(-1);
+        const sampler=root.SurfaceSampling.create({map,onChange,
+            getCurrent:()=>{const key=selected(),entry=current(key);return {key,entry,visible:Boolean(entry&&state(entry.analysis,now()).visible)};},
+            load:async p=>{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);try{return await asset(p,controller);}finally{clearTimeout(timeout);}}
+        });
         function renderStations() {
             stationObstacles=[];
             if (!map.hasLayer(stations)) {stations.clearLayers();stationMarkers.clear();return;}
@@ -204,7 +212,7 @@
                 if(visible && !layers[k].hasLayer(entry.image)){entry.image.setOpacity(layers[k].options.opacity);layers[k].addLayer(entry.image);}
             });
             if(border){const show=key && current(key) && state(current(key).analysis,now()).visible;if(show&&!map.hasLayer(border))border.addTo(map);if(!show&&map.hasLayer(border))map.removeLayer(border);}
-            renderBarbs();renderStations();renderContours();onChange();
+            renderBarbs();renderStations();renderContours();sampler.sync();onChange();
         }
         function renderContours(){
             const key=selected(),entry=current(key),valid=entry&&state(entry.analysis,now()).visible;
@@ -283,6 +291,7 @@
                 else if(p?.contours&&loaded&&!loaded.contours)html+='<p class="surface-note">Loading contours…</p>';
                 else if(!p?.contours)html+='<p class="surface-note">New contours are updating.</p>';
                 if(key==='mslp'&&p?.smoothing_km)html+='<p class="surface-note">Smoothed analysis · automated H/L centers with central pressure.</p>';
+                html+=sampler.legend();
                 if(p?.note)html+=`<p class="surface-note">${esc(p.note)}</p>`;
                 html+=`<p><b>Analysis valid:</b> ${esc(utc(a?.valid_time))}<br>${key==='mslp'?'NOAA HRRR · hourly · 3 km':'NOAA RTMA · hourly · 2.5 km'}</p><p class="surface-note">The fill is a gridded analysis. Zooming adds no source resolution.</p>`;
             }
@@ -303,17 +312,19 @@
             L.geoJSON(data,{pane:'mapReference',interactive:false,style:{color:'#132332',weight:2.5,opacity:.8,fill:false}}),
             L.geoJSON(data,{pane:'mapReference',interactive:false,style:{color:'#fff',weight:1,opacity:.8,fill:false}})]);sync();}
         const layerEvent=e=>{if(keys.some(k=>layers[k]===e.layer)||e.layer===stations||e.layer===barbs||e.layer===wind){sync();if(active())refresh();else serial++;}};
-        map.on('layeradd layerremove',layerEvent);map.on('moveend zoomend',()=>{if(active()){renderBarbs();renderStations();renderContours();onChange();}});
+        map.on('layeradd layerremove',layerEvent);map.on('moveend zoomend',()=>{if(active()){renderBarbs();renderStations();renderContours();sampler.sync();onChange();}});
         document.addEventListener('change',e=>{
             if(e.target.matches('[data-surface-field]')&&['auto',...stationKeys].includes(e.target.value)){stationField=e.target.value;sync();}
             else if(e.target.matches('[data-surface-wind]')&&['wind_speed','wind_gust'].includes(e.target.value)){
                 const nextWindField=e.target.value;wind.removeLayer(layers[windField]);windField=nextWindField;layers[windField].setOpacity(wind.options.opacity);wind.addLayer(layers[windField]);sync();if(active())loadSelected();
             }else if(e.target.matches('[data-surface-barbs]')){windBarbs=e.target.checked;if(windBarbs)wind.addLayer(barbs);else wind.removeLayer(barbs);sync();}
+            else if(e.target.matches('[data-surface-sample]')){sampler.setEnabled(e.target.checked);}
             else if(e.target.matches('[data-surface-contours]')){contoursEnabled=e.target.checked;sync();if(contoursEnabled&&active())loadSelected();}
         },true);
+        document.addEventListener('click',e=>{if(e.target.matches('[data-surface-unpin]'))sampler.release();},true);
         const timer=setInterval(()=>{if(active())sync();},30000),poll=setInterval(refresh,300000);
         return {layers,wind,stations,barbs,refresh,legendHTML,setBorders,getMetadata:()=>metadata,
-            stop:()=>{clearInterval(timer);clearInterval(poll);serial++;cartography.clear();urls.forEach(u=>URL.revokeObjectURL(u));}};
+            stop:()=>{clearInterval(timer);clearInterval(poll);serial++;sampler.stop();cartography.clear();urls.forEach(u=>URL.revokeObjectURL(u));}};
     }
     root.SurfaceSuite={keys,rtmaKeys,stationKeys,units,cardinal,valueLabel,state,validate,freshPoint,stationSpacing,windLabel,thinPoints,windPoint,barbParts,barbSVG,color,scale,popup,create};
 })(typeof window==='undefined'?globalThis:window);

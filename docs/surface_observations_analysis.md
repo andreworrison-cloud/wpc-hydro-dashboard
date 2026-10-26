@@ -233,3 +233,14 @@ Sources:
 - https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
 - https://www.ncl.ucar.edu/Document/Functions/Heat_stress/heat_index_nws.shtml
 - https://www.weather.gov/safety/cold-wind-chill-chart
+
+
+## Optional numeric analysis sampling
+
+The surface legend's **Sample analysis** checkbox enables hover readouts and click-to-pin sampling. Click elsewhere to move the pin; **Clear pin** or Escape releases it. METAR values and observed wind barbs remain independent. A pinned location follows field changes and refreshed analyses, with its displayed field and valid time updated together. Deselected or expired fills hide the readout.
+
+RTMA v5 and HRRR MSLP v3 publish immutable, checksum-verified `*_samples.bin.gz` files alongside each image and contour sidecar. They contain the exact scalar display grid before colorization (including the pressure smoothing), quantized to 0.1 of the displayed unit using signed little-endian 16-bit integers, with a reserved missing value. Maximum quantization error is 0.05 unit. A length-prefixed JSON header binds field, units, time, dimensions, bounds and EPSG:3857 projection to the displayed analysis. Browser decompression is size-limited, and every identity is checked before use. Sampling is bilinear in projected pixel-center coordinates; contributing missing cells produce an unavailable readout, rather than interpolation across a hole. Requests use the loaded fill's generation, including when the previous image is retained. Sampling failures do not hide the fill.
+
+Only the selected field is downloaded on opt-in; decoding and values are cached with the existing bounded image cache. Legacy packages show that numeric grids are updating. Browsers without gzip decompression show sampling unavailable while retaining the map. Sampling does not add spatial resolution beyond RTMA's 2.5 km or HRRR's 3 km source analysis.
+
+Heat index remains limited to the NWS preliminary averaged Steadman screen of at least 80°F. Wind chill requires temperature at or below 50°F and sustained wind above 3 mph; gusts are not used. Neither uses a terrain mask. Transparent cells expose the dark basemap and can mean either nonapplicable conditions or missing source inputs. The readout and legend explain this distinction without replacing these cells with air temperature or zero.

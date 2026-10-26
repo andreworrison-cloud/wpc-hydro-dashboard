@@ -8,6 +8,8 @@ on:
       - 'surface_cartography.js'
       - 'surface_analysis.py'
       - 'surface_contours.py'
+      - 'surface_sampling.py'
+      - 'surface_sampling.js'
       - 'fetch_surface_analysis.py'
       - 'tools/test_surface*'
       - '.github/workflows/update_surface_analysis.yml'
@@ -56,6 +58,8 @@ on:
       - 'surface_cartography.js'
       - 'surface_analysis.py'
       - 'surface_contours.py'
+      - 'surface_sampling.py'
+      - 'surface_sampling.js'
       - 'fetch_surface_analysis.py'
       - 'tools/test_surface*'
       - '.github/workflows/update_surface_analysis.yml'
@@ -125,6 +129,7 @@ jobs:
         run: |
           node --check surface_layer.js
           node --check surface_cartography.js
+          node --check surface_sampling.js
           node --check app.js
           node --check gdi_layer.js
           node --check gdi_suite_layer.js
@@ -143,7 +148,9 @@ jobs:
           python tools/gdi/test_guidance.py
           python tools/test_surface_analysis.py
           python tools/test_surface_contours.py
+          python tools/test_surface_sampling.py
           node tools/test_surface_cartography.cjs
+          node tools/test_surface_sampling.cjs
           node tools/test_surface_layer.cjs
           python tools/test_winter_precip.py
           python tools/test_winter_precip_sources.py
