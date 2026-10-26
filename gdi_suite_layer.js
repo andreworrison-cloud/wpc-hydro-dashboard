@@ -25,7 +25,7 @@ function validate(m,keys,previous){
   }
  }
 }
-function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=null,onChange=()=>{}}){
+function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=null,dynamics=null,onChange=()=>{}}){
  const ui=root.GDIDisplay;
  let metadata=null,shown=null,buffer=null,failed=false,numbers=true,serial=0,contourFailed=false,loading=false,lastCheck=0,refreshing=null,forecastIndex=0,forecastValidTime=null,playing=true,speed=800,timer=null,switching=false;
  const layers={};
@@ -35,7 +35,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
  const expired=m=>m?.expires_at&&Date.now()>=Date.parse(m.expires_at);
  const release=b=>{if(b)b.frames.forEach(f=>f.urls.forEach(URL.revokeObjectURL));};
  function stop(){if(timer!==null)clearTimeout(timer);timer=null;}
- function clear(){stop();keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=null;shown=null;}
+ function clear(){stop();keys.forEach(k=>layers[k].clearLayers());release(buffer);buffer=null;shown=null;dynamics?.setContext(null,null);}
  function schedule(){
   stop();if(!playing||document.hidden||!buffer?.loop||selected()!==buffer.base||expired(buffer.m))return;
   timer=setTimeout(()=>{timer=null;if(!buffer||expired(buffer.m)){draw();return;}forecastIndex=(forecastIndex+1)%buffer.frames.length;showFrame();},speed);
@@ -48,11 +48,12 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   if(buffer.loop&&commonForecast(buffer.m))forecastValidTime=buffer.m.products[f.key].valid_time;
   // Keep decoded overlays mounted: playback changes visibility, not image URLs.
   buffer.frames.forEach((frame,index)=>frame.overlays.forEach(o=>o.setOpacity(!buffer.loop||index===forecastIndex?layers[base].options.opacity:0)));
-  shown={m:buffer.m,k:f.key,base};onChange();schedule();
+  shown={m:buffer.m,k:f.key,base};dynamics?.setContext(buffer.m,buffer.m.products[f.key]);onChange();schedule();
  }
  async function draw(){
   stop();const base=selected(),token=++serial,m=metadata;
   if(!base||!m){if(!base)clear();loading=false;onChange();return;}
+  if(buffer?.base!==base)dynamics?.setContext(null,null);
   if(expired(m)||m.status==='awaiting_hourly_inputs'){clear();loading=false;onChange();return;}
   const want=numbers&&m.overlay_type==='labeled_contours_v1',group=forecastGroups[base];
   if(buffer?.base===base&&buffer.m.generation===m.generation&&buffer.want===want&&!failed&&!contourFailed){showFrame();return;}
@@ -126,7 +127,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   const unit=p.unit||(k==='change'?'GDI change (3 h)':'GDI');
   html+=ui.scale(p.colors||[],p.edges||[],unit,{zeroCentered:k==='change'});
   if(m.display_rendering==='rap_scalar_bilinear_v1')html+='<div class="gdi-note">13-km RAP · interpolated display</div>';
-  html+='<div class="gdi-note">'+esc(p.legend)+'</div></div>';return html;
+  html+='<div class="gdi-note">'+esc(p.legend)+'</div>'+(dynamics?.legendHTML()||'')+'</div>';return html;
  }
  refresh();setInterval(()=>{if(selected()&&(failed||contourFailed||Date.now()-lastCheck>=120000||expired(metadata)))refresh();},15000);
  return {layers,legendHTML,refresh};

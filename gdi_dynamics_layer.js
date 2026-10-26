@@ -67,7 +67,8 @@ function create({map,metadataURL,paneName='rapGDIDynamics',onChange=()=>{}}){
    if(packages[0]&&Date.parse(m.cycle)<Date.parse(packages[0].cycle))throw Error('Regressing dynamics cycle');
    const same=packages.find(x=>x.generation===m.generation);
    if(same&&JSON.stringify(same)!==JSON.stringify(m))throw Error('Changed immutable dynamics generation');
-   packages=[m,...packages.filter(x=>x.generation!==m.generation)].slice(0,2);failed=false;lastCheck=Date.now();await draw();
+   const displayed=packages.find(matching);
+   packages=[m,...(displayed&&displayed.generation!==m.generation?[displayed]:packages.filter(x=>x.generation!==m.generation))].slice(0,2);failed=false;lastCheck=Date.now();await draw();
   }catch(e){failed=true;if(!packages.some(matching))clear();onChange();}finally{fetching=null;}})();return fetching;
  }
  document.addEventListener('change',e=>{
@@ -84,8 +85,8 @@ function create({map,metadataURL,paneName='rapGDIDynamics',onChange=()=>{}}){
   Object.entries(FIELDS).forEach(([k,d])=>{
    if(!enabled[k])return;
    const levels=d.levels?.filter(v=>v>0).join(' / ');
-   html+='<div class="gdi-dynamics-key"><span style="color:'+d.color+'">━</span> '+esc(d.label)+' · '+esc(d.unit)+'<small>'+esc(d.layer)+(levels?' · '+esc(levels):' · barbs ≥10 kt')+'</small>';
-   if(d.negative_color)html+='<small><span style="color:'+d.negative_color+'">┄</span> '+(k==='mfc'?'Moisture divergence':'Upper convergence')+' · same magnitudes</small>';
+   html+='<div class="gdi-dynamics-key"><i style="color:'+d.color+'"></i>'+esc(d.label)+' · '+esc(d.unit)+'<small>'+esc(d.layer)+(levels?' · '+esc(levels):' · barbs ≥10 kt')+'</small>';
+   if(d.negative_color)html+='<small><i class="is-negative" style="color:'+d.negative_color+'"></i>'+(k==='mfc'?'Moisture divergence':'Upper convergence')+' · same magnitudes</small>';
    html+='</div>';
   });
   html+='<div class="gdi-note">RAP '+esc(ui.utc(context.valid_time))+' · '+(context.lead?'F03':'analysis')+'<br>Nominal 20-km Gaussian sigma. Below-ground levels excluded; moisture convergence requires ≥100 hPa of valid layer.</div></div>';

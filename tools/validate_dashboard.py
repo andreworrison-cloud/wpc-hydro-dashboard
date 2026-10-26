@@ -1589,6 +1589,13 @@ for layer_id in ['gdi-forecast-hrrr','gdi-forecast-rrfs','gdi-forecast-blend',
         errors.append(f'Missing retained GDI layer: {layer_id}')
 if any(marker in app for marker in ['gdiTLE','gdi-merged-tle','gdi-tle-','data/tle-gdi/']):
     errors.append('Retired GDI TLE layers must not be registered or fetched by the dashboard')
+if 'gdi_dynamics_layer.js?v=rap-dynamics-v1' not in index or 'dynamics: rapGDIDynamics' not in app:
+    errors.append('RAP GDI companion controls must be loaded and attached to the RAP suite')
+if "label: 'GDI + Dynamics'" not in rap_menu:
+    errors.append('RAP GDI + Dynamics must remain within RAP Mesoanalysis Data')
+rap_gdi_workflow=(ROOT/'.github/workflows/publish_rap_gdi.yml').read_text()
+if 'needs: publish' not in rap_gdi_workflow or 'needs.publish.outputs.cycle' not in rap_gdi_workflow:
+    errors.append('RAP dynamics must use the exact cycle selected by the existing GDI producer')
 
 gdi_windows=(ROOT/'.github/workflows/publish_gdi_guidance.yml').read_text()
 if re.search(r'^\s+schedule:',gdi_windows,re.M) or 'types: [requested]' not in gdi_windows or 'Update HRRR-TLE Flash Flood Guidance' not in gdi_windows:
