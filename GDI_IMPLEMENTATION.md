@@ -1,5 +1,15 @@
 # GDI dashboard delivery
 
+## Current dashboard suite
+
+The dashboard retains RAP GDI analysis, three-hour change, and +3-hour forecast; synchronized six-hour HRRR, RRFS, and equal-weight blend loops; and the three CAM-aligned Day 1 ERO maximum products. The GDI calculation, terrain correction, display scales, contours, and timing contracts are unchanged.
+
+GDI TLE threshold-exceedance and persistence products have been removed from the menu and runtime suite registration. The dashboard no longer fetches `data/tle-gdi` metadata. The `merged-tle` publication job is removed from `publish_gdi_guidance.yml`; its existing cron-job.org-triggered forecast job remains. RAP and Day 1 retain their existing scheduler routes. The separate HRRR-TLE flash-flood guidance is unaffected. No new timer or external cron-job.org change is required.
+
+The prior TLE calculation code and data branch remain available as research history, with no production caller. EGDI is a future addition pending the author's numerical routine; the older AI notebooks' GDI shading with moisture-convergence/divergence overlays is not a distinct calculated EGDI field.
+
+## Initial delivery record (historical)
+
 The first delivery adds HRRR GDI, neighborhood coverage, sampled persistence, and longest sampled run under **GDI Thermodynamic Guidance**. All are opt-in. The legend selects forecast hour (F00–F06), threshold (30/40/50), and numerical labels. Existing dashboard geographic references remain above the field overlay.
 
 ## Calculation and terrain

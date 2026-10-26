@@ -36,7 +36,7 @@ errors = []
 
 # Current registry total includes all existing dashboard data/config entries,
 # basemaps, and the two validated NASA NLDAS-3 static land-surface layers.
-EXPECTED_LAYER_COUNT = 189
+EXPECTED_LAYER_COUNT = 183
 LIGHTNINGCAST_LAYER_ID = "lightningcast-probability-60min"
 
 # Preserve the exact operational menu order. Dashboard Utilities is rendered
@@ -1575,7 +1575,7 @@ for caller, callee in [('update_rap.yml','publish_rap_gdi.yml')]:
     callee_text=(ROOT/'.github/workflows'/callee).read_text()
     if re.search(r'^\s+schedule:',callee_text,re.M):errors.append(f'{callee} must not introduce a GitHub cron')
     if 'workflow_call:' not in callee_text or f'uses: ./.github/workflows/{callee}' not in caller_text:errors.append(f'Missing external scheduler route for {callee}')
-for label in ['HRRR / RRFS Forecasts','HRRR/RRFS TLE','Day 1 ERO · Maximum GDI']:
+for label in ['HRRR / RRFS Forecasts','Day 1 ERO · Maximum GDI']:
     if label not in app:errors.append(f'Missing GDI menu group: {label}')
 rap_menu_start=app.find("title: 'RAP Mesoanalysis Data'")
 gdi_menu_start=app.find("title: 'GDI Thermodynamic Guidance'")
@@ -1583,6 +1583,12 @@ rap_menu=app[rap_menu_start:gdi_menu_start] if 0<=rap_menu_start<gdi_menu_start 
 for layer_id in ['rap-gdi','rap-gdi-change','rap-gdi-forecast']:
     if f"id: '{layer_id}'" not in rap_menu:
         errors.append(f'{layer_id} must be under RAP Mesoanalysis Data')
+for layer_id in ['gdi-forecast-hrrr','gdi-forecast-rrfs','gdi-forecast-blend',
+                 'gdi-day1-hrrr','gdi-day1-rrfs','gdi-day1-blend']:
+    if f"id: '{layer_id}'" not in app:
+        errors.append(f'Missing retained GDI layer: {layer_id}')
+if any(marker in app for marker in ['gdiTLE','gdi-merged-tle','gdi-tle-','data/tle-gdi/']):
+    errors.append('Retired GDI TLE layers must not be registered or fetched by the dashboard')
 
 gdi_windows=(ROOT/'.github/workflows/publish_gdi_guidance.yml').read_text()
 if re.search(r'^\s+schedule:',gdi_windows,re.M) or 'types: [requested]' not in gdi_windows or 'Update HRRR-TLE Flash Flood Guidance' not in gdi_windows:
@@ -1593,8 +1599,11 @@ if 'Update Day 1 ERO CAMs' not in gdi_day1 or 'types: [completed]' not in gdi_da
 if 'uses: ./.github/workflows/publish_gdi.yml' in (ROOT/'.github/workflows/update_hrrr_tle.yml').read_text():
     errors.append('The retired standalone HRRR GDI producer must not duplicate focused forecasts')
 for workflow in (ROOT/'.github/workflows').glob('publish*gdi*.yml'):
-    if re.search(r'^\s+schedule:',workflow.read_text(),re.M):
+    workflow_text=workflow.read_text()
+    if re.search(r'^\s+schedule:',workflow_text,re.M):
         errors.append(f'GDI must not introduce a native GitHub timer: {workflow.name}')
+    if re.search(r'^\s+(?:mode|suite):\s*tle\s*$',workflow_text,re.M):
+        errors.append(f'Retired GDI TLE must not have a production publication job: {workflow.name}')
 
 
 if errors:
