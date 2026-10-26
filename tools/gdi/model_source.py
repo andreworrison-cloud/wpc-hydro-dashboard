@@ -1,12 +1,35 @@
 """Pressure-level adapters using each provider's own inventory and byte offsets."""
 from sources import HRRRSource
-from eccodes import codes_new_from_message,codes_get,codes_release
-import pathlib
+from eccodes import codes_new_from_message,codes_get,codes_release,codes_get_message,codes_grib_new_from_file,codes_grib_multi_support_on,codes_grib_multi_support_reset_file
+import pathlib,tempfile
 LEVELS=(950,850,700,500)
 ROOTS={
  'hrrr':{'aws':'https://noaa-hrrr-bdp-pds.s3.amazonaws.com','nomads':'https://nomads.ncep.noaa.gov/pub/data/nccf/com/hrrr/prod'},
  'rap':{'aws':'https://noaa-rap-pds.s3.amazonaws.com','nomads':'https://nomads.ncep.noaa.gov/pub/data/nccf/com/rap/prod'},
  'rrfs':{'aws':'https://noaa-rrfs-ops-pds.s3.amazonaws.com','nomads':'https://nomads.ncep.noaa.gov/pub/data/nccf/com/rrfs/prod'}}
+
+def record_handle(raw,record):
+ """Select the indexed GRIB subfield; RAP packs U and V in one message."""
+ if 'submessage' not in record:return codes_new_from_message(raw)
+ submessage=record['submessage']
+ if not isinstance(submessage,int) or not 1<=submessage<=8:raise ValueError('Invalid GRIB submessage')
+ codes_grib_multi_support_on()
+ with tempfile.TemporaryFile() as f:
+  f.write(raw);f.seek(0)
+  selected=None
+  try:
+   i=0
+   while True:
+    h=codes_grib_new_from_file(f)
+    if h is None:break
+    i+=1
+    try:
+     if i==submessage:selected=codes_get_message(h)
+    finally:codes_release(h)
+  finally:codes_grib_multi_support_reset_file(f)
+ if selected is None:raise ValueError('Missing indexed GRIB submessage')
+ # No live handle may depend on a multi-field reader/file context being reset.
+ return codes_new_from_message(selected)
 class PressureSource(HRRRSource):
  def __init__(self,model,cycle,cache='run/gdi-cache',**kwargs):
   super().__init__(cycle,pathlib.Path(cache)/model,product='prs',**kwargs);self.model=model
@@ -26,12 +49,18 @@ class PressureSource(HRRRSource):
    if self.model!='rrfs' or provider!='nomads':raise
    u=u.replace('/rrfs/prod/','/rrfs/para/');raw_index=self.transport(u+'.idx')
   lines=raw_index.decode().strip().splitlines();records={}
-  for a,b in zip(lines,lines[1:]):
-   x,y=a.split(':'),b.split(':')
-   if x[3] not in ('TMP','SPFH','RH','PRES'):continue
-   k=(x[3],x[4]);start,end=int(x[1]),int(y[1])-1
+  parsed=[line.split(':') for line in lines]
+  offsets=list(dict.fromkeys(int(x[1]) for x in parsed))
+  if offsets!=sorted(offsets):raise ValueError('Unordered physical GRIB messages')
+  ends={start:end-1 for start,end in zip(offsets,offsets[1:])}
+  for x in parsed:
+   if x[3] not in ('TMP','SPFH','RH','PRES','UGRD','VGRD','PWAT'):continue
+   k=(x[3],x[4]);start=int(x[1])
+   if start not in ends:continue
+   end=ends[start]
    if x[2]!=f'd={self.cycle:%Y%m%d%H}' or end<start or k in records:raise ValueError('Invalid index')
    records[k]={'variable':k[0],'level':k[1],'start':start,'end':end,'url':u,'provider':provider,'forecast_hour':lead}
+   if '.' in x[0]:records[k]['submessage']=int(x[0].split('.')[1])
   if self.model=='rrfs':
    surface_url=u.replace('.prslev.','.2dfld.');surface_lines=self.transport(surface_url+'.idx').decode().strip().splitlines()
    for a,b in zip(surface_lines,surface_lines[1:]):
@@ -45,16 +74,18 @@ class PressureSource(HRRRSource):
   return records
  def _validate(self,b,rec):
   if b[:4]!=b'GRIB' or b[-4:]!=b'7777' or int.from_bytes(b[8:16],'big')!=len(b):raise ValueError('Truncated GRIB')
-  h=codes_new_from_message(b)
+  h=record_handle(b,rec)
   try:
    if (codes_get(h,'dataDate'),codes_get(h,'dataTime'),codes_get(h,'endStep'))!=(int(self.cycle.strftime('%Y%m%d')),self.cycle.hour*100,rec['forecast_hour']):raise ValueError('Cycle/lead mismatch')
    expected=('lambert',451,337) if self.model=='rap' else ('lambert',1799,1059)
    if (codes_get(h,'gridType'),codes_get(h,'Nx'),codes_get(h,'Ny'))!=expected:raise ValueError('Unexpected model grid')
    v=rec['variable'];name=codes_get(h,'shortName');units=codes_get(h,'units')
-   if name not in {'TMP':('t',),'SPFH':('q',),'RH':('r',),'PRES':('pres','sp')}[v] or units not in {'TMP':('K',),'SPFH':('kg kg**-1','kg kg-1'),'RH':('%',),'PRES':('Pa',)}[v]:raise ValueError('Variable/unit mismatch')
+   if name not in {'TMP':('t',),'SPFH':('q',),'RH':('r',),'PRES':('pres','sp'),'UGRD':('u',),'VGRD':('v',),'PWAT':('pwat','tcwv')}[v] or units not in {'TMP':('K',),'SPFH':('kg kg**-1','kg kg-1'),'RH':('%',),'PRES':('Pa',),'UGRD':('m s**-1','m s-1'),'VGRD':('m s**-1','m s-1'),'PWAT':('kg m**-2','kg m-2')}[v]:raise ValueError('Variable/unit mismatch')
    level=rec['level'];typ=codes_get(h,'typeOfLevel')
    if level=='surface':
     if typ!='surface':raise ValueError('Expected surface')
+   elif v=='PWAT':
+    if not level.startswith('entire atmosphere') or typ not in ('atmosphere','entireAtmosphere','atmosphereSingleLayer'):raise ValueError('Expected total-column water')
    elif typ!='isobaricInhPa' or codes_get(h,'level')!=int(level.split()[0]):raise ValueError('Pressure level mismatch')
    sig=codes_get(h,'md5Section3')
    if self.grid is not None and self.grid!=sig:raise ValueError('Mixed grids')

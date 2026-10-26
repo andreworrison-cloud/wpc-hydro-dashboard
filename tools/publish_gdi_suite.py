@@ -6,9 +6,12 @@ import publish_gdi as publisher
 sys.path.insert(0,str(Path(__file__).parent/'gdi'))
 from guidance_contract import verify_spec, verify_unavailable
 SUITE=os.environ.get('GDI_SUITE','rap')
-if SUITE not in ('rap','guidance','ero','forecast','tle','day1'):raise ValueError('Unknown GDI suite')
+if SUITE not in ('rap','rap-dynamics','guidance','ero','forecast','tle','day1'):raise ValueError('Unknown GDI suite')
 publisher.BRANCH='data/'+SUITE+'-gdi';publisher.MARKER='GDI_SUITE_DATA_BRANCH.json';publisher.IDENTITY={'schema_version':1,'purpose':SUITE+' GDI dashboard suite'}
 def verify(target):
+ if SUITE=='rap-dynamics':
+  from dynamics_contract import verify_publication
+  verify_publication(target/'public');return
  root=target/'public';m=json.loads((root/'metadata.json').read_text());dt.datetime.fromisoformat(m['cycle'])
  if m.get('schema')!='gdi_named_suite_v1' or m.get('crs')!='EPSG:3857' or [m.get('width'),m.get('height')]!=[2400,1360]:raise ValueError('Invalid GDI display contract')
  if m.get('resampling')!='nearest' and not (SUITE=='rap' and m.get('resampling')=='masked_bilinear' and m.get('display_rendering')=='rap_scalar_bilinear_v1'):raise ValueError('Unrecognized GDI display interpolation')
