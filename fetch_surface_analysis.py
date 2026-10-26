@@ -30,6 +30,7 @@ from surface_analysis import (REVISION, PRESSURE_REVISION, LEGACY_KEYS, V2_KEYS,
                               ANALYSIS_HIDE_MINUTES, STATION_HIDE_MINUTES,
                               colorize, display_values, iso, parse_time, parse_metars,
                               derive_products)
+from surface_sampling import pack_grid, unpack_grid
 from surface_contours import smooth_masked, pressure_centers, contour_collection, validate_collection
 
 UTC = timezone.utc
@@ -139,6 +140,9 @@ def write_products(root, dest, display, target, cycle, centers=()):
         Image.fromarray(colorize(key,output)).save(path,optimize=True)
         products[key]={**PRODUCTS[key],"path":path.relative_to(root).as_posix(),"sha256":sha(path.read_bytes()),
                        "applicable_pixels":int(np.isfinite(output).sum()),"resampling":"bilinear scalar display"}
+        sample_path=dest/(key+"_samples.bin.gz")
+        sample_path.write_bytes(pack_grid(key,output,iso(cycle)))
+        products[key]["sampling"]={"path":sample_path.relative_to(root).as_posix(),"sha256":sha(sample_path.read_bytes()),"encoding":"gzip-int16-v1"}
         contours=contour_collection(key,output,target,iso(cycle),centers if key=="mslp" else ())
         validate_collection(contours,key,iso(cycle))
         contour_path=dest/(key+"_contours.geojson")
@@ -236,13 +240,13 @@ def validate_package(root, metadata=None):
     if m.get("schema") != "surface-suite-v1" or m.get("policy") != {"analysis_warn_minutes": 150, "analysis_hide_minutes": 240, "station_hide_minutes": 90}:
         raise ValueError("Wrong surface schema")
     a = m.get("analysis")
-    expected={"rtma-surface-v1":set(LEGACY_KEYS),"rtma-surface-v2":set(V2_KEYS),"rtma-surface-v3":set(RTMA_KEYS),REVISION:set(RTMA_KEYS)}
+    expected={"rtma-surface-v1":set(LEGACY_KEYS),"rtma-surface-v2":set(V2_KEYS),"rtma-surface-v3":set(RTMA_KEYS),"rtma-surface-v4":set(RTMA_KEYS),REVISION:set(RTMA_KEYS)}
     if a and (set(a["products"]) != expected.get(a["revision"]) or
               a["bounds"] != BOUNDS or a["crs"] != "EPSG:3857" or
               (a["width"], a["height"]) != (3600, 2024)):
         raise ValueError("Incomplete RTMA surface suite/grid")
     pressure=m.get("pressure_analysis")
-    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
+    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1","hrrr-mslp-v2",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
                      pressure.get("native_spacing_km")!=3 or pressure.get("bounds")!=BOUNDS or
                      pressure.get("crs")!="EPSG:3857" or (pressure.get("width"),pressure.get("height"))!=(3600,2024)):
         raise ValueError("Invalid HRRR pressure analysis")
@@ -252,8 +256,17 @@ def validate_package(root, metadata=None):
         assets = obj["products"].values() if "products" in obj else [obj]
         if "products" in obj:
             for key,p in obj["products"].items():
+                sample=p.get("sampling")
+                if obj["revision"] in (REVISION,PRESSURE_REVISION) and not sample:
+                    raise ValueError("Missing numeric sample grid")
+                if sample:
+                    prefix="pressure" if key=="mslp" else "generations"
+                    rel=Path(sample["path"])
+                    if rel.as_posix()!=f'{prefix}/{obj["generation"]}/{key}_samples.bin.gz' or sample.get("encoding")!="gzip-int16-v1" or sha((root/rel).read_bytes())!=sample["sha256"]:
+                        raise ValueError("Sample grid path/checksum mismatch")
+                    unpack_grid((root/rel).read_bytes(),key,obj["valid_time"])
                 contour=p.get("contours")
-                if obj["revision"] in (REVISION,PRESSURE_REVISION) and not contour:
+                if obj["revision"] in ("rtma-surface-v4","hrrr-mslp-v2",REVISION,PRESSURE_REVISION) and not contour:
                     raise ValueError("Missing surface contour asset")
                 if contour:
                     rel=Path(contour["path"])

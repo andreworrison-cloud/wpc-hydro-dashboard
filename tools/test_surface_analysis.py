@@ -197,6 +197,9 @@ class SurfaceTests(unittest.TestCase):
             contour_path=folder/'mslp_contours.geojson';contour_path.write_text(json.dumps(contour))
             pressure['products']['mslp']['contours']={'path':str(contour_path.relative_to(root)),'sha256':source.sha(contour_path.read_bytes()),'interval':4,'feature_count':0}
             previous={'schema':'surface-suite-v1','policy':{'analysis_warn_minutes':150,'analysis_hide_minutes':240,'station_hide_minutes':90},'pressure_analysis':pressure}
+            sample=folder/'mslp_samples.bin.gz'
+            sample.write_bytes(source.pack_grid('mslp',np.full((2024,3600),1013.2),pressure['valid_time']))
+            pressure['products']['mslp']['sampling']={'path':sample.relative_to(root).as_posix(),'sha256':source.sha(sample.read_bytes()),'encoding':'gzip-int16-v1'}
             (root/'metadata.json').write_text(json.dumps(previous))
             with patch.object(source,'session') as fake:
                 fake.return_value.get.side_effect=RuntimeError('offline')

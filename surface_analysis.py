@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-REVISION = "rtma-surface-v4"
-PRESSURE_REVISION = "hrrr-mslp-v2"
+REVISION = "rtma-surface-v5"
+PRESSURE_REVISION = "hrrr-mslp-v3"
 LEGACY_KEYS = ("temperature", "dewpoint", "wind_speed")
 V2_KEYS = (*LEGACY_KEYS, "wind_direction", "wind_gust", "surface_pressure", "relative_humidity", "heat_index", "wind_chill")
 BOUNDS = [[24.0, -125.0], [50.0, -66.0]]
@@ -72,7 +72,7 @@ PRODUCTS.update({
         "ticks": [80,90,100,110,120,140],
         "contour_interval": 5,
         "method": "NWS/WPC Rothfusz regression with low/high humidity adjustments; displayed only when preliminary averaged Steadman HI >=80 F",
-        "note": "Calculated for warm conditions passing the NWS preliminary 80°F heat-index screen. Other areas are transparent. Assumes shade/light wind.",
+        "note": "Calculated for warm conditions passing the NWS preliminary 80°F heat-index screen. Dark/unshaded areas are outside this index’s range or have missing inputs. Assumes shade/light wind.",
     },
     "wind_chill": {
         "label": "Wind Chill", "unit": "°F", "derived_from": ["temperature","wind_speed"],
@@ -81,7 +81,7 @@ PRODUCTS.update({
         "ticks": [-60,-40,-20,0,20,30,40,50],
         "contour_interval": 10,
         "method": "NWS: 35.74+0.6215*T-35.75*V^0.16+0.4275*T*V^0.16; T in F; V in mph; T<=50 F and V>3 mph",
-        "note": "Calculated only at temperatures ≤50°F and sustained winds >3 mph. Other areas are transparent; gusts are not used.",
+        "note": "Calculated only at temperatures ≤50°F and sustained winds >3 mph. Dark/unshaded areas are outside this index’s range or have missing inputs; gusts are not used.",
     },
 })
 
