@@ -307,7 +307,7 @@
         document.addEventListener('change',e=>{
             if(e.target.matches('[data-surface-field]')&&['auto',...stationKeys].includes(e.target.value)){stationField=e.target.value;sync();}
             else if(e.target.matches('[data-surface-wind]')&&['wind_speed','wind_gust'].includes(e.target.value)){
-                wind.removeLayer(layers[windField]);windField=e.target.value;layers[windField].setOpacity(wind.options.opacity);wind.addLayer(layers[windField]);sync();if(active())loadSelected();
+                const nextWindField=e.target.value;wind.removeLayer(layers[windField]);windField=nextWindField;layers[windField].setOpacity(wind.options.opacity);wind.addLayer(layers[windField]);sync();if(active())loadSelected();
             }else if(e.target.matches('[data-surface-barbs]')){windBarbs=e.target.checked;if(windBarbs)wind.addLayer(barbs);else wind.removeLayer(barbs);sync();}
             else if(e.target.matches('[data-surface-contours]')){contoursEnabled=e.target.checked;sync();if(contoursEnabled&&active())loadSelected();}
         },true);
