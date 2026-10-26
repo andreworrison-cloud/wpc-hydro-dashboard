@@ -9,6 +9,11 @@ on:
       - 'tools/gdi/build_rap.py'
       - 'tools/gdi/model_source.py'
       - 'tools/gdi/decode_model.py'
+      - 'tools/gdi/dynamics.py'
+      - 'tools/gdi/dynamics_contract.py'
+      - 'tools/gdi/decode_dynamics.py'
+      - 'tools/gdi/build_dynamics.py'
+      - 'tools/gdi/render_dynamics.py'
       - 'tools/gdi/render_suite.py'
       - 'tools/gdi/contours.py'
       - 'tools/publish_gdi_suite.py'
@@ -26,6 +31,8 @@ jobs:
       contents: write
     env:
       GDI_SUITE: rap
+    outputs:
+      cycle: ${{ steps.selected.outputs.cycle }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -35,9 +42,100 @@ jobs:
       - run: python tools/publish_gdi_suite.py restore --data-dir run/rap-gdi-data --state-file run/rap-gdi-state.json
       - run: python tools/gdi/build_rap.py --public run/rap-gdi-data/public
       - run: python tools/publish_gdi_suite.py publish --data-dir run/rap-gdi-data --state-file run/rap-gdi-state.json
+      - name: Record the actual published RAP GDI cycle
+        id: selected
+        run: |
+          python - <<'PY'
+          import datetime,json,os
+          from pathlib import Path
+          m=json.loads(Path('run/rap-gdi-data/public/metadata.json').read_text())
+          cycle=datetime.datetime.fromisoformat(m['cycle']).strftime('%Y%m%d%H')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('cycle='+cycle+'\n')
+          PY
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rap-gdi-metadata
           path: run/rap-gdi/*/*.json
+          retention-days: 14
+  dynamics:
+    # Uses the exact base cycle after its successful publication. A diagnostic
+    # failure leaves RAP GDI intact, in its own independently published branch.
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      GDI_SUITE: rap-dynamics
+      RAP_GDI_CYCLE: ${{ needs.publish.outputs.cycle }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Refresh queued source
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install numpy scipy pyproj pillow matplotlib eccodes
+      - name: Check diagnostics and provider redundancy
+        run: |
+          python tools/gdi/test_dynamics.py
+          python tools/gdi/test_redundancy.py
+      - uses: actions/cache/restore@v6
+        with:
+          path: run/rap-dynamics
+          key: rap-gdi-dynamics-${{ github.run_id }}
+          restore-keys: |
+            rap-gdi-dynamics-
+      - name: Bound the native cache
+        run: |
+          python - <<'PY'
+          import datetime as d,shutil
+          from pathlib import Path
+          cutoff=(d.datetime.now(d.timezone.utc)-d.timedelta(hours=8)).strftime('%Y%m%d%H')
+          for parent in (Path('run/rap-dynamics'),Path('run/rap-dynamics/cache/rap')):
+              for p in parent.glob('*'):
+                  cycle=p.name.removesuffix('-prs')
+                  if p.is_dir() and cycle.isdigit() and cycle<cutoff:shutil.rmtree(p)
+          PY
+      - name: Restore last validated dynamics
+        run: python tools/publish_gdi_suite.py restore --data-dir run/rap-dynamics-data --state-file run/rap-dynamics-state.json
+      - name: Build matching analysis and F03 dynamics
+        id: build
+        continue-on-error: true
+        run: python tools/gdi/build_dynamics.py --cycle "$RAP_GDI_CYCLE" --public run/rap-dynamics-data/public
+      - name: Publish completed overlays atomically
+        if: steps.build.outcome == 'success'
+        run: python tools/publish_gdi_suite.py publish --data-dir run/rap-dynamics-data --state-file run/rap-dynamics-state.json
+      - name: Validate retained dynamics after source failure
+        if: steps.build.outcome == 'failure'
+        run: |
+          python - <<'PY'
+          import datetime as d,json,sys
+          from pathlib import Path
+          sys.path.insert(0,'tools/gdi')
+          from dynamics_contract import verify_publication
+          root=Path('run/rap-dynamics-data/public')
+          if not (root/'metadata.json').exists():raise SystemExit('No complete prior dynamics exist')
+          verify_publication(root)
+          m=json.loads((root/'metadata.json').read_text())
+          if d.datetime.now(d.timezone.utc)>=d.datetime.fromisoformat(m['expires_at']):raise SystemExit('Retained dynamics expired')
+          print('::warning::Dynamics source incomplete; retained data show their original cycle. The viewer requires an exact match to the displayed GDI.')
+          PY
+      - uses: actions/cache/save@v6
+        if: always()
+        with:
+          path: run/rap-dynamics
+          key: rap-gdi-dynamics-${{ github.run_id }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rap-gdi-dynamics-metadata
+          path: |
+            run/rap-dynamics/*/suite.json
+            run/rap-dynamics/*/f*.json
+            run/rap-dynamics-data/public/metadata.json
           retention-days: 14

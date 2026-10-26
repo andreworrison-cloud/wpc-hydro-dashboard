@@ -16,6 +16,8 @@ on:
       - 'app.js'
       - 'gdi_layer.js'
       - 'gdi_suite_layer.js'
+      - 'gdi_dynamics_layer.js'
+      - 'tools/test_gdi_dynamics.cjs'
       - 'tools/publish_gdi_suite.py'
       - '.github/workflows/publish_gdi.yml'
       - '.github/workflows/publish_rap_gdi.yml'
@@ -66,6 +68,8 @@ on:
       - 'app.js'
       - 'gdi_layer.js'
       - 'gdi_suite_layer.js'
+      - 'gdi_dynamics_layer.js'
+      - 'tools/test_gdi_dynamics.cjs'
       - 'tools/publish_gdi_suite.py'
       - '.github/workflows/publish_gdi.yml'
       - '.github/workflows/publish_rap_gdi.yml'
@@ -133,6 +137,8 @@ jobs:
           node --check app.js
           node --check gdi_layer.js
           node --check gdi_suite_layer.js
+          node --check gdi_dynamics_layer.js
+          node tools/test_gdi_dynamics.cjs
           node --check gdi_display.js
           node tools/test_gdi_display.cjs
           node tools/gdi/test_adapter.cjs
@@ -146,6 +152,7 @@ jobs:
         run: |
           pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy
           python tools/gdi/test_guidance.py
+          python tools/gdi/test_dynamics.py
           python tools/test_surface_analysis.py
           python tools/test_surface_contours.py
           python tools/test_surface_sampling.py

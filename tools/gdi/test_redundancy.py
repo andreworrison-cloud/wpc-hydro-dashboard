@@ -2,7 +2,7 @@
 import tempfile
 from model_source import PressureSource
 
-def exercise(model, failure, order=('aws','nomads')):
+def exercise(model, failure, order=('aws','nomads'), dynamics=False):
     requests=[]
     primary,backup=order
     def provider(url):return 'aws' if 'amazonaws.com' in url else 'nomads'
@@ -12,6 +12,10 @@ def exercise(model, failure, order=('aws','nomads')):
         if start is None:
             # Different offsets and moisture representations on each provider.
             variables=[(v,f'{lev} mb') for v in ('TMP','SPFH' if p==primary else 'RH') for lev in (950,850,700,500)]
+            if dynamics:
+                variables += [(v,f'{lev} mb') for v in ('TMP','SPFH' if p==primary else 'RH') for lev in (1000,900,400,300,200)]
+                variables += [(v,f'{lev} mb') for v in ('UGRD','VGRD') for lev in (1000,950,900,850,700,400,300,200)]
+                variables += [('PWAT','entire atmosphere (considered as a single layer)')]
             if model!='rrfs' or '.2dfld.' in url:variables+=[('PRES','surface')]
             variables+=[('END','surface')]
             offset=100 if p==primary else 1000
@@ -24,7 +28,11 @@ def exercise(model, failure, order=('aws','nomads')):
             if data!=b'valid':raise ValueError('invalid GRIB')
             return 'grid'
         source.validate=validate
-        for task in source.tasks(3):
+        if dynamics:
+            from decode_dynamics import tasks
+            requested=tasks(source,3)
+        else:requested=source.tasks(3)
+        for task in requested:
             meta,_=source.fetch(*task)
             assert meta['provider']==backup
             assert meta['start']>=1000
@@ -35,4 +43,6 @@ def exercise(model, failure, order=('aws','nomads')):
 for model in ('hrrr','rap','rrfs'):
     for failure in ('index','range','decode'):
         for order in (('aws','nomads'),('nomads','aws')):exercise(model,failure,order)
-print('18 failover cases pass: all models, both directions, inventory/range/decoding failures, independent offsets and humidity representation')
+for failure in ('index','range','decode'):
+    for order in (('aws','nomads'),('nomads','aws')):exercise('rap',failure,order,dynamics=True)
+print('24 failover cases pass: all GDI models and RAP dynamics, both directions, inventory/range/decoding failures, independent offsets and humidity representation')
