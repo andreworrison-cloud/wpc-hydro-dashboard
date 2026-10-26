@@ -210,7 +210,7 @@
             const key=selected(),entry=current(key),valid=entry&&state(entry.analysis,now()).visible;
             const obstacles=[...stationObstacles];
             if(map.hasLayer(barbs))barbMarkers.forEach(p=>{const c=map.latLngToContainerPoint([p.lat,p.lon]);obstacles.push({x:c.x,y:c.y,w:46,h:46});});
-            cartography.draw({data:valid?entry.contours:null,key,generation:entry?.analysis.generation,enabled:contoursEnabled,obstacles});
+            cartography.draw({data:valid?entry.contours:null,key,generation:entry?.analysis.generation,enabled:contoursEnabled,obstacles,labelColor:value=>color(entry?.analysis.products[key],value)});
         }
         async function asset(p, controller) {
             const url=new URL(p.path,new URL('.',new URL(metadataURL,document.baseURI)));
