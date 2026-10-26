@@ -191,6 +191,11 @@ class SurfaceTests(unittest.TestCase):
             pressure={'revision':science.PRESSURE_REVISION,'valid_time':science.iso(NOW),'generation':gen,
                 'native_spacing_km':3,'width':3600,'height':2024,'crs':'EPSG:3857','bounds':science.BOUNDS,
                 'products':{'mslp':{**science.PRODUCTS['mslp'],'path':str(path.relative_to(root)),'sha256':source.sha(path.read_bytes())}}}
+            from surface_contours import contour_collection
+            target,_=source.display_grid()
+            contour=contour_collection('mslp',np.full((2024,3600),np.nan),target,science.iso(NOW))
+            contour_path=folder/'mslp_contours.geojson';contour_path.write_text(json.dumps(contour))
+            pressure['products']['mslp']['contours']={'path':str(contour_path.relative_to(root)),'sha256':source.sha(contour_path.read_bytes()),'interval':4,'feature_count':0}
             previous={'schema':'surface-suite-v1','policy':{'analysis_warn_minutes':150,'analysis_hide_minutes':240,'station_hide_minutes':90},'pressure_analysis':pressure}
             (root/'metadata.json').write_text(json.dumps(previous))
             with patch.object(source,'session') as fake:
@@ -207,6 +212,13 @@ class SurfaceTests(unittest.TestCase):
                 fake.return_value.get.assert_not_called()
             bad=json.loads(json.dumps(result));bad['pressure_analysis']['products']={'surface_pressure':pressure['products']['mslp']}
             with self.assertRaises(ValueError):source.validate_package(root,bad)
+            # A restored pre-contour pressure generation remains readable.
+            legacy=json.loads(json.dumps(result));legacy['pressure_analysis']['revision']='hrrr-mslp-v1'
+            del legacy['pressure_analysis']['products']['mslp']['contours'];source.validate_package(root,legacy)
+            bad=json.loads(json.dumps(result));del bad['pressure_analysis']['products']['mslp']['contours']
+            with self.assertRaises(ValueError):source.validate_package(root,bad)
+            contour_path.write_bytes(b'corrupt')
+            with self.assertRaises(ValueError):source.validate_package(root,result)
 
 
 if __name__=='__main__':unittest.main()

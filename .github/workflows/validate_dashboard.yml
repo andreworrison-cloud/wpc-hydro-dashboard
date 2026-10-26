@@ -5,7 +5,9 @@ on:
   pull_request:
     paths:
       - 'surface_layer.js'
+      - 'surface_cartography.js'
       - 'surface_analysis.py'
+      - 'surface_contours.py'
       - 'fetch_surface_analysis.py'
       - 'tools/test_surface*'
       - '.github/workflows/update_surface_analysis.yml'
@@ -51,7 +53,9 @@ on:
   push:
     paths:
       - 'surface_layer.js'
+      - 'surface_cartography.js'
       - 'surface_analysis.py'
+      - 'surface_contours.py'
       - 'fetch_surface_analysis.py'
       - 'tools/test_surface*'
       - '.github/workflows/update_surface_analysis.yml'
@@ -120,6 +124,7 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           node --check surface_layer.js
+          node --check surface_cartography.js
           node --check app.js
           node --check gdi_layer.js
           node --check gdi_suite_layer.js
@@ -134,9 +139,11 @@ jobs:
 
       - name: Check GDI valid-time alignment and aggregation
         run: |
-          pip install numpy scipy eccodes rasterio pyproj requests pillow
+          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy
           python tools/gdi/test_guidance.py
           python tools/test_surface_analysis.py
+          python tools/test_surface_contours.py
+          node tools/test_surface_cartography.cjs
           node tools/test_surface_layer.cjs
           python tools/test_winter_precip.py
           python tools/test_winter_precip_sources.py

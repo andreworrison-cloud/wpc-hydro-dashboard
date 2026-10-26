@@ -8,6 +8,7 @@ on:
     paths:
       - 'surface_analysis.py'
       - 'fetch_surface_analysis.py'
+      - 'surface_contours.py'
       - '.github/workflows/update_surface_analysis.yml'
 
 permissions:
@@ -32,7 +33,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install surface decoding dependencies
-        run: pip install numpy requests pillow pyproj rasterio eccodes
+        run: pip install numpy requests pillow pyproj rasterio eccodes scipy contourpy
       - name: Restore previous validated surface package
         run: |
           if git ls-remote --exit-code --heads origin surface-data >/dev/null; then
@@ -42,7 +43,9 @@ jobs:
             echo 'First surface publication; building a fresh validated package.'
           fi
       - name: Check science and source handling
-        run: python tools/test_surface_analysis.py
+        run: |
+          python tools/test_surface_analysis.py
+          python tools/test_surface_contours.py
       - name: Build hourly analyses and latest METAR values
         run: python -u fetch_surface_analysis.py --output surface_publish
       - name: Verify complete surface assets
