@@ -8,6 +8,8 @@ GDI TLE threshold-exceedance and persistence products have been removed from the
 
 The prior TLE calculation code and data branch remain available as research history, with no production caller. EGDI is a future addition pending the author's numerical routine; the older AI notebooks' GDI shading with moisture-convergence/divergence overlays is not a distinct calculated EGDI field.
 
+The current RAP **GDI + Dynamics** delivery adds optional, separately published moisture-convergence, upper-divergence, upper-humidity, PW, and low/upper-flow overlays. They match the selected analysis/change or F03 base cycle, valid time, and grid exactly. The existing cron-job.org RAP workflow produces them after GDI succeeds; a companion failure leaves GDI intact. See [the scientific and delivery definitions](docs/gdi_dynamics.md). HRRR/RRFS companions and joint ingredient persistence are subsequent deliveries.
+
 ## Initial delivery record (historical)
 
 The first delivery adds HRRR GDI, neighborhood coverage, sampled persistence, and longest sampled run under **GDI Thermodynamic Guidance**. All are opt-in. The legend selects forecast hour (F00–F06), threshold (30/40/50), and numerical labels. Existing dashboard geographic references remain above the field overlay.

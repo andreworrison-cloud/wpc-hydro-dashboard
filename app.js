@@ -881,7 +881,8 @@ window.QPEFFG=qpeFFG;
 const sportReview = new URLSearchParams(location.search).get('sportReview') === '1';
 const gdiGuidance = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/forecast-gdi/public/metadata.json', keys: ['hrrr0','hrrr1','hrrr2','hrrr3','hrrr4','hrrr5','hrrr6','rrfs0','rrfs1','rrfs2','rrfs3','rrfs4','rrfs5','rrfs6','blend0','blend1','blend2','blend3','blend4','blend5','blend6'], forecastGroups: {hrrr0:['hrrr0','hrrr1','hrrr2','hrrr3','hrrr4','hrrr5','hrrr6'],rrfs0:['rrfs0','rrfs1','rrfs2','rrfs3','rrfs4','rrfs5','rrfs6'],blend0:['blend0','blend1','blend2','blend3','blend4','blend5','blend6']}, requiredRecipe:'gdi_focused_v3', paneName: 'gdiForecast', onChange: () => updateLegends()});
 const gdiERO = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/day1-gdi/public/metadata.json', keys: ['hrrr_maximum','rrfs_maximum','blend_maximum'], requiredRecipe:'gdi_focused_v3', paneName: 'gdiERO', onChange: () => updateLegends()});
-const rapGDI = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rap-gdi/public/metadata.json', keys: ['analysis','change','forecast'], paneName: 'rapGDI', onChange: () => updateLegends()});
+const rapGDIDynamics = window.GDIDynamics.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rap-dynamics-gdi/public/metadata.json', onChange: () => updateLegends()});
+const rapGDI = window.GDINamedSuite.create({map, metadataURL: 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/rap-gdi/public/metadata.json', keys: ['analysis','change','forecast'], paneName: 'rapGDI', dynamics: rapGDIDynamics, onChange: () => updateLegends()});
 const sportDataRoot = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/data/sport-lis/public/';
 const sportSuite = window.SPoRTSuite.create({map,
     metadataURL: sportReview ? 'review/sport-suite/metadata.json' : sportDataRoot + 'percentile/metadata.json',
@@ -8280,7 +8281,7 @@ const dashboardSections = [
             {id: 'rap-mucape-diff', label: '&nbsp;&nbsp;&nbsp;&nbsp;3-Hour MUCAPE Change', layer: mucapeDiffLayer, kind: 'raster', nested: true},
             {id: 'rap-mucape-f03', label: '&nbsp;&nbsp;&nbsp;&nbsp;▶ <b>+3h Forecast:</b> MUCAPE', layer: mucapeF03Layer, kind: 'raster', nested: true},
 
-            {id: 'rap-gdi', label: 'GDI', layer: rapGDI.layers.analysis, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
+            {id: 'rap-gdi', label: 'GDI + Dynamics', layer: rapGDI.layers.analysis, kind: 'raster', exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
             {id: 'rap-gdi-change', label: 'GDI · 3-hour Change', layer: rapGDI.layers.change, kind: 'raster', nested: true, exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
             {id: 'rap-gdi-forecast', label: 'GDI · +3-hour Forecast', layer: rapGDI.layers.forecast, kind: 'raster', nested: true, exclusiveGroup: 'gdi', onActivate: enforceExclusiveGDISelection},
 
