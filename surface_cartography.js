@@ -68,7 +68,7 @@
   for(const [name,z] of [['surfaceContours',430],['surfaceContourLabels',574],['surfacePressureCenters',590]]){map.createPane(name);map.getPane(name).style.zIndex=z;map.getPane(name).style.pointerEvents='none';}
   const lines=L.layerGroup(),text=L.layerGroup();let signature='';
   function clear(){lines.clearLayers();text.clearLayers();if(map.hasLayer(lines))map.removeLayer(lines);if(map.hasLayer(text))map.removeLayer(text);signature='';}
-  function draw({data,key,generation,enabled,obstacles=[]}){
+  function draw({data,key,generation,enabled,obstacles=[],labelColor=()=>'#4c718b'}){
    if(!data||!enabled){clear();return;}
    const zoom=map.getZoom(),next=`${generation}/${key}/${key==='mslp'||zoom>=6?1:2}`;
    if(signature!==next){
@@ -91,7 +91,7 @@
    }
    for(const p of labels(data,key,zoom,project,size.x,size.y,blocked)){
     L.marker(map.containerPointToLatLng([p.x,p.y]),{pane:'surfaceContourLabels',interactive:false,keyboard:false,
-     icon:L.divIcon({className:'surface-contour-label',iconSize:[42,18],iconAnchor:[21,9],html:`<span style="transform:rotate(${p.angle.toFixed(1)}deg)">${esc(p.value)}</span>`})}).addTo(text);
+     icon:L.divIcon({className:'surface-contour-label',iconSize:[42,18],iconAnchor:[21,9],html:`<span style="--surface-contour-tint:${esc(labelColor(p.value))};transform:rotate(${p.angle.toFixed(1)}deg)">${esc(p.value)}</span>`})}).addTo(text);
    }
   }
   return {draw,clear};
