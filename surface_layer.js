@@ -321,7 +321,7 @@
             else if(e.target.matches('[data-surface-sample]')){sampler.setEnabled(e.target.checked);}
             else if(e.target.matches('[data-surface-contours]')){contoursEnabled=e.target.checked;sync();if(contoursEnabled&&active())loadSelected();}
         },true);
-        document.addEventListener('click',e=>{if(e.target.matches('[data-surface-unpin]'))sampler.release();},true);
+        document.addEventListener('click',e=>{if(e.target.matches('[data-surface-unpin]')){e.preventDefault();e.stopPropagation();sampler.release();}},true);
         const timer=setInterval(()=>{if(active())sync();},30000),poll=setInterval(refresh,300000);
         return {layers,wind,stations,barbs,refresh,legendHTML,setBorders,getMetadata:()=>metadata,
             stop:()=>{clearInterval(timer);clearInterval(poll);serial++;sampler.stop();cartography.clear();urls.forEach(u=>URL.revokeObjectURL(u));}};
