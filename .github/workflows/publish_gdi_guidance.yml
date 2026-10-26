@@ -1,7 +1,7 @@
 name: Publish GDI Model and Window Guidance
 on:
   workflow_dispatch:
-  # One existing hourly cron-job.org HRRR dispatch drives both independent suites.
+  # The existing hourly cron-job.org HRRR dispatch drives deterministic forecasts.
   workflow_run:
     workflows: ["Update HRRR-TLE Flash Flood Guidance"]
     types: [requested]
@@ -24,8 +24,3 @@ jobs:
     with:
       mode: forecast
       suite: forecast
-  merged-tle:
-    uses: ./.github/workflows/publish_gdi_product.yml
-    with:
-      mode: tle
-      suite: tle
