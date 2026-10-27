@@ -150,6 +150,7 @@ def contour_collection(key, values, transform, valid_time, centers=()):
         full = np.asarray(values)
         full_x = transform.c+(np.arange(full.shape[1])+.5)*transform.a
         full_y = transform.f+(np.arange(full.shape[0])+.5)*transform.e
+        regional = list(centers)
         centers = closed_centers(loops, full, full_x, full_y, 3857)
         represented = {i for center in centers for i in center['properties']['contour_ids']}
         # Discard degenerate/unsupported closed paths, never leave an orphan
@@ -157,6 +158,25 @@ def contour_collection(key, values, transform, valid_time, centers=()):
         features = [f for f in features if f['properties']['contour_id'] in represented
                     or not np.allclose(loops[f['properties']['contour_id']][1][0],
                                        loops[f['properties']['contour_id']][1][-1], atol=.01, rtol=0)]
+        # Native-grid regional candidates supplement (never replace) centers
+        # tied to displayed closed contours. Use geodesic duplicate distances.
+        from pyproj import Geod
+        geod = Geod(ellps='WGS84')
+        to_display = Transformer.from_crs(4326,3857,always_xy=True)
+        for candidate in regional:
+            lon,lat = candidate['geometry']['coordinates']
+            if any(c['properties']['symbol']==candidate['properties']['symbol'] and
+                   geod.inv(lon,lat,*c['geometry']['coordinates'])[2]<75000 for c in centers):
+                continue
+            # Read the same displayed scalar field used by color and sampling.
+            from scipy.ndimage import map_coordinates
+            px,py = to_display.transform(lon,lat)
+            col,row = ~transform*(px,py)
+            value = float(map_coordinates(full,[[row-.5],[col-.5]],order=1,
+                                          mode='constant',cval=np.nan)[0])
+            if np.isfinite(value):
+                candidate = {**candidate,'properties':{**candidate['properties'],'value':round(value,4)}}
+                centers.append(candidate)
     return {"type": "FeatureCollection", "schema": SCHEMA, "key": key, "valid_time": valid_time,
             "interval": interval, "pressure_smoothing_km": 18 if key == "mslp" else None,
             "features": features + list(centers)}
