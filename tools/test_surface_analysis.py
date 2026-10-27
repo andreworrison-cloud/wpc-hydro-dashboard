@@ -190,6 +190,7 @@ class SurfaceTests(unittest.TestCase):
             path=folder/'mslp.png';Image.new('RGBA',(3600,2024),(1,2,3,255)).save(path)
             pressure={'revision':science.PRESSURE_REVISION,'valid_time':science.iso(NOW),'generation':gen,
                 'native_spacing_km':3,'width':3600,'height':2024,'crs':'EPSG:3857','bounds':science.BOUNDS,
+                'objective_analysis':{'accepted_stations':1,'mode':'observation-adjusted'},
                 'products':{'mslp':{**science.PRODUCTS['mslp'],'path':str(path.relative_to(root)),'sha256':source.sha(path.read_bytes())}}}
             from surface_contours import contour_collection
             target,_=source.display_grid()

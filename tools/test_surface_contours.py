@@ -49,12 +49,29 @@ class CartographyTests(unittest.TestCase):
     def test_flat_field_open_ridge_and_domain_edge_do_not_create_centers(self):
         t,x,y=self.native_field()
         for a in [np.full(x.shape,1020.),1016+x/100000,1016+10*np.exp(-x*x/(2*150000**2)),
-                  1016+10*np.exp(-((x+1400000)**2+y*y)/(2*100000**2))]:
+                  1016+10*np.exp(-((x+1550000)**2+y*y)/(2*100000**2))]:
             self.assertEqual(pressure_centers(a,t,'EPSG:3857'),[])
 
-    def test_missing_ring_rejects_center(self):
-        t,x,y=self.native_field();a=1016+10*np.exp(-(x*x+y*y)/(2*150000**2));a[195:205,220:225]=np.nan
+    def test_missing_center_rejects_center(self):
+        t,x,y=self.native_field();a=1016+10*np.exp(-(x*x+y*y)/(2*150000**2));a[195:205,195:205]=np.nan
         self.assertEqual(pressure_centers(a,t,'EPSG:3857'),[])
+
+    def test_small_closed_systems_and_nearby_centers_survive(self):
+        t,x,y=self.native_field()
+        a=1017+9*np.exp(-((x+150000)**2+y*y)/(2*45000**2))+9*np.exp(-((x-150000)**2+y*y)/(2*45000**2))
+        found=pressure_centers(a,t,'EPSG:3857')
+        self.assertEqual([f['properties']['symbol'] for f in found],['H','H'])
+
+    def test_displayed_nested_closed_isobars_share_one_center(self):
+        t=self.display_grid();y,x=np.indices((400,600))
+        a=1017+17*np.exp(-((x-300)**2+(y-200)**2)/(2*22**2))
+        data=contour_collection('mslp',a,t,TIME)
+        centers=[f for f in data['features'] if f['properties']['kind']=='center']
+        loops=[f for f in data['features'] if f['properties']['kind']=='contour' and f['geometry']['coordinates'][0]==f['geometry']['coordinates'][-1]]
+        self.assertGreaterEqual(len(loops),4)
+        self.assertEqual(len(centers),1)
+        self.assertEqual(centers[0]['properties']['symbol'],'H')
+        self.assertAlmostEqual(centers[0]['properties']['value'],1034,places=1)
 
     @staticmethod
     def display_grid(width=600,height=400):

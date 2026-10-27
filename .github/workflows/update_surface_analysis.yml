@@ -9,6 +9,7 @@ on:
       - 'surface_analysis.py'
       - 'fetch_surface_analysis.py'
       - 'surface_contours.py'
+      - 'surface_pressure.py'
       - 'surface_sampling.py'
       - '.github/workflows/update_surface_analysis.yml'
 
@@ -47,6 +48,7 @@ jobs:
         run: |
           python tools/test_surface_analysis.py
           python tools/test_surface_contours.py
+          python tools/test_surface_pressure.py
           python tools/test_surface_sampling.py
       - name: Build hourly analyses and latest METAR values
         run: python -u fetch_surface_analysis.py --output surface_publish

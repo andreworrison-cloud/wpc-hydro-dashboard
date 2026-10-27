@@ -31,7 +31,8 @@ from surface_analysis import (REVISION, PRESSURE_REVISION, LEGACY_KEYS, V2_KEYS,
                               colorize, display_values, iso, parse_time, parse_metars,
                               derive_products)
 from surface_sampling import pack_grid, unpack_grid
-from surface_contours import smooth_masked, pressure_centers, contour_collection, validate_collection
+from surface_pressure import blend_pressure
+from surface_contours import smooth_masked, contour_collection, validate_collection
 
 UTC = timezone.utc
 METAR_URL = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
@@ -197,7 +198,7 @@ def build_analysis(s, root, now, previous):
     raise RuntimeError("; ".join(errors[-4:]) or "No non-regressing RTMA analysis available")
 
 
-def build_pressure_analysis(s, root, now, previous):
+def build_pressure_analysis(s, root, now, previous, points=()):
     """Native HRRR f00 MSLMA, never terrain PRES or an altimeter substitution."""
     errors=[]
     old=previous.get("pressure_analysis")
@@ -207,7 +208,7 @@ def build_pressure_analysis(s, root, now, previous):
             continue
         if old and parse_time(old["valid_time"])>cycle:
             break
-        if old and old["revision"]==PRESSURE_REVISION and parse_time(old["valid_time"])==cycle:
+        if old and old["revision"]==PRESSURE_REVISION and parse_time(old["valid_time"])==cycle and old.get("objective_analysis",{}).get("accepted_stations",0)>0:
             return old,"Retained current complete pressure analysis"
         name=f"hrrr.{cycle:%Y%m%d}/conus/hrrr.t{cycle:%H}z.wrfsfcf00.grib2"
         for provider,base in (("NOAA NODD/AWS","https://noaa-hrrr-bdp-pds.s3.amazonaws.com/"),
@@ -218,17 +219,20 @@ def build_pressure_analysis(s, root, now, previous):
                 start,end=inventory(r.text,cycle,{"mslp":PRESSURE_FIELD})["mslp"]
                 raw=fetch_range(s,url,start,end)
                 a,transform,crs,grid,shape=decode(raw,"mslp",cycle)
+                a,objective=blend_pressure(a,transform,crs,points,cycle,now)
                 a=smooth_masked(a,PRODUCTS["mslp"]["smoothing_km"]*1000/abs(transform.a))
-                centers=pressure_centers(a,transform,crs)
                 provenance=[{"key":"mslp","provider":provider,"url":url,"byte_range":[start,end],"sha256":sha(raw)}]
+                provenance.append({"key":"reported_mslp","provider":"AWC METAR","url":METAR_URL,
+                                   "sha256":sha(json.dumps(list(points),sort_keys=True).encode())})
                 gen=cycle.strftime("%Y%m%d%H")+"-"+sha((PRESSURE_REVISION+json.dumps(provenance)).encode())[:16]
                 target,height=display_grid()
-                products=write_products(root,root/"pressure"/gen,project_fields({"mslp":a},transform,crs,target,WIDTH,height),target,cycle,centers)
+                products=write_products(root,root/"pressure"/gen,project_fields({"mslp":a},transform,crs,target,WIDTH,height),target,cycle)
                 print("Decoded",cycle.isoformat(),"mslp",provider,flush=True)
                 return {"valid_time":iso(cycle),"revision":PRESSURE_REVISION,"generation":gen,
                         "native_spacing_km":3,"native_shape":shape,"grid_id":grid,
                         "width":WIDTH,"height":height,"bounds":BOUNDS,"crs":"EPSG:3857",
-                        "resampling":"bilinear scalar display","products":products,"sources":provenance},"Complete hourly pressure analysis"
+                        "resampling":"bilinear scalar display","products":products,"sources":provenance,
+                        "objective_analysis":objective},"Complete hourly pressure analysis"
             except Exception as e:
                 message=f"{cycle:%Y%m%d%H} {provider}: {e}"
                 errors.append(message);print(message,flush=True)
@@ -246,10 +250,15 @@ def validate_package(root, metadata=None):
               (a["width"], a["height"]) != (3600, 2024)):
         raise ValueError("Incomplete RTMA surface suite/grid")
     pressure=m.get("pressure_analysis")
-    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1","hrrr-mslp-v2",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
+    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1","hrrr-mslp-v2","hrrr-mslp-v3",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
                      pressure.get("native_spacing_km")!=3 or pressure.get("bounds")!=BOUNDS or
                      pressure.get("crs")!="EPSG:3857" or (pressure.get("width"),pressure.get("height"))!=(3600,2024)):
         raise ValueError("Invalid HRRR pressure analysis")
+    if pressure and pressure["revision"] == PRESSURE_REVISION:
+        o = pressure.get("objective_analysis", {})
+        count = o.get("accepted_stations")
+        if not isinstance(count, int) or not 0 <= count <= 10000 or o.get("mode") != ("observation-adjusted" if count else "HRRR background only"):
+            raise ValueError("Invalid pressure observation diagnostics")
     for obj in (m.get("analysis"), pressure, m.get("observations")):
         if not obj:
             continue
@@ -257,7 +266,7 @@ def validate_package(root, metadata=None):
         if "products" in obj:
             for key,p in obj["products"].items():
                 sample=p.get("sampling")
-                if obj["revision"] in (REVISION,PRESSURE_REVISION) and not sample:
+                if obj["revision"] in (REVISION,"hrrr-mslp-v3",PRESSURE_REVISION) and not sample:
                     raise ValueError("Missing numeric sample grid")
                 if sample:
                     prefix="pressure" if key=="mslp" else "generations"
@@ -266,7 +275,7 @@ def validate_package(root, metadata=None):
                         raise ValueError("Sample grid path/checksum mismatch")
                     unpack_grid((root/rel).read_bytes(),key,obj["valid_time"])
                 contour=p.get("contours")
-                if obj["revision"] in ("rtma-surface-v4","hrrr-mslp-v2",REVISION,PRESSURE_REVISION) and not contour:
+                if obj["revision"] in ("rtma-surface-v4","hrrr-mslp-v2","hrrr-mslp-v3",REVISION,PRESSURE_REVISION) and not contour:
                     raise ValueError("Missing surface contour asset")
                 if contour:
                     rel=Path(contour["path"])
@@ -307,12 +316,6 @@ def build(root, now, clock=None):
         m["last_attempt"]["analysis"] = {"ok": False, "message": str(e)}
         print("Retaining previous RTMA:", e, flush=True)
     try:
-        m["pressure_analysis"],message=build_pressure_analysis(s,root,now,previous)
-        m["last_attempt"]["pressure_analysis"]={"ok":True,"message":message}
-    except Exception as e:
-        m["last_attempt"]["pressure_analysis"]={"ok":False,"message":str(e)}
-        print("Retaining previous pressure analysis:",e,flush=True)
-    try:
         r = s.get(METAR_URL, timeout=(10, 45)); r.raise_for_status()
         raw = r.content
         text = (gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw).decode("utf-8-sig")
@@ -332,6 +335,15 @@ def build(root, now, clock=None):
     except Exception as e:
         m["last_attempt"]["observations"] = {"ok": False, "message": str(e)}
         print("Retaining previous station observations:", e, flush=True)
+    pressure_points = []
+    if m.get("observations"):
+        pressure_points = json.loads((root/m["observations"]["path"]).read_text())["points"]
+    try:
+        m["pressure_analysis"],message=build_pressure_analysis(s,root,clock() if clock else now,previous,pressure_points)
+        m["last_attempt"]["pressure_analysis"]={"ok":True,"message":message}
+    except Exception as e:
+        m["last_attempt"]["pressure_analysis"]={"ok":False,"message":str(e)}
+        print("Retaining previous pressure analysis:",e,flush=True)
     if not any(m.get(k) for k in ("analysis","pressure_analysis","observations")):
         raise RuntimeError("No validated surface products to publish")
     validate_package(root, m)
