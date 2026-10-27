@@ -76,8 +76,18 @@ class ChangeTests(unittest.TestCase):
         self.assertEqual(s.check_revision(session,{'url':'https://example.test','sha256':s.hashlib.sha256(b'content').hexdigest()}),'post_download_sha256')
     def test_numeric_cache_retains_recent_revisions_and_prunes_old(self):
         self.run_ingest();idx=self.root/'numeric-cache/index.json';entries=json.loads(idx.read_text());sha='a'*64
-        (self.root/'numeric-cache'/f'{sha}.tif').write_bytes(b'old');entries[sha]={'last_verified_at':s.iso(self.now-timedelta(days=22))};s.atomic_json(idx,entries)
+        (self.root/'numeric-cache'/f'{sha}.tif').write_bytes(b'old');entries[sha]={'last_verified_at':s.iso(self.now-timedelta(days=8))};s.atomic_json(idx,entries)
         self.run_ingest();self.assertNotIn(sha,json.loads(idx.read_text()));self.assertEqual(len(list((self.root/'numeric-cache').glob('*.tif'))),4)
+    def test_numeric_cache_byte_cap_prunes_oldest_noncurrent_versions(self):
+        self.run_ingest();cache=self.root/'numeric-cache';idx=cache/'index.json';entries=json.loads(idx.read_text())
+        for i,stamp in enumerate((self.now-timedelta(hours=3),self.now-timedelta(hours=2))):
+            content=(b'x' if i==0 else b'y')*40;sha=s.hashlib.sha256(content).hexdigest()
+            (cache/f'{sha}.tif').write_bytes(content);entries[sha]={'sha256':sha,'last_verified_at':s.iso(stamp)}
+        s.atomic_json(idx,entries)
+        with patch.object(s,'NUMERIC_CACHE_MAX_BYTES',100):
+            self.run_ingest(now=self.now+timedelta(hours=1))
+        kept=json.loads(idx.read_text())
+        self.assertLessEqual(sum((cache/f'{sha}.tif').stat().st_size for sha in kept),100)
 
 class NumericalTests(unittest.TestCase):
     def test_actual_signed_reprojection_preserves_drying_and_mask(self):
