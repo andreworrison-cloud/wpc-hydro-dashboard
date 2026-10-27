@@ -46,17 +46,17 @@
         const pressure=m.pressure_analysis;
         if(pressure){
             const p=pressure.products?.mslp;
-            if(pressure.revision==='hrrr-metar-mslp-v4'){
+            if(['hrrr-metar-mslp-v4','hrrr-metar-mslp-v5'].includes(pressure.revision)){
                 const o=pressure.objective_analysis;
                 if(!o||!Number.isInteger(o.accepted_stations)||o.accepted_stations<0||o.accepted_stations>10000||o.mode!==(o.accepted_stations?'observation-adjusted':'HRRR background only'))throw Error('Invalid pressure observation diagnostics');
             }
-            if(!['hrrr-mslp-v1','hrrr-mslp-v2','hrrr-mslp-v3','hrrr-metar-mslp-v4'].includes(pressure.revision) || pressure.native_spacing_km!==3 || pressure.crs!=='EPSG:3857' || pressure.width!==3600 || pressure.height!==2024 || JSON.stringify(pressure.bounds)!==JSON.stringify(bounds) || !Number.isFinite(Date.parse(pressure.valid_time)) || !/^\d{10}-[a-f0-9]{16}$/.test(pressure.generation))throw Error('Invalid pressure analysis grid/time');
+            if(!['hrrr-mslp-v1','hrrr-mslp-v2','hrrr-mslp-v3','hrrr-metar-mslp-v4','hrrr-metar-mslp-v5'].includes(pressure.revision) || pressure.native_spacing_km!==3 || pressure.crs!=='EPSG:3857' || pressure.width!==3600 || pressure.height!==2024 || JSON.stringify(pressure.bounds)!==JSON.stringify(bounds) || !Number.isFinite(Date.parse(pressure.valid_time)) || !/^\d{10}-[a-f0-9]{16}$/.test(pressure.generation))throw Error('Invalid pressure analysis grid/time');
             if(Object.keys(pressure.products||{}).join()!=='mslp' || p.path!==`pressure/${pressure.generation}/mslp.png` || !/^[a-f0-9]{64}$/.test(p.sha256) || p.unit!=='hPa' || p.parameter!=='MSLMA')throw Error('Invalid mean-sea-level pressure asset');
             if(!Array.isArray(p.stops)||p.stops.length!==p.colors?.length||p.stops.length<3||!p.stops.every((v,i)=>Number.isFinite(v)&&(!i||v>p.stops[i-1]))||!p.colors.every(c=>/^#[a-f0-9]{6}$/i.test(c))||!p.ticks?.every(Number.isFinite))throw Error('Invalid pressure palette');
             if(!Number.isInteger(p.applicable_pixels)||p.applicable_pixels<0||p.applicable_pixels>pressure.width*pressure.height)throw Error('Invalid pressure coverage');
-            if(['hrrr-mslp-v2','hrrr-mslp-v3','hrrr-metar-mslp-v4'].includes(pressure.revision)&&!p.contours)throw Error('Missing pressure isobars');
+            if(['hrrr-mslp-v2','hrrr-mslp-v3','hrrr-metar-mslp-v4','hrrr-metar-mslp-v5'].includes(pressure.revision)&&!p.contours)throw Error('Missing pressure isobars');
             carto.descriptor(p.contours,pressure,'mslp');
-            if(['hrrr-mslp-v3','hrrr-metar-mslp-v4'].includes(pressure.revision)&&!p.sampling)throw Error('Missing numeric pressure grid');
+            if(['hrrr-mslp-v3','hrrr-metar-mslp-v4','hrrr-metar-mslp-v5'].includes(pressure.revision)&&!p.sampling)throw Error('Missing numeric pressure grid');
             root.SurfaceSampling.descriptor(p.sampling,pressure,'mslp');
             if(previous?.pressure_analysis && Date.parse(pressure.valid_time)<Date.parse(previous.pressure_analysis.valid_time))throw Error('Regressing pressure time');
             if(previous?.pressure_analysis?.generation===pressure.generation && JSON.stringify(previous.pressure_analysis)!==JSON.stringify(pressure))throw Error('Immutable pressure generation changed');
@@ -294,7 +294,7 @@
                 if(loaded?.contourError)html+='<p class="surface-note">Contours unavailable · fill shown. Retrying on refresh.</p>';
                 else if(p?.contours&&loaded&&!loaded.contours)html+='<p class="surface-note">Loading contours…</p>';
                 else if(!p?.contours)html+='<p class="surface-note">New contours are updating.</p>';
-                if(key==='mslp'&&p?.smoothing_km){html+='<p class="surface-note">Smoothed analysis · H/L centers identify closed isobars.</p>';if(a?.objective_analysis)html+=`<p class="surface-note">${esc(a.objective_analysis.mode)} · ${a.objective_analysis.accepted_stations} METAR pressure reports used. Observations weighted by distance and time.</p>`;}
+                if(key==='mslp'&&p?.smoothing_km){html+='<p class="surface-note">Smoothed analysis · H/L centers identify closed isobars.</p>';if(a?.objective_analysis?.feature_filter)html+='<p class="surface-note">Small closed features require METAR support. Center values shown in decimal mb.</p>';if(a?.objective_analysis)html+=`<p class="surface-note">${esc(a.objective_analysis.mode)} · ${a.objective_analysis.accepted_stations} METAR pressure reports used. Observations weighted by distance and time.</p>`;}
                 html+=sampler.legend();
                 if(p?.note)html+=`<p class="surface-note">${esc(p.note)}</p>`;
                 html+=`<p><b>Analysis valid:</b> ${esc(utc(a?.valid_time))}<br>${key==='mslp'?(a?.objective_analysis?.accepted_stations?'HRRR + METAR · hourly objective analysis':'NOAA HRRR background · hourly · 3 km'):'NOAA RTMA · hourly · 2.5 km'}</p><p class="surface-note">The fill is a gridded analysis. Zooming adds no source resolution.</p>`;

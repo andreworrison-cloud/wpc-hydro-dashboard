@@ -68,8 +68,10 @@ wind speed and gust use knots; pressure uses hPa. All surface layers start off.
   Innermost closed loops locate the enclosed maximum/minimum; nested isobars
   share a center. Distinct nearby systems are not removed by a 300-km ring test
   or 500-km suppression. Open lines, flat fields and loops containing missing
-  grid data cannot certify a center. Symbol central values use the contour
-  sampling grid (every fourth display pixel) and are rounded to whole hPa.
+  grid data cannot certify a center. Centers use extrema of the full scalar display grid inside their contours.
+  Labels retain decimal hPa and must lie strictly on the correct side of their
+  enclosing isobar; weak centers are never rounded to the isobar value. Each
+  closed contour has an explicit link to its center (nested contours share it).
 - Pressure retains independent valid time, failure status and 150/240-minute
   aging/hiding. Source failure retains the previous validated field. METAR
   point labels remain actual reports with their own timestamps.
@@ -261,3 +263,19 @@ Heat index remains limited to the NWS preliminary averaged Steadman screen of at
 contour sidecars. Earlier HRRR-only generations remain readable during rollout.
 The hourly publisher retrieves METARs before constructing the pressure field;
 station display freshness remains independent.
+
+### Pressure feature filtering (v5)
+
+After the existing 18-km native-grid smoothing, closed 4-hPa components smaller
+than 120 km equivalent-circle diameter require observation support: one accepted
+METAR inside on the correct side of the contour by at least 0.2 hPa, plus two
+accepted exterior reports on the opposite side within 150 km. Otherwise that
+small anomaly is flattened to its enclosing isobar in the scalar field, followed
+by a 6-km smoothing pass. Thus shading, sampling and contours all share the
+filtered analysis. Open features, missing-data edges and larger remote systems
+retain HRRR support. This conservative display-scale choice can suppress real
+small systems in sparse networks; absence of reports is not proof of an artifact.
+Degenerate closed contours with less than 0.05 hPa enclosed relief are omitted.
+Centers retain four decimals in the asset and show one decimal (two if needed
+to avoid rounding to the enclosing isobar). No whole-millibar value is invented.
+Revision `hrrr-metar-mslp-v5` forces rebuilding; v4 packages remain readable.

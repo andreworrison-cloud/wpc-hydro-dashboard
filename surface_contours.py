@@ -36,13 +36,13 @@ def closed_centers(loops, values, x, y, crs):
     to_geo = Transformer.from_crs(crs, 4326, always_xy=True)
     dx, dy = x[1]-x[0], y[1]-y[0]
     candidates = []
-    for level, path in loops:
+    for loop_id, (level, path) in enumerate(loops):
         if len(path) < 4 or not np.allclose(path[0], path[-1], atol=.01, rtol=0):
             continue
         area = abs(np.sum(path[:-1, 0]*path[1:, 1]-path[1:, 0]*path[:-1, 1]))/2
-        candidates.append((area, level, path))
+        candidates.append((area, level, path, loop_id))
     chosen = []
-    for _, level, path in sorted(candidates, key=lambda c: c[0]):
+    for _, level, path, loop_id in sorted(candidates, key=lambda c: c[0]):
         cols = (path[:, 0]-x[0])/dx; rows = (path[:, 1]-y[0])/dy
         c0, c1 = max(0, int(np.floor(cols.min()))), min(len(x), int(np.ceil(cols.max()))+1)
         r0, r1 = max(0, int(np.floor(rows.min()))), min(len(y), int(np.ceil(rows.max()))+1)
@@ -57,23 +57,27 @@ def closed_centers(loops, values, x, y, crs):
         rim = inside & ~binary_erosion(inside)
         sign = 1 if np.median(sub[rim]-level) > 0 else -1
         kind = 'H' if sign == 1 else 'L'
-        if any(p['symbol'] == kind and r0 <= p['row'] < r1 and c0 <= p['col'] < c1
-               and inside[p['row']-r0, p['col']-c0] for p in chosen):
+        nested = [p for p in chosen if p['symbol'] == kind and r0 <= p['row'] < r1
+                  and c0 <= p['col'] < c1 and inside[p['row']-r0, p['col']-c0]]
+        if nested:
+            for p in nested:
+                p['contour_ids'].append(loop_id)
             continue
         extreme = np.max(sign*sub[inside])
         rr, cc = np.nonzero(inside & (sign*sub == extreme))
         near = np.argmin((rr-rr.mean())**2+(cc-cc.mean())**2)
         row, col = int(rr[near]+r0), int(cc[near]+c0)
         value = float(values[row, col])
-        if sign*(value-level) <= 0:
+        if sign*(value-level) < .05:
             continue
         lon, lat = to_geo.transform(x[col], y[row])
         if not (BOUNDS[0][0] < lat < BOUNDS[1][0] and BOUNDS[0][1] < lon < BOUNDS[1][1]):
             continue
         chosen.append({'symbol':kind, 'row':row, 'col':col, 'value':value,
-                       'lon':lon, 'lat':lat, 'prominence':sign*(value-level)})
+                       'lon':lon, 'lat':lat, 'prominence':sign*(value-level), 'level':float(level), 'contour_ids':[loop_id]})
     return [{'type':'Feature', 'properties':{'kind':'center', 'symbol':p['symbol'],
-             'value':round(p['value'], 1), 'unit':'hPa', 'prominence_hpa':round(p['prominence'], 2)},
+             'value':round(p['value'], 4), 'unit':'hPa', 'prominence_hpa':round(float(p['prominence']), 4),
+             'enclosing_isobar_hpa':p['level'], 'contour_ids':p['contour_ids']},
              'geometry':{'type':'Point', 'coordinates':[round(p['lon'], 5), round(p['lat'], 5)]}}
             for p in chosen]
 
@@ -140,10 +144,19 @@ def contour_collection(key, values, transform, valid_time, centers=()):
                     loops.append((value, points.copy()))
                 points = simplify(points)
                 lon, lat = to_geo.transform(points[:, 0], points[:, 1])
-                features.append({"type": "Feature", "properties": {"kind": "contour", "value": float(value), "unit": PRODUCTS[key]["unit"]},
+                features.append({"type": "Feature", "properties": {"kind": "contour", "value": float(value), "unit": PRODUCTS[key]["unit"], **({"contour_id":len(loops)-1} if key=="mslp" else {})},
                                  "geometry": {"type": "LineString", "coordinates": np.round(np.column_stack((lon, lat)), 5).tolist()}})
     if key == "mslp" and rows > 1 and cols > 1:
-        centers = closed_centers(loops, small, x, y, 3857)
+        full = np.asarray(values)
+        full_x = transform.c+(np.arange(full.shape[1])+.5)*transform.a
+        full_y = transform.f+(np.arange(full.shape[0])+.5)*transform.e
+        centers = closed_centers(loops, full, full_x, full_y, 3857)
+        represented = {i for center in centers for i in center['properties']['contour_ids']}
+        # Discard degenerate/unsupported closed paths, never leave an orphan
+        # closed isobar. Open paths remain valid without an in-domain center.
+        features = [f for f in features if f['properties']['contour_id'] in represented
+                    or not np.allclose(loops[f['properties']['contour_id']][1][0],
+                                       loops[f['properties']['contour_id']][1][-1], atol=.01, rtol=0)]
     return {"type": "FeatureCollection", "schema": SCHEMA, "key": key, "valid_time": valid_time,
             "interval": interval, "pressure_smoothing_km": 18 if key == "mslp" else None,
             "features": features + list(centers)}
@@ -163,6 +176,9 @@ def validate_collection(data, key, valid_time):
         if p.get("kind") == "center":
             if key != "mslp" or p.get("symbol") not in ("H", "L") or g.get("type") != "Point":
                 raise ValueError("Invalid pressure center")
+            level=p.get("enclosing_isobar_hpa")
+            if level is not None and ((p["symbol"]=="L" and p["value"]>=level) or (p["symbol"]=="H" and p["value"]<=level)):
+                raise ValueError("Pressure center contradicts enclosing isobar")
             coordinates = [g.get("coordinates")]
         else:
             if p.get("kind") != "contour" or g.get("type") != "LineString" or len(g.get("coordinates", [])) < 2:
