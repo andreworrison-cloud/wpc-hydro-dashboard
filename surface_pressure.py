@@ -74,3 +74,66 @@ def blend_pressure(background, transform, crs, points, cycle, now):
                    'mode': 'observation-adjusted' if stations else 'HRRR background only',
                    'stations': [{'id': s[4], 'time': s[5]} for s in stations]}
     return result, diagnostics
+
+
+def filter_small_pressure_features(values, transform, crs, points, accepted_ids,
+                                   max_diameter_km=120):
+    """Remove small closed components unless observations support the closure.
+
+    The test is on native-grid area (equivalent-circle diameter), not display
+    pixels. A retained small system needs an interior report on its side of the
+    isobar and two exterior reports on the other side within 150 km. Larger
+    systems retain HRRR support even where reports are sparse.
+    """
+    from scipy.ndimage import label, find_objects, binary_dilation
+    from surface_contours import smooth_masked
+    a = np.array(values, dtype='float32', copy=True)
+    valid = np.isfinite(a)
+    if not valid.any():
+        return a, {'removed_features': 0, 'supported_features': 0, 'max_diameter_km': max_diameter_km}
+    to_xy = Transformer.from_crs(4326, crs, always_xy=True)
+    obs = []
+    for p in points:
+        if p.get('id') not in accepted_ids or p.get('mslp') is None:
+            continue
+        x, y = to_xy.transform(p['lon'], p['lat'])
+        c, r = ~transform * (x, y)
+        r, c = int(np.floor(r)), int(np.floor(c))
+        if 0 <= r < a.shape[0] and 0 <= c < a.shape[1]:
+            obs.append((r, c, float(p['mslp']), x, y))
+    cell_area = abs(transform.a*transform.e)
+    max_area = np.pi*(max_diameter_km*1000/2)**2
+    unsafe = binary_dilation(~valid)
+    unsafe[[0,-1],:] = True; unsafe[:,[0,-1]] = True
+    removed = supported = 0
+    levels = np.arange(np.floor(np.nanmin(a)/4)*4, np.nanmax(a)+4, 4)
+    # Remove deepest small nested components first, then their enclosing rings.
+    for sign in (-1, 1):
+        for level in (levels if sign < 0 else levels[::-1]):
+            groups, count = label(valid & (sign*(a-level) > 0))
+            sizes = np.bincount(groups.ravel())
+            for gid, box in enumerate(find_objects(groups, max_label=count), 1):
+                if box is None or sizes[gid]*cell_area > max_area:
+                    continue
+                component = groups[box] == gid
+                if np.any(unsafe[box] & component):
+                    continue
+                interior = [o for o in obs if groups[o[0],o[1]] == gid and sign*(o[2]-level) >= .2]
+                confirmed = False
+                for o in interior:
+                    exterior = [q for q in obs if groups[q[0],q[1]] != gid
+                                and sign*(q[2]-level) <= -.2
+                                and (q[3]-o[3])**2+(q[4]-o[4])**2 <= 150000**2]
+                    if len(exterior) >= 2:
+                        confirmed = True; break
+                if confirmed:
+                    supported += 1
+                else:
+                    # Flatten only the unsupported anomaly to its enclosing
+                    # isobar. Apply a light final smooth to avoid a hard edge.
+                    a[box][component] = level
+                    removed += 1
+    if removed:
+        a = smooth_masked(a, 6000/abs(transform.a))
+    return a, {'removed_features':removed, 'supported_features':supported,
+               'max_diameter_km':max_diameter_km, 'support_rule':'one interior + two exterior METAR reports; 0.2 hPa contrast; 150 km'}

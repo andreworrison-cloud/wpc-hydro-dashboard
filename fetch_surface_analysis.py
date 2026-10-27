@@ -31,7 +31,7 @@ from surface_analysis import (REVISION, PRESSURE_REVISION, LEGACY_KEYS, V2_KEYS,
                               colorize, display_values, iso, parse_time, parse_metars,
                               derive_products)
 from surface_sampling import pack_grid, unpack_grid
-from surface_pressure import blend_pressure
+from surface_pressure import blend_pressure, filter_small_pressure_features
 from surface_contours import smooth_masked, contour_collection, validate_collection
 
 UTC = timezone.utc
@@ -221,6 +221,8 @@ def build_pressure_analysis(s, root, now, previous, points=()):
                 a,transform,crs,grid,shape=decode(raw,"mslp",cycle)
                 a,objective=blend_pressure(a,transform,crs,points,cycle,now)
                 a=smooth_masked(a,PRODUCTS["mslp"]["smoothing_km"]*1000/abs(transform.a))
+                a,objective["feature_filter"]=filter_small_pressure_features(a,transform,crs,points,
+                    {p["id"] for p in objective["stations"]})
                 provenance=[{"key":"mslp","provider":provider,"url":url,"byte_range":[start,end],"sha256":sha(raw)}]
                 provenance.append({"key":"reported_mslp","provider":"AWC METAR","url":METAR_URL,
                                    "sha256":sha(json.dumps(list(points),sort_keys=True).encode())})
@@ -250,7 +252,7 @@ def validate_package(root, metadata=None):
               (a["width"], a["height"]) != (3600, 2024)):
         raise ValueError("Incomplete RTMA surface suite/grid")
     pressure=m.get("pressure_analysis")
-    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1","hrrr-mslp-v2","hrrr-mslp-v3",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
+    if pressure and (pressure.get("revision") not in ("hrrr-mslp-v1","hrrr-mslp-v2","hrrr-mslp-v3","hrrr-metar-mslp-v4",PRESSURE_REVISION) or set(pressure.get("products",{}))!={"mslp"} or
                      pressure.get("native_spacing_km")!=3 or pressure.get("bounds")!=BOUNDS or
                      pressure.get("crs")!="EPSG:3857" or (pressure.get("width"),pressure.get("height"))!=(3600,2024)):
         raise ValueError("Invalid HRRR pressure analysis")
@@ -266,7 +268,7 @@ def validate_package(root, metadata=None):
         if "products" in obj:
             for key,p in obj["products"].items():
                 sample=p.get("sampling")
-                if obj["revision"] in (REVISION,"hrrr-mslp-v3",PRESSURE_REVISION) and not sample:
+                if obj["revision"] in (REVISION,"hrrr-mslp-v3","hrrr-metar-mslp-v4",PRESSURE_REVISION) and not sample:
                     raise ValueError("Missing numeric sample grid")
                 if sample:
                     prefix="pressure" if key=="mslp" else "generations"
@@ -275,7 +277,7 @@ def validate_package(root, metadata=None):
                         raise ValueError("Sample grid path/checksum mismatch")
                     unpack_grid((root/rel).read_bytes(),key,obj["valid_time"])
                 contour=p.get("contours")
-                if obj["revision"] in ("rtma-surface-v4","hrrr-mslp-v2","hrrr-mslp-v3",REVISION,PRESSURE_REVISION) and not contour:
+                if obj["revision"] in ("rtma-surface-v4","hrrr-mslp-v2","hrrr-mslp-v3","hrrr-metar-mslp-v4",REVISION,PRESSURE_REVISION) and not contour:
                     raise ValueError("Missing surface contour asset")
                 if contour:
                     rel=Path(contour["path"])

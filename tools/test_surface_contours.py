@@ -73,6 +73,17 @@ class CartographyTests(unittest.TestCase):
         self.assertEqual(centers[0]['properties']['symbol'],'H')
         self.assertAlmostEqual(centers[0]['properties']['value'],1034,places=1)
 
+    def test_weak_centers_keep_true_pressure_and_contour_identity(self):
+        t,x,y=self.native_field()
+        for sign in (-1,1):
+            a=1024-sign*.5+sign*.7*np.exp(-(x*x+y*y)/(2*60000**2))
+            found=pressure_centers(a,t,'EPSG:3857')
+            self.assertEqual(len(found),1)
+            p=found[0]['properties']
+            self.assertAlmostEqual(p['value'],1024+sign*.2,places=2)
+            self.assertEqual(p['enclosing_isobar_hpa'],1024)
+            self.assertTrue(p['contour_ids'])
+
     @staticmethod
     def display_grid(width=600,height=400):
         p=Transformer.from_crs(4326,3857,always_xy=True)

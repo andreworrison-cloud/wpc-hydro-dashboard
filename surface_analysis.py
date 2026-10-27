@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 REVISION = "rtma-surface-v5"
-PRESSURE_REVISION = "hrrr-metar-mslp-v4"
+PRESSURE_REVISION = "hrrr-metar-mslp-v5"
 LEGACY_KEYS = ("temperature", "dewpoint", "wind_speed")
 V2_KEYS = (*LEGACY_KEYS, "wind_direction", "wind_gust", "surface_pressure", "relative_humidity", "heat_index", "wind_chill")
 BOUNDS = [[24.0, -125.0], [50.0, -66.0]]

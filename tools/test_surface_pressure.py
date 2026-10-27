@@ -7,7 +7,7 @@ import numpy as np
 from pyproj import Transformer
 from rasterio.transform import Affine
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from surface_pressure import blend_pressure
+from surface_pressure import blend_pressure, filter_small_pressure_features
 
 
 class PressureTests(unittest.TestCase):
@@ -59,6 +59,34 @@ class PressureTests(unittest.TestCase):
         a,d=self.run_blend([self.point(1028)])
         self.assertLessEqual(d['max_correction_hpa'],6)
         self.assertTrue(np.isnan(a[10:20,10:20]).all())
+
+    def test_small_unsupported_closed_low_is_removed_from_scalar_field(self):
+        y,x=np.indices(self.a.shape)
+        a=1017-2*np.exp(-((x-100)**2+(y-100)**2)/(2*4**2))
+        filtered,d=filter_small_pressure_features(a,self.t,3857,[],set())
+        self.assertGreaterEqual(filtered.min(),1016-.001)
+        self.assertGreater(d['removed_features'],0)
+
+    def test_small_closed_low_supported_by_interior_and_surrounding_reports_survives(self):
+        y,x=np.indices(self.a.shape)
+        a=1017-2*np.exp(-((x-100)**2+(y-100)**2)/(2*4**2))
+        to_geo=Transformer.from_crs(3857,4326,always_xy=True)
+        points=[]
+        for i,(r,c,v) in enumerate([(100,100,1015),(100,120,1017),(120,100,1017)]):
+            lon,lat=to_geo.transform(*(self.t*(c+.5,r+.5)))
+            points.append({'id':str(i),'lon':lon,'lat':lat,'mslp':v})
+        filtered,d=filter_small_pressure_features(a,self.t,3857,points,{'0','1','2'})
+        self.assertLess(filtered.min(),1015.1)
+        self.assertGreater(d['supported_features'],0)
+        rejected,_=filter_small_pressure_features(a,self.t,3857,points,set())
+        self.assertGreaterEqual(rejected.min(),1016-.001)
+
+    def test_large_remote_system_and_missing_mask_are_preserved(self):
+        y,x=np.indices(self.a.shape)
+        a=1017-2*np.exp(-((x-100)**2+(y-100)**2)/(2*30**2));a[:5,:5]=np.nan
+        filtered,d=filter_small_pressure_features(a,self.t,3857,[],set())
+        np.testing.assert_allclose(filtered,a,atol=.001,equal_nan=True)
+        self.assertEqual(d['removed_features'],0)
 
 
 if __name__=='__main__': unittest.main()

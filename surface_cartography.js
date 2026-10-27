@@ -17,6 +17,7 @@
    let coords;
    if(p.kind==='center'){
     if(key!=='mslp'||!['H','L'].includes(p.symbol)||g.type!=='Point')throw Error('Invalid pressure center');
+    if(p.enclosing_isobar_hpa!==undefined&&(!Number.isFinite(p.enclosing_isobar_hpa)||(p.symbol==='L'?p.value>=p.enclosing_isobar_hpa:p.value<=p.enclosing_isobar_hpa)))throw Error('Pressure center contradicts enclosing isobar');
     coords=[g.coordinates];
    }else{
     if(p.kind!=='contour'||g.type!=='LineString'||!Array.isArray(g.coordinates)||g.coordinates.length<2)throw Error('Invalid contour geometry');
@@ -29,6 +30,7 @@
   if(vertices>250000)throw Error('Oversized surface contours');
   return data;
  }
+ function centerValue(p){const v=p.value,level=p.enclosing_isobar_hpa;return Number.isFinite(level)&&Number(v.toFixed(1))===level?v.toFixed(2):v.toFixed(1);}
  function visibleLevel(value,key,zoom){return key==='mslp'||key==='temperature'&&value===32||zoom>=6||Math.abs(value/(intervals[key]*2)-Math.round(value/(intervals[key]*2)))<1e-6;}
  function overlap(a,b){return Math.abs(a.x-b.x)<(a.w+b.w)/2&&Math.abs(a.y-b.y)<(a.h+b.h)/2;}
  function clip(a,b,width,height){
@@ -86,8 +88,8 @@
     if(p.x<25||p.y<35||p.x>size.x-25||p.y>size.y-35)continue;
     const value=center.properties.value,symbol=center.properties.symbol;
     L.marker([c[1],c[0]],{pane:'surfacePressureCenters',interactive:false,keyboard:false,
-     icon:L.divIcon({className:`surface-pressure-center surface-pressure-${symbol.toLowerCase()}`,iconSize:[66,58],iconAnchor:[33,29],html:`<b>${symbol}</b><span>${Math.round(value)}</span>`}),
-     title:`Automated ${symbol==='H'?'high':'low'} · ${value.toFixed(1)} hPa`}).addTo(text);blocked.push(box);
+     icon:L.divIcon({className:`surface-pressure-center surface-pressure-${symbol.toLowerCase()}`,iconSize:[66,58],iconAnchor:[33,29],html:`<b>${symbol}</b><span>${centerValue(center.properties)}</span>`}),
+     title:`Automated ${symbol==='H'?'high':'low'} · ${centerValue(center.properties)} hPa`}).addTo(text);blocked.push(box);
    }
    for(const p of labels(data,key,zoom,project,size.x,size.y,blocked)){
     L.marker(map.containerPointToLatLng([p.x,p.y]),{pane:'surfaceContourLabels',interactive:false,keyboard:false,
@@ -96,5 +98,5 @@
   }
   return {draw,clear};
  }
- root.SurfaceCartography={intervals,descriptor,validate,visibleLevel,overlap,clip,labels,create};
+ root.SurfaceCartography={centerValue,intervals,descriptor,validate,visibleLevel,overlap,clip,labels,create};
 })(typeof window==='undefined'?globalThis:window);

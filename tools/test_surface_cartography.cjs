@@ -24,3 +24,7 @@ const clipped=C.clip({x:-100,y:300},{x:1300,y:300},1200,600);assert.equal(clippe
 assert.equal(C.clip({x:-100,y:-100},{x:1300,y:-100},1200,600),null);
 assert.equal(C.labels({...data,features:[]},'mslp',4,project,1200,600).length,0);
 console.log('Surface cartography checks passed: generation/time, 4-mb levels, masks/coordinates, viewport clipping, zoom labels and collision spacing.');
+
+assert.equal(C.centerValue({value:1023.8,enclosing_isobar_hpa:1024}),'1023.8');
+assert.equal(C.centerValue({value:1024.2,enclosing_isobar_hpa:1024}),'1024.2');
+assert.equal(C.centerValue({value:1023.97,enclosing_isobar_hpa:1024}),'1023.97');
