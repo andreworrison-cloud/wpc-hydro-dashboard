@@ -64,7 +64,7 @@ class PressureTests(unittest.TestCase):
         y,x=np.indices(self.a.shape)
         a=1017-2*np.exp(-((x-100)**2+(y-100)**2)/(2*4**2))
         filtered,d=filter_small_pressure_features(a,self.t,3857,[],set())
-        self.assertGreaterEqual(filtered.min(),1016-.001)
+        self.assertGreater(filtered.min(),1016.01)
         self.assertGreater(d['removed_features'],0)
 
     def test_small_closed_low_supported_by_interior_and_surrounding_reports_survives(self):
