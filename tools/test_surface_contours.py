@@ -117,6 +117,24 @@ class CartographyTests(unittest.TestCase):
         self.assertIn(32,[f['properties']['value'] for f in data['features']])
         validate_collection(data,'temperature',TIME)
 
+    def test_regional_candidates_supplement_and_deduplicate_closed_centers(self):
+        t=self.display_grid();y,x=np.indices((400,600))
+        a=1017+6*np.exp(-((x-300)**2+(y-200)**2)/(2*22**2))
+        original=contour_collection('mslp',a,t,TIME)
+        center=next(f for f in original['features'] if f['properties']['kind']=='center')
+        extra=copy.deepcopy(center)
+        extra['properties'].pop('enclosing_isobar_hpa')
+        extra['properties']['contour_ids']=[]
+        extra['properties']['detection']='regional-metar-supported'
+        merged=contour_collection('mslp',a,t,TIME,[extra])
+        self.assertEqual(sum(f['properties']['kind']=='center' for f in merged['features']),1)
+        shallow=1017+2*np.exp(-((x-300)**2+(y-200)**2)/(2*22**2))
+        merged=contour_collection('mslp',shallow,t,TIME,[extra])
+        centers=[f for f in merged['features'] if f['properties']['kind']=='center']
+        self.assertEqual(len(centers),1)
+        self.assertAlmostEqual(centers[0]['properties']['value'],1019,places=2)
+        validate_collection(merged,'mslp',TIME)
+
     def test_wrong_times_units_coordinates_and_intervals_are_rejected(self):
         a=np.broadcast_to(np.linspace(1000,1040,600),(400,600));data=contour_collection('mslp',a,self.display_grid(),TIME)
         for change in ['time','interval','unit','coordinate','level']:

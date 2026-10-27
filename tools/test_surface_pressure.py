@@ -7,7 +7,7 @@ import numpy as np
 from pyproj import Transformer
 from rasterio.transform import Affine
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from surface_pressure import blend_pressure, filter_small_pressure_features
+from surface_pressure import blend_pressure, filter_small_pressure_features, regional_pressure_centers
 
 
 class PressureTests(unittest.TestCase):
@@ -87,6 +87,48 @@ class PressureTests(unittest.TestCase):
         filtered,d=filter_small_pressure_features(a,self.t,3857,[],set())
         np.testing.assert_allclose(filtered,a,atol=.001,equal_nan=True)
         self.assertEqual(d['removed_features'],0)
+
+
+class RegionalCenterTests(unittest.TestCase):
+    def setUp(self):
+        x,y=Transformer.from_crs(4326,3857,always_xy=True).transform(-96,38)
+        self.t=Affine(5000,0,x-502500,0,-5000,y+502500)
+        r,c=np.indices((201,201)); self.r=r; self.c=c
+        self.bump=np.exp(-((r-100)**2+(c-100)**2)/(2*20**2))
+        to_geo=Transformer.from_crs(3857,4326,always_xy=True)
+        self.obs=[]
+        for n,(dr,dc) in enumerate([(0,0),(35,35),(-35,35),(-35,-35),(35,-35)]):
+            lon,lat=to_geo.transform(*(self.t*(100+dc+.5,100+dr+.5)))
+            self.obs.append(dict(id=str(n),time='2026-10-27T00:00:00Z',lon=lon,lat=lat,
+                                 mslp=1021+2*self.bump[100+dr,100+dc]))
+
+    def detect(self,a,obs=None,accepted=None):
+        obs=self.obs if obs is None else obs
+        return regional_pressure_centers(a,self.t,3857,obs,obs if accepted is None else accepted)
+
+    def test_sub_interval_high_low_with_observation_support(self):
+        for sign in (1,-1):
+            obs=[{**p,'mslp':1021+sign*(p['mslp']-1021)} for p in self.obs]
+            found=self.detect(1021+sign*2*self.bump,obs)
+            self.assertEqual(len(found),1)
+            self.assertEqual(found[0]['properties']['symbol'],'H' if sign>0 else 'L')
+            self.assertAlmostEqual(found[0]['properties']['value'],1021+sign*2,places=3)
+            self.assertNotIn('enclosing_isobar_hpa',found[0]['properties'])
+
+    def test_no_support_or_stale_report_does_not_certify_regional_center(self):
+        a=1021+2*self.bump
+        self.assertEqual(self.detect(a,accepted=[]),[])
+        stale=[{**p,'time':'2026-10-26T23:00:00Z'} for p in self.obs]
+        self.assertEqual(self.detect(a,accepted=stale),[])
+        self.assertEqual(self.detect(a,self.obs[:3]),[])
+        self.assertEqual(self.detect(a,[{**p,'mslp':1021} for p in self.obs]),[])
+
+    def test_ridge_gradient_noise_and_missing_center_rejected(self):
+        for a in [1021+self.c*.01,1021+2*np.exp(-(self.c-100)**2/(2*20**2)),
+                  1021+.2*self.bump,np.full((201,201),1021.)]:
+            self.assertEqual(self.detect(a),[])
+        a=1021+2*self.bump;a[95:105,95:105]=np.nan
+        self.assertEqual(self.detect(a),[])
 
 
 if __name__=='__main__': unittest.main()

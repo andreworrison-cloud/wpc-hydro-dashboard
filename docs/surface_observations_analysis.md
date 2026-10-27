@@ -283,3 +283,27 @@ Revision `hrrr-metar-mslp-v5` forces rebuilding; v4 packages remain readable.
 Revision v6 flattens rejected anomalies 0.02 hPa past their enclosing contour,
 before final smoothing, to avoid contour fragments on threshold-valued plateaus.
 This small margin is below the 0.1-hPa sampling precision.
+
+
+### Regional pressure centers (v7)
+
+The 4-hPa contour interval no longer determines whether an observation-supported
+regional extremum can receive a symbol. Existing closed-contour centers remain.
+Supplemental centers are detected in the final smoothed, feature-filtered native
+analysis using a 120-km local-extremum neighborhood. Candidates require at least
+0.5 hPa relief in all 16 sampled directions on either a 150- or 250-km ring,
+with finite data at the center neighborhood and sampled ring. A bounded
+0.5-hPa excursion component must also separate it from any stronger same-sign
+extremum, avoiding multiple labels on ripples within one broad system. A QC-accepted
+METAR within 100 km must agree within 2 hPa; reports 120–350 km away must show
+at least 0.5 hPa contrast in the appropriate direction in three quadrants.
+Exact station ID/time pairs from the blend QC are used. Open ridges, troughs,
+weak ripples, missing centers, and uncorroborated candidates fail these checks.
+
+Supplemental symbols within 75 km of an existing same-sign symbol are merged;
+closed-contour centers are never removed by this deduplication. Labels sample
+the displayed scalar analysis at the candidate location. Supplemental features
+carry detection and station-support metadata and do not claim an enclosing
+4-hPa isobar. These heuristic thresholds are conservative: sparse reports or
+elongated systems may still prevent a supplemental symbol. The pressure blend,
+color fill, 4-hPa contour interval and small-feature filter are unchanged.

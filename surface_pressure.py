@@ -137,3 +137,85 @@ def filter_small_pressure_features(values, transform, crs, points, accepted_ids,
         a = smooth_masked(a, 6000/abs(transform.a))
     return a, {'removed_features':removed, 'supported_features':supported,
                'max_diameter_km':max_diameter_km, 'support_rule':'one interior + two exterior METAR reports; 0.2 hPa contrast; 150 km'}
+
+
+def regional_pressure_centers(values, transform, crs, points, accepted_stations):
+    """Observation-supported extrema independent of the plotted 4-hPa levels.
+
+    Candidates are local extrema over 120 km. Require at least 0.5 hPa relief
+    in every direction on a 150 or 250 km ring, a report within 100 km, and
+    lower (high) / higher (low) reports in at least three surrounding quadrants.
+    This deliberately excludes open ridges/troughs and unsupported ripples.
+    Distances use the native model projection, not Web Mercator pixels.
+    """
+    from scipy.ndimage import maximum_filter, label, find_objects
+    a = np.asarray(values, dtype='float32')
+    valid = np.isfinite(a)
+    if not valid.any():
+        return []
+    to_xy = Transformer.from_crs(4326, crs, always_xy=True)
+    to_geo = Transformer.from_crs(crs, 4326, always_xy=True)
+    accepted = {(p['id'], p['time']) for p in accepted_stations}
+    obs = []
+    for p in points:
+        if (p.get('id'), p.get('time')) in accepted and p.get('mslp') is not None:
+            ox, oy = to_xy.transform(p['lon'], p['lat'])
+            obs.append((ox, oy, float(p['mslp']), p['id']))
+    if not obs:
+        return []
+    xy = np.array([o[:2] for o in obs]); pressure = np.array([o[2] for o in obs])
+    size = (2*int(np.ceil(60000/abs(transform.e)))+1,
+            2*int(np.ceil(60000/abs(transform.a)))+1)
+    angles = np.arange(16)*2*np.pi/16
+    result = []
+    from surface_analysis import BOUNDS
+    for sign, symbol in ((1, 'H'), (-1, 'L')):
+        signed = np.where(valid, sign*a, -np.inf)
+        peaks = valid & ~maximum_filter(~valid, size=size, mode='constant', cval=True) & (signed == maximum_filter(signed, size=size, mode='constant', cval=np.inf))
+        groups, count = label(peaks)
+        for gid, box in enumerate(find_objects(groups, max_label=count), 1):
+            rr, cc = np.nonzero(groups[box] == gid)
+            near = np.argmin((rr-rr.mean())**2+(cc-cc.mean())**2)
+            r, c = int(rr[near]+box[0].start), int(cc[near]+box[1].start)
+            value = float(a[r,c]); x,y = transform*(c+.5,r+.5)
+            lon,lat = to_geo.transform(x,y)
+            if not (BOUNDS[0][1]<lon<BOUNDS[1][1] and BOUNDS[0][0]<lat<BOUNDS[1][0]):
+                continue
+            relief = 0
+            for radius in (150000,250000):
+                ring = map_coordinates(a, [r+radius*np.sin(angles)/transform.e,
+                                           c+radius*np.cos(angles)/transform.a],
+                                       order=1, mode='constant', cval=np.nan)
+                if np.isfinite(ring).all():
+                    relief = max(relief, float(np.min(sign*(value-ring))))
+            if relief < .5:
+                continue
+            # Require 0.5 hPa topographic separation from a stronger same-sign
+            # extremum; a distant ring alone can certify several ripples within
+            # one broad system. Bound the flood fill to a 350-km neighborhood.
+            ry,rx=int(np.ceil(350000/abs(transform.e))),int(np.ceil(350000/abs(transform.a)))
+            r0,r1=max(0,r-ry),min(a.shape[0],r+ry+1)
+            c0,c1=max(0,c-rx),min(a.shape[1],c+rx+1)
+            sub=a[r0:r1,c0:c1]
+            basins,_=label(np.isfinite(sub)&(sign*(sub-value)>-.5))
+            basin=basins==basins[r-r0,c-c0]
+            if (basin[0].any() or basin[-1].any() or basin[:,0].any() or basin[:,-1].any()
+                    or np.max(sign*sub[basin])>sign*value+.01):
+                continue
+            delta = xy-[x,y]; distances = np.linalg.norm(delta,axis=1)
+            core = np.flatnonzero((distances<=100000)&(np.abs(pressure-value)<=2))
+            if not len(core):
+                continue
+            # Use the nearest confirming report; station contrasts support the
+            # circulation independently of the background's absolute bias.
+            inner = core[np.argmin(distances[core])]
+            outer = np.flatnonzero((distances>=120000)&(distances<=350000)
+                                  &(sign*(pressure[inner]-pressure)>=.5))
+            quadrants = set(((np.arctan2(delta[outer,1],delta[outer,0])+2*np.pi)%(2*np.pi)/(np.pi/2)).astype(int))
+            if len(quadrants)<3:
+                continue
+            result.append({'type':'Feature','properties':{'kind':'center','symbol':symbol,
+                'value':round(value,4),'unit':'hPa','prominence_hpa':round(relief,4),
+                'detection':'regional-metar-supported','support_station_ids':[obs[inner][3]]+[obs[i][3] for i in outer],
+                'contour_ids':[]},'geometry':{'type':'Point','coordinates':[round(lon,5),round(lat,5)]}})
+    return result
