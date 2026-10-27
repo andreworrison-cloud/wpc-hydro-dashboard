@@ -27,11 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - run: python -m pip install 'numpy>=2,<3' 'rasterio>=1.4,<2' requests pillow
@@ -82,14 +82,27 @@ jobs:
           m.update(state='retained' if f['usable'] else 'expired' if m['active'] else 'unavailable',usable=f['usable'],freshness=f,last_attempt={'at':iso(now),'ok':False,'error':'Numeric history restore failed; retained prior generation'})
           atomic_json(p,m)
           PYTHON
+      - name: Decide whether H7 numeric backup changed
+        id: numeric_backup
+        if: steps.numeric_restore.outcome == 'success' && steps.change.outcome == 'success'
+        shell: bash
+        run: |
+          python - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          p=Path('diagnostics/sport/public/change/metadata.json')
+          m=json.loads(p.read_text()) if p.exists() else {}
+          print('upload=' + ('true' if m.get('state') == 'updated' else 'false'))
+          PYTHON
+
       - name: Retain secondary H7 numeric artifact backup
         id: numeric_save
-        if: steps.numeric_restore.outcome == 'success' && hashFiles('diagnostics/sport/public/change/numeric-cache/index.json') != ''
-        uses: actions/upload-artifact@v4
+        if: steps.numeric_backup.outputs.upload == 'true' && hashFiles('diagnostics/sport/public/change/numeric-cache/index.json') != ''
+        uses: actions/upload-artifact@v7
         with:
           name: sport-h7-numeric-${{ github.run_id }}-${{ github.run_attempt }}
           path: diagnostics/sport/public/change/numeric-cache/
-          retention-days: 30
+          retention-days: 14
           if-no-files-found: error
       - name: Atomically publish all suites and status
         if: always() && steps.percentile.outcome != 'skipped' && steps.rsm.outcome != 'skipped' && steps.numeric_save.outcome != 'failure'
@@ -115,10 +128,15 @@ jobs:
               raise SystemExit('SPoRT ingest failed and no usable retained product remains for: '+', '.join(unusable))
           print('::warning::SPoRT upstream ingest was incomplete; all dashboard suites retained validated usable products.')
           PYTHON
-      - name: Preserve numerical provenance and product status
+      - name: Preserve lightweight provenance and product status
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sport-provenance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: diagnostics/sport
+          path: |
+            diagnostics/sport/SPORT_LIS_DATA_BRANCH.json
+            diagnostics/sport/public/**/metadata.json
+            diagnostics/sport/public/**/generations/**/*.png
           retention-days: 14
+          if-no-files-found: warn
+          compression-level: 9
