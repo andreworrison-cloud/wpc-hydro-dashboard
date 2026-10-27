@@ -15,7 +15,8 @@ def exercise(model, failure, order=('aws','nomads'), dynamics=False):
             if dynamics:
                 variables += [(v,f'{lev} mb') for v in ('TMP','SPFH' if p==primary else 'RH') for lev in (1000,900,400,300,200)]
                 variables += [(v,f'{lev} mb') for v in ('UGRD','VGRD') for lev in (1000,950,900,850,700,400,300,200)]
-                variables += [('PWAT','entire atmosphere (considered as a single layer)')]
+                column='30-0 mb above ground' if model=='rrfs' and '.2dfld.' not in url else 'entire atmosphere (considered as a single layer)'
+                variables += [('PWAT',column)]
             if model!='rrfs' or '.2dfld.' in url:variables+=[('PRES','surface')]
             variables+=[('END','surface')]
             offset=100 if p==primary else 1000
@@ -38,11 +39,13 @@ def exercise(model, failure, order=('aws','nomads'), dynamics=False):
             assert meta['start']>=1000
             if task[1] in ('SPFH','RH'):assert meta['variable']=='RH'
             if model=='rrfs' and task[1]=='PRES':assert '.2dfld.' in meta['url']
+            if model=='rrfs' and task[1]=='PWAT':assert '.2dfld.' in meta['url'] and meta['level'].startswith('entire atmosphere')
         assert any(p==backup for p,_,_,_ in requests)
 
 for model in ('hrrr','rap','rrfs'):
     for failure in ('index','range','decode'):
         for order in (('aws','nomads'),('nomads','aws')):exercise(model,failure,order)
-for failure in ('index','range','decode'):
-    for order in (('aws','nomads'),('nomads','aws')):exercise('rap',failure,order,dynamics=True)
-print('24 failover cases pass: all GDI models and RAP dynamics, both directions, inventory/range/decoding failures, independent offsets and humidity representation')
+for model in ('rap','hrrr','rrfs'):
+    for failure in ('index','range','decode'):
+        for order in (('aws','nomads'),('nomads','aws')):exercise(model,failure,order,dynamics=True)
+print('36 failover cases pass: all GDI models and companion sources, both directions, inventory/range/decoding failures, independent offsets, total-column PWAT and humidity representation')

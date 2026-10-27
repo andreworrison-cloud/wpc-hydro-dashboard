@@ -22,6 +22,7 @@ on:
       - '.github/workflows/publish_gdi.yml'
       - '.github/workflows/publish_rap_gdi.yml'
       - '.github/workflows/publish_gdi_guidance.yml'
+      - '.github/workflows/publish_gdi_product.yml'
       - '.github/workflows/publish_qpe_ffg.yml'
       - '.github/workflows/update_rap.yml'
       - '.github/workflows/update_cam.yml'
@@ -74,6 +75,7 @@ on:
       - '.github/workflows/publish_gdi.yml'
       - '.github/workflows/publish_rap_gdi.yml'
       - '.github/workflows/publish_gdi_guidance.yml'
+      - '.github/workflows/publish_gdi_product.yml'
       - '.github/workflows/publish_qpe_ffg.yml'
       - '.github/workflows/update_rap.yml'
       - '.github/workflows/update_cam.yml'
@@ -150,9 +152,10 @@ jobs:
 
       - name: Check GDI valid-time alignment and aggregation
         run: |
-          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy
+          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy matplotlib
           python tools/gdi/test_guidance.py
           python tools/gdi/test_dynamics.py
+          python tools/gdi/test_forecast_dynamics.py
           python tools/test_surface_analysis.py
           python tools/test_surface_contours.py
           python tools/test_surface_sampling.py

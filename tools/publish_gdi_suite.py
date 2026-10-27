@@ -6,12 +6,21 @@ import publish_gdi as publisher
 sys.path.insert(0,str(Path(__file__).parent/'gdi'))
 from guidance_contract import verify_spec, verify_unavailable
 SUITE=os.environ.get('GDI_SUITE','rap')
-if SUITE not in ('rap','rap-dynamics','guidance','ero','forecast','tle','day1'):raise ValueError('Unknown GDI suite')
+if SUITE not in ('rap','rap-dynamics','forecast-dynamics','guidance','ero','forecast','tle','day1'):raise ValueError('Unknown GDI suite')
 publisher.BRANCH='data/'+SUITE+'-gdi';publisher.MARKER='GDI_SUITE_DATA_BRANCH.json';publisher.IDENTITY={'schema_version':1,'purpose':SUITE+' GDI dashboard suite'}
 def verify(target):
- if SUITE=='rap-dynamics':
+ if SUITE in ('rap-dynamics','forecast-dynamics'):
   from dynamics_contract import verify_publication
-  verify_publication(target/'public');return
+  if SUITE=='rap-dynamics':verify_publication(target/'public');return
+  from forecast_dynamics_contract import verify_metadata
+  root=target/'public';m=json.loads((root/'metadata.json').read_text());verify_metadata(m)
+  for asset in m['assets'].values():
+   p=root/asset['path']
+   if publisher.sha(p)!=asset['sha256']:raise ValueError('Dynamics checksum mismatch')
+   with Image.open(p) as im:
+    if im.size!=(2400,1360) or im.mode!='RGBA':raise ValueError('Dynamics image size/mode mismatch')
+    im.verify()
+  return
  root=target/'public';m=json.loads((root/'metadata.json').read_text());dt.datetime.fromisoformat(m['cycle'])
  if m.get('schema')!='gdi_named_suite_v1' or m.get('crs')!='EPSG:3857' or [m.get('width'),m.get('height')]!=[2400,1360]:raise ValueError('Invalid GDI display contract')
  if m.get('resampling')!='nearest' and not (SUITE=='rap' and m.get('resampling')=='masked_bilinear' and m.get('display_rendering')=='rap_scalar_bilinear_v1'):raise ValueError('Unrecognized GDI display interpolation')
