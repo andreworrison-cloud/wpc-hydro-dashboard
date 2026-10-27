@@ -18,6 +18,11 @@ from tools.sport_rsm_suite import atomic_json, digest, iso, parse
 BASE='https://nssrgeo.ndc.nasa.gov/SPoRT/modeling/lis/conus3km/geotiff'
 REVISION='sport-change-v1'
 POLICY={'warn_age_hours':48,'expire_age_hours':72,'status':'approved_h7_policy_v1'}
+# The H7 cache is provenance/recovery state, not a scientific input archive.
+# Daily operations require the current exact source set; keeping every observed
+# source revision for 21 days eventually exceeds the data-branch safety budget.
+NUMERIC_CACHE_RETENTION_DAYS=7
+NUMERIC_CACHE_MAX_BYTES=320*1024*1024
 PRODUCTS={'shallow24h':(10,1,'derived_endpoint_difference'), 'deep7day':(200,7,'NASA_native_change'), 'deep14day':(200,14,'NASA_native_change')}
 FIELDS={'shallow':'rsm0-10cm','deep7day':'rsm0-2m_diff7day','deep14day':'rsm0-2m_diff14day'}
 COLORS=np.array([[111,59,22,235],[152,84,31,235],[189,121,62,235],[216,170,114,235],[236,211,174,235],[246,245,238,190],[204,233,238,235],[148,205,220,235],[85,168,198,235],[38,123,168,235],[18,84,121,235]],dtype=np.uint8)
@@ -105,21 +110,48 @@ def check_revision(session,source):
     return 'post_download_sha256'
 
 def cache_sources(root,stage,sources,now):
-    # Hash-addressed versions: local retention only until durable publishing is qualified.
+    # Hash-addressed provenance/recovery cache. The current exact source set is
+    # always protected; older revisions are bounded both by age and by bytes so
+    # the history-free data branch cannot grow into its publication ceiling.
     cache=root/'numeric-cache';cache.mkdir(exist_ok=True)
     index_path=cache/'index.json'
     try:index=json.loads(index_path.read_text())
     except FileNotFoundError:index={}
+    required={source['sha256'] for source in sources}
     for source in sources:
         sha=source['sha256'];target=cache/(sha+'.tif')
         if not target.exists():shutil.copyfile(stage/source['filename'],target)
         if digest(target)!=sha:raise ValueError('Numeric cache checksum failure')
         index[sha]={**source,'last_verified_at':iso(now)}
-    # Keep each observed version >=21 days after last verification, including old baselines.
+
+    cutoff=now-timedelta(days=NUMERIC_CACHE_RETENTION_DAYS)
     for sha,entry in list(index.items()):
-        if parse(entry['last_verified_at'])<now-timedelta(days=21):
+        if sha not in required and parse(entry['last_verified_at'])<cutoff:
             (cache/(sha+'.tif')).unlink(missing_ok=True);del index[sha]
+
+    def cache_bytes():
+        return sum((cache/(sha+'.tif')).stat().st_size for sha in index if (cache/(sha+'.tif')).exists())
+
+    # Revisions can accumulate faster than calendar-day pruning when NASA
+    # republishes a dated source. Remove the oldest non-current versions until
+    # a conservative byte ceiling is restored.
+    while cache_bytes()>NUMERIC_CACHE_MAX_BYTES:
+        candidates=sorted(
+            ((parse(entry['last_verified_at']),sha) for sha,entry in index.items() if sha not in required),
+            key=lambda item:item[0]
+        )
+        if not candidates:
+            raise ValueError('Current required H7 numeric sources exceed cache byte budget')
+        _,sha=candidates[0]
+        (cache/(sha+'.tif')).unlink(missing_ok=True);del index[sha]
+
     atomic_json(index_path,index)
+    print(
+        f"H7 numeric cache: {len(index)} versions, "
+        f"{cache_bytes()/1024/1024:.1f} MiB "
+        f"(max {NUMERIC_CACHE_MAX_BYTES/1024/1024:.0f} MiB)",
+        flush=True
+    )
 
 def ingest(root,source_dir=None,date=None,now=None,session=None):
     root=Path(root);root.mkdir(parents=True,exist_ok=True);(root/'generations').mkdir(exist_ok=True)
