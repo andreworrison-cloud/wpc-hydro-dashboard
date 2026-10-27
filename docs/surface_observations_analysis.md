@@ -279,3 +279,7 @@ Degenerate closed contours with less than 0.05 hPa enclosed relief are omitted.
 Centers retain four decimals in the asset and show one decimal (two if needed
 to avoid rounding to the enclosing isobar). No whole-millibar value is invented.
 Revision `hrrr-metar-mslp-v5` forces rebuilding; v4 packages remain readable.
+
+Revision v6 flattens rejected anomalies 0.02 hPa past their enclosing contour,
+before final smoothing, to avoid contour fragments on threshold-valued plateaus.
+This small margin is below the 0.1-hPa sampling precision.

@@ -131,7 +131,7 @@ def filter_small_pressure_features(values, transform, crs, points, accepted_ids,
                 else:
                     # Flatten only the unsupported anomaly to its enclosing
                     # isobar. Apply a light final smooth to avoid a hard edge.
-                    a[box][component] = level
+                    a[box][component] = level-sign*.02
                     removed += 1
     if removed:
         a = smooth_masked(a, 6000/abs(transform.a))
