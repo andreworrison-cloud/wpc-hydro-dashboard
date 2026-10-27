@@ -5,8 +5,7 @@ import math
 
 import contourpy
 import numpy as np
-from scipy.ndimage import (distance_transform_edt, gaussian_filter, label,
-                           find_objects, map_coordinates, maximum_filter, minimum_filter)
+from scipy.ndimage import gaussian_filter
 from pyproj import Transformer
 
 from surface_analysis import BOUNDS, PRODUCTS
@@ -23,57 +22,75 @@ def smooth_masked(values, sigma):
     return np.where(valid & (weight > .25), total / np.maximum(weight, 1e-8), np.nan).astype("float32")
 
 
-def pressure_centers(smoothed, transform, crs, radius_m=300000, prominence_hpa=1):
-    """Require a closed pressure anomaly on a complete 300-km ring.
+def closed_centers(loops, values, x, y, crs):
+    """One center for each innermost closed 4-hPa circulation.
 
-    Excludes grid/missing-data edges and suppresses nearby duplicates. These are
-    model-analysis extrema, not WPC's manually analyzed surface centers.
+    Derive symbols from the same unsimplified contour paths as the map. Nested
+    isobars share a center; distinct adjacent circulations are never suppressed
+    by a fixed distance. Open contours and contours surrounding missing data
+    cannot certify a center.
     """
-    a = np.asarray(smoothed)
-    valid = np.isfinite(a)
-    spacing = min(abs(transform.a), abs(transform.e))
-    radius = max(2, int(round(radius_m / spacing)))
-    interior = distance_transform_edt(np.pad(valid, 1))[1:-1, 1:-1] > radius + 1
-    candidates = []
+    from rasterio.features import geometry_mask
+    from rasterio.transform import Affine
+    from scipy.ndimage import binary_erosion
     to_geo = Transformer.from_crs(crs, 4326, always_xy=True)
-    angles = np.linspace(0, 2 * np.pi, 32, endpoint=False)
-    for kind, sign, filt in (("H", 1, maximum_filter), ("L", -1, minimum_filter)):
-        work = np.where(valid, a, -sign * np.inf)
-        extrema = interior & (a == filt(work, size=2 * radius + 1, mode="constant", cval=-sign * np.inf))
-        groups, count = label(extrema)
-        for group_id, box in enumerate(find_objects(groups, max_label=count), 1):
-            if box is None:
-                continue
-            rows, cols = np.nonzero(groups[box] == group_id)
-            rows += box[0].start; cols += box[1].start
-            near = np.argmin((rows - rows.mean()) ** 2 + (cols - cols.mean()) ** 2)
-            row, col = int(rows[near]), int(cols[near])
-            ring = map_coordinates(a, [row + radius_m / abs(transform.e) * np.sin(angles),
-                                       col + radius_m / abs(transform.a) * np.cos(angles)], order=1, mode="constant", cval=np.nan)
-            if not np.isfinite(ring).all():
-                continue
-            prominence = float(np.min(sign * (a[row, col] - ring)))
-            if prominence < prominence_hpa:
-                continue
-            x=transform.c+transform.a*(col+.5)+transform.b*(row+.5)
-            y=transform.f+transform.d*(col+.5)+transform.e*(row+.5)
-            lon, lat = to_geo.transform(x, y)
-            if not (BOUNDS[0][0] < lat < BOUNDS[1][0] and BOUNDS[0][1] < lon < BOUNDS[1][1]):
-                continue
-            candidates.append({"kind": kind, "value": round(float(a[row, col]), 1),
-                               "prominence": round(prominence, 2), "x": x, "y": y,
-                               "lon": lon, "lat": lat})
-    chosen = []
-    for p in sorted(candidates, key=lambda x: (-x["prominence"], x["kind"], x["lat"], x["lon"])):
-        if any(p["kind"] == q["kind"] and math.hypot(p["x"] - q["x"], p["y"] - q["y"]) < 500000 for q in chosen):
+    dx, dy = x[1]-x[0], y[1]-y[0]
+    candidates = []
+    for level, path in loops:
+        if len(path) < 4 or not np.allclose(path[0], path[-1], atol=.01, rtol=0):
             continue
-        chosen.append(p)
-        if len(chosen) >= 12:
-            break
-    return [{"type": "Feature", "properties": {"kind": "center", "symbol": p["kind"],
-              "value": p["value"], "unit": "hPa", "prominence_hpa": p["prominence"]},
-             "geometry": {"type": "Point", "coordinates": [round(p["lon"], 5), round(p["lat"], 5)]}}
+        area = abs(np.sum(path[:-1, 0]*path[1:, 1]-path[1:, 0]*path[:-1, 1]))/2
+        candidates.append((area, level, path))
+    chosen = []
+    for _, level, path in sorted(candidates, key=lambda c: c[0]):
+        cols = (path[:, 0]-x[0])/dx; rows = (path[:, 1]-y[0])/dy
+        c0, c1 = max(0, int(np.floor(cols.min()))), min(len(x), int(np.ceil(cols.max()))+1)
+        r0, r1 = max(0, int(np.floor(rows.min()))), min(len(y), int(np.ceil(rows.max()))+1)
+        if c1 <= c0 or r1 <= r0:
+            continue
+        t = Affine(dx, 0, x[c0]-dx/2, 0, dy, y[r0]-dy/2)
+        inside = geometry_mask([{'type':'Polygon', 'coordinates':[path.tolist()]}],
+                              (r1-r0, c1-c0), t, invert=True)
+        sub = values[r0:r1, c0:c1]
+        if not inside.any() or not np.isfinite(sub[inside]).all():
+            continue
+        rim = inside & ~binary_erosion(inside)
+        sign = 1 if np.median(sub[rim]-level) > 0 else -1
+        kind = 'H' if sign == 1 else 'L'
+        if any(p['symbol'] == kind and r0 <= p['row'] < r1 and c0 <= p['col'] < c1
+               and inside[p['row']-r0, p['col']-c0] for p in chosen):
+            continue
+        extreme = np.max(sign*sub[inside])
+        rr, cc = np.nonzero(inside & (sign*sub == extreme))
+        near = np.argmin((rr-rr.mean())**2+(cc-cc.mean())**2)
+        row, col = int(rr[near]+r0), int(cc[near]+c0)
+        value = float(values[row, col])
+        if sign*(value-level) <= 0:
+            continue
+        lon, lat = to_geo.transform(x[col], y[row])
+        if not (BOUNDS[0][0] < lat < BOUNDS[1][0] and BOUNDS[0][1] < lon < BOUNDS[1][1]):
+            continue
+        chosen.append({'symbol':kind, 'row':row, 'col':col, 'value':value,
+                       'lon':lon, 'lat':lat, 'prominence':sign*(value-level)})
+    return [{'type':'Feature', 'properties':{'kind':'center', 'symbol':p['symbol'],
+             'value':round(p['value'], 1), 'unit':'hPa', 'prominence_hpa':round(p['prominence'], 2)},
+             'geometry':{'type':'Point', 'coordinates':[round(p['lon'], 5), round(p['lat'], 5)]}}
             for p in chosen]
+
+
+def pressure_centers(smoothed, transform, crs):
+    """Standalone native-grid equivalent, used for analytic verification."""
+    a = np.asarray(smoothed)
+    finite = a[np.isfinite(a)]
+    if not finite.size:
+        return []
+    x = transform.c+(np.arange(a.shape[1])+.5)*transform.a
+    y = transform.f+(np.arange(a.shape[0])+.5)*transform.e
+    generator = contourpy.contour_generator(x=x, y=y, z=np.ma.masked_invalid(a),
+                    name='serial', line_type='Separate', corner_mask=False)
+    loops = [(v, path) for v in np.arange(math.floor(finite.min()/4)*4, finite.max(), 4)
+             for path in generator.lines(v)]
+    return closed_centers(loops, a, x, y, crs)
 
 
 def simplify(points, tolerance=1100):
@@ -106,6 +123,7 @@ def contour_collection(key, values, transform, valid_time, centers=()):
     y = transform.f + (np.arange(rows) * stride + .5) * transform.e
     finite = small[np.isfinite(small)]
     features = []
+    loops = []
     if finite.size:
         low, high = float(finite.min()), float(finite.max())
         levels = list(np.arange(math.floor(low / interval) * interval, high + interval, interval))
@@ -118,10 +136,14 @@ def contour_collection(key, values, transform, valid_time, centers=()):
             for points in generator.lines(value):
                 if len(points) < 3 or np.linalg.norm(np.diff(points, axis=0), axis=1).sum() < 30000:
                     continue
+                if key == "mslp":
+                    loops.append((value, points.copy()))
                 points = simplify(points)
                 lon, lat = to_geo.transform(points[:, 0], points[:, 1])
                 features.append({"type": "Feature", "properties": {"kind": "contour", "value": float(value), "unit": PRODUCTS[key]["unit"]},
                                  "geometry": {"type": "LineString", "coordinates": np.round(np.column_stack((lon, lat)), 5).tolist()}})
+    if key == "mslp" and rows > 1 and cols > 1:
+        centers = closed_centers(loops, small, x, y, 3857)
     return {"type": "FeatureCollection", "schema": SCHEMA, "key": key, "valid_time": valid_time,
             "interval": interval, "pressure_smoothing_km": 18 if key == "mslp" else None,
             "features": features + list(centers)}

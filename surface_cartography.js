@@ -80,14 +80,14 @@
     signature=next;
    }
    if(!map.hasLayer(lines))lines.addTo(map);if(!map.hasLayer(text))text.addTo(map);text.clearLayers();
-   const size=map.getSize(),project=c=>map.latLngToContainerPoint([c[1],c[0]]),blocked=[...obstacles],centerBoxes=[];
+   const size=map.getSize(),project=c=>map.latLngToContainerPoint([c[1],c[0]]),blocked=[...obstacles];
    for(const center of data.features.filter(f=>f.properties.kind==='center')){
     const c=center.geometry.coordinates,p=project(c),box={x:p.x,y:p.y,w:90,h:70};
-    if(p.x<25||p.y<35||p.x>size.x-25||p.y>size.y-35||centerBoxes.some(b=>overlap(box,b)))continue;
+    if(p.x<25||p.y<35||p.x>size.x-25||p.y>size.y-35)continue;
     const value=center.properties.value,symbol=center.properties.symbol;
     L.marker([c[1],c[0]],{pane:'surfacePressureCenters',interactive:false,keyboard:false,
      icon:L.divIcon({className:`surface-pressure-center surface-pressure-${symbol.toLowerCase()}`,iconSize:[66,58],iconAnchor:[33,29],html:`<b>${symbol}</b><span>${Math.round(value)}</span>`}),
-     title:`Automated ${symbol==='H'?'high':'low'} · ${value.toFixed(1)} hPa`}).addTo(text);blocked.push(box);centerBoxes.push(box);
+     title:`Automated ${symbol==='H'?'high':'low'} · ${value.toFixed(1)} hPa`}).addTo(text);blocked.push(box);
    }
    for(const p of labels(data,key,zoom,project,size.x,size.y,blocked)){
     L.marker(map.containerPointToLatLng([p.x,p.y]),{pane:'surfaceContourLabels',interactive:false,keyboard:false,

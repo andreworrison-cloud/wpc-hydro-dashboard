@@ -49,6 +49,9 @@ pressure.products.mslp={...palettes.mslp,path:`pressure/${pressure.generation}/m
 const m={schema:'surface-suite-v1',policy:{analysis_warn_minutes:150,analysis_hide_minutes:240,station_hide_minutes:90},analysis:a,pressure_analysis:pressure};
 const numeric=JSON.parse(JSON.stringify(m));numeric.analysis.revision='rtma-surface-v5';numeric.pressure_analysis.revision='hrrr-mslp-v3';
 for(const analysis of [numeric.analysis,numeric.pressure_analysis])for(const [key,p] of Object.entries(analysis.products))p.sampling={path:`${key==='mslp'?'pressure':'generations'}/${analysis.generation}/${key}_samples.bin.gz`,sha256:'a'.repeat(64),encoding:'gzip-int16-v1'};
+const blended=JSON.parse(JSON.stringify(numeric));blended.pressure_analysis.revision='hrrr-metar-mslp-v4';
+blended.pressure_analysis.objective_analysis={accepted_stations:850,mode:'observation-adjusted'};S.validate(blended);
+const badBlend=JSON.parse(JSON.stringify(blended));badBlend.pressure_analysis.objective_analysis.accepted_stations='bad';assert.throws(()=>S.validate(badBlend),/diagnostics/);
 S.validate(numeric);const incomplete=JSON.parse(JSON.stringify(numeric));delete incomplete.analysis.products.temperature.sampling;assert.throws(()=>S.validate(incomplete));
 const invalid=JSON.parse(JSON.stringify(numeric));invalid.pressure_analysis.products.mslp.sampling.path='../bad';assert.throws(()=>S.validate(invalid));
 S.validate(m);assert.throws(()=>S.validate({...m,analysis:{...a,bounds:[[0,0],[1,1]]}}));assert.throws(()=>S.validate({...m,analysis:{...a,products:{temperature:a.products.temperature}}}));
@@ -113,7 +116,7 @@ assert.throws(()=>S.validate({...m,pressure_analysis:{...pressure,products:{mslp
  }
  S.keys.forEach(k=>onMap.delete(suite.layers[k]));onMap.add(suite.layers.heat_index);await suite.refresh();assert.match(suite.legendHTML(),/No qualifying conditions/);
  onMap.delete(suite.layers.heat_index);onMap.add(suite.layers.mslp);await suite.refresh();
- assert.match(suite.legendHTML(),/NOAA HRRR · hourly · 3 km/);assert.match(suite.legendHTML(),/METAR observations · Reported MSLP/);assert.equal(count(suite.stations),1,'MSLP follows the pressure fill automatically');
+ assert.match(suite.legendHTML(),/NOAA HRRR background · hourly · 3 km/);assert.match(suite.legendHTML(),/METAR observations · Reported MSLP/);assert.equal(count(suite.stations),1,'MSLP follows the pressure fill automatically');
  changeHandlers[0]({target:{matches:()=>true,value:'relative_humidity'}});assert.match(suite.legendHTML(),/Calculated from METAR · Relative humidity/);
  clock=now+190*60000;await suite.refresh();assert.equal(count(suite.layers.mslp),1,'pressure uses its own valid time');
  onMap.delete(suite.layers.mslp);onMap.add(suite.layers.temperature);await suite.refresh();assert.equal(count(suite.layers.temperature),0,'older RTMA expires independently');

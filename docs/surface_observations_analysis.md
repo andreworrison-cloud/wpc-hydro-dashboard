@@ -35,34 +35,44 @@ wind speed and gust use knots; pressure uses hPa. All surface layers start off.
 - Four native inputs and seven RTMA display fields publish together. No valid-time regression is accepted.
   The analysis age warning begins at 150 minutes; images hide at 240 minutes.
 
-## Barometric pressure: NOAA HRRR mean-sea-level analysis
+## Barometric pressure: hourly HRRR + METAR objective analysis
 
-- **Barometric Pressure (MSLP)** uses native HRRR CONUS f00 `MSLMA`, mean-sea-level
-  pressure with MAPS system reduction. It compares the weather-related pressure
-  pattern across elevations. It is neither terrain-surface `PRES` nor aviation
-  altimeter setting. The fill is an analysis, not interpolated METAR measurements.
+- **Barometric Pressure (MSLP)** uses native HRRR CONUS f00 `MSLMA` (MAPS
+  sea-level reduction) as its background. It compares pressure across elevations;
+  neither terrain-surface `PRES` nor aviation altimeter setting is substituted.
 - Source: `hrrr.YYYYMMDD/conus/hrrr.tHHz.wrfsfcf00.grib2`, nominal 3-km native
-  grid (1799 × 1059). Validate GRIB parameter `(0,3,198)`, `meanSea` level 0,
-  Pa units, matching source/valid UTC hour, zero lead, and native grid geometry.
-- NOAA NODD/AWS is preferred; NOMADS uses its own inventory at the same hour
-  before stepping backward. Pressure has its own valid time, immutable generation,
-  failure state and 150/240-minute age policy. A pressure-source failure does not
-  block fresh RTMA fills or METAR reports, and no component's valid time regresses.
-- Convert Pa to hPa before bilinear reprojection and colorization on the same
-  3600 × 2024 display canvas. Labels identify HRRR and its 3-km native spacing.
-  Sea-level reduction can retain terrain-related artifacts over high elevations;
-  it does not produce a direct pressure observation at each display pixel.
-- Pressure fill, 4-mb isobars and automated centers use the same pressure field
-  after a Gaussian filter with sigma 18 km on the native 3-km grid. Missing native
-  cells remain unsupported; smoothing never fills them. This is a cartographic
-  treatment of the existing HRRR analysis, not a new station-based reanalysis.
-- Automated H/L centers must be a local extremum with a fully supported 300-km
-  ring at least 1 hPa lower/higher in every sampled direction. Grid edges,
-  missing-data margins, open ridges/troughs and flat fields are rejected. Nearby
-  same-type centers within 500 km are suppressed. H is blue, L red; central
-  pressure is shown in whole hPa. These are not WPC's manually analyzed centers.
-- **Follow selected analysis** automatically shows actual reported MSLP points
-  when this fill is selected. Reports retain their own observation times.
+  grid (1799 × 1059). GRIB identity, units, zero lead, valid hour and native grid
+  are checked. NODD/AWS is preferred; NOMADS is the fallback.
+- Only METAR **reported sea-level pressure** contributes corrections. Reports
+  must be no more than 90 minutes old at construction and within ±60 minutes of
+  the HRRR valid hour. One latest report per station is used. Innovations are
+  reported MSLP minus bilinearly sampled HRRR background, in hPa.
+- Reject innovations exceeding 12 hPa; with at least three neighbors within
+  150 km, reject deviations over 4 hPa from their median innovation. These
+  conservative checks may exclude a genuine sharp mesoscale anomaly.
+- Smooth increments use Gaussian distance weights (sigma 80 km, continuous
+  cutoff at 240 km), Gaussian time weights (sigma 30 minutes), and inverse
+  station density within 50 km. Analysis = background + sum(w × innovation) /
+  (sum(w) + 0.5), with corrections bounded to ±6 hPa. Thus sparse areas revert
+  smoothly to HRRR; there is no fixed nationwide 50/50 blend.
+- The final field is smoothed with native-grid Gaussian sigma 18 km. The fill,
+  numeric cursor samples and 4-hPa isobars share that field. Missing source cells
+  remain missing. HRRR may already assimilate some observations; this dashboard
+  adjustment is **not** an independent optimal assimilation or an official WPC
+  surface analysis. Sea-level reduction artifacts can remain over high terrain.
+- A completed observation-adjusted hour is immutable. A background-only hour
+  can be rebuilt when observations become available. Metadata records accepted
+  station IDs/times, input checksums, method and maximum correction. The legend
+  explicitly distinguishes observation-adjusted and HRRR-only fallback fields.
+- H/L symbols come from the **same closed 4-hPa contours** used for display.
+  Innermost closed loops locate the enclosed maximum/minimum; nested isobars
+  share a center. Distinct nearby systems are not removed by a 300-km ring test
+  or 500-km suppression. Open lines, flat fields and loops containing missing
+  grid data cannot certify a center. Symbol central values use the contour
+  sampling grid (every fourth display pixel) and are rounded to whole hPa.
+- Pressure retains independent valid time, failure status and 150/240-minute
+  aging/hiding. Source failure retains the previous validated field. METAR
+  point labels remain actual reports with their own timestamps.
 
 ## Derived analysis fields
 
@@ -244,3 +254,10 @@ RTMA v5 and HRRR MSLP v3 publish immutable, checksum-verified `*_samples.bin.gz`
 Only the selected field is downloaded on opt-in; decoding and values are cached with the existing bounded image cache. Legacy packages show that numeric grids are updating. Browsers without gzip decompression show sampling unavailable while retaining the map. Sampling does not add spatial resolution beyond RTMA's 2.5 km or HRRR's 3 km source analysis.
 
 Heat index remains limited to the NWS preliminary averaged Steadman screen of at least 80°F. Wind chill requires temperature at or below 50°F and sustained wind above 3 mph; gusts are not used. Neither uses a terrain mask. Transparent cells expose the dark basemap and can mean either nonapplicable conditions or missing source inputs. The readout and legend explain this distinction without replacing these cells with air temperature or zero.
+
+### Pressure objective-analysis revision
+
+`hrrr-metar-mslp-v4` adds observation diagnostics and requires both numeric and
+contour sidecars. Earlier HRRR-only generations remain readable during rollout.
+The hourly publisher retrieves METARs before constructing the pressure field;
+station display freshness remains independent.

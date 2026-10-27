@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 REVISION = "rtma-surface-v5"
-PRESSURE_REVISION = "hrrr-mslp-v3"
+PRESSURE_REVISION = "hrrr-metar-mslp-v4"
 LEGACY_KEYS = ("temperature", "dewpoint", "wind_speed")
 V2_KEYS = (*LEGACY_KEYS, "wind_direction", "wind_gust", "surface_pressure", "relative_humidity", "heat_index", "wind_chill")
 BOUNDS = [[24.0, -125.0], [50.0, -66.0]]
@@ -54,7 +54,7 @@ PRODUCTS.update({
         "colors": ["#76148f","#4425ba","#144bdd","#007adb","#00afd3","#00c9b1","#35c45a","#a7d51b","#ffe000","#ffa000","#f45c13","#df2251","#ae218d","#641a93"],
         "ticks": [960,980,1000,1020,1040,1060],
         "contour_interval": 4, "smoothing_km": 18,
-        "note": "Pressure reduced to mean sea level to compare the weather pattern across elevations. HRRR analysis uses MAPS sea-level reduction; station points show reported MSLP.",
+        "note": "Pressure reduced to mean sea level to compare the weather pattern across elevations. HRRR background uses MAPS sea-level reduction, with smooth corrections from quality-checked METAR reported MSLP. Station points remain actual reports.",
     },
     "relative_humidity": {
         "label": "2-m Relative Humidity", "unit": "%", "derived_from": ["temperature","dewpoint"],
