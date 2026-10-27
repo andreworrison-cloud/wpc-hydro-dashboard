@@ -1,4 +1,4 @@
-# GDI + Dynamics: RAP delivery
+# GDI + Dynamics: RAP and CAM companions
 
 This delivery combines the existing José notebook GFS-baseline GDI with separately
 calculated meteorological diagnostics. It does not modify, rescale, smooth, or
@@ -77,11 +77,51 @@ expired or mismatched dynamics are hidden. Toggling off GDI clears all companion
 
 ## Delivery sequence
 
-RAP is the first implementation, including analysis/change context and same-cycle
-F03 context. HRRR/RRFS/blend forecast companions follow after the RAP display is
-reviewed. A future TLE can summarize joint ingredient persistence within members
-before summarizing agreement across runs; the retired GDI-only TLE is not enabled
-by this delivery.
+RAP includes analysis/change context and same-cycle F03 context. Forecast
+companions use the exact seven hourly valid times and actual HRRR/RRFS cycles
+already published by the synchronized GDI forecast producer. They are available
+with HRRR, RRFS, and the HRRR/RRFS blend. Day 1 maximum GDI products keep their
+existing interpretation; instantaneous companions are not placed over a period
+maximum with an ambiguous valid time.
+
+## Native 3-km HRRR/RRFS delivery
+
+The companion science, units and contour levels are the same as RAP. Gaussian
+sigma remains **20 km in native projected coordinates**, approximately 6.7 cells
+on the 3-km grids (Gaussian full width at half maximum about 47 km). It filters
+moisture flux and wind *before* differentiation, reducing small-scale derivative
+noise. It is applied once; the blend has no additional filter. GDI itself and its
+native shading/contours are unchanged. Barbs retain the same fixed display
+spacing (110 by 100 pixels on the 2400 by 1360 CONUS export), regardless of native
+grid resolution. Contour labels require long paths and maintain separation.
+
+Each source's decoded Lambert projection defines the display mapping. HRRR/RRFS
+use the 38.5° standard parallel and −97.5° central meridian on their present CONUS
+grid; the RAP projection is different and is not reused for CAMs. Grid signatures
+must match the published GDI inputs. Blends additionally require the native
+coordinates to agree. Both models must supply a finite diagnostic value at a cell;
+missing/terrain-limited values never turn into a one-model blend. Moisture
+convergence, divergence, humidity and PW are averaged after separate per-model
+calculation. Winds are blended as earth-relative components, not speed/direction.
+
+RRFS total-column PWAT is read from its `2dfld` product. The pressure-level file's
+`30–0 mb above ground` PWAT is explicitly ineligible. Both AWS and NOMADS use their
+own inventories and byte ranges. The separate two-model diagnostic decoder runs
+at most two processes, one per model, each with bounded network prefetch; ecCodes
+remains on the subprocess main thread.
+
+The existing cron-job.org HRRR root triggers `publish_gdi_guidance.yml` and its
+focused forecast workflow. GDI publishes first. A dependent job receives the
+actual published metadata through a same-run artifact, builds all 126 companion
+images (six fields × seven times × three perspectives), and publishes atomically
+to `data/forecast-dynamics-gdi`. Decoded caches are bounded to eight hours; raw
+GRIB downloads are not persisted between jobs. No scheduler or duplicate timer
+is added. The client matches the base selection signature, exact sources, valid
+time and grids, and preloads complete selected companion loops before showing
+them. Playback changes overlay visibility without refetching hourly images.
+
+A future TLE can summarize joint ingredient persistence within members before
+summarizing agreement across runs; the retired GDI-only TLE remains disabled.
 
 Checks cover analytic divergence and moisture-flux sign/units, wind rotation and
 reverse scans, pressure weights and terrain, real multi-field GRIB selection,

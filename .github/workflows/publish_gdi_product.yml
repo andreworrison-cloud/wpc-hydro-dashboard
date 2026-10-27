@@ -80,6 +80,13 @@ jobs:
               raise SystemExit('Build failed and retained suite is expired')
           print('::warning::Source incomplete; retaining verified suite with its actual source cycles and valid times.')
           PY
+      - name: Preserve the exact published forecast selection for its companions
+        if: inputs.mode == 'forecast'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gdi-forecast-base-for-dynamics
+          path: run/gdi-data/public/metadata.json
+          retention-days: 2
       - uses: actions/cache/save@v6
         if: always()
         with:
@@ -92,4 +99,87 @@ jobs:
           path: |
             run/gdi-product/render/suite.json
             run/gdi-data/public/metadata.json
+          retention-days: 14
+  dynamics:
+    # The existing cron-job.org HRRR root already starts this reusable workflow.
+    # Publish GDI first; companion delays/failures cannot hold back the base maps.
+    needs: publish
+    if: inputs.mode == 'forecast' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GDI_SUITE: forecast-dynamics
+    steps:
+      - uses: actions/checkout@v6
+      - name: Refresh queued source
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install numpy scipy pyproj pillow matplotlib eccodes
+      - name: Check companion calculations and provider fallback
+        run: |
+          python tools/gdi/test_dynamics.py
+          python tools/gdi/test_forecast_dynamics.py
+          python tools/gdi/test_redundancy.py
+      - uses: actions/download-artifact@v8
+        with:
+          name: gdi-forecast-base-for-dynamics
+          path: run/cam-dynamics/base
+      - uses: actions/cache/restore@v6
+        with:
+          path: run/cam-dynamics/native
+          key: cam-gdi-dynamics-v1-${{ github.run_id }}
+          restore-keys: |
+            cam-gdi-dynamics-v1-
+      - name: Bound decoded native cache to eight hours
+        run: |
+          python - <<'PY'
+          import datetime as d,shutil
+          from pathlib import Path
+          cutoff=(d.datetime.now(d.timezone.utc)-d.timedelta(hours=8)).strftime('%Y%m%d%H')
+          for model in ('hrrr','rrfs'):
+              for p in (Path('run/cam-dynamics/native')/model).glob('*'):
+                  if p.is_dir() and p.name.isdigit() and p.name<cutoff:shutil.rmtree(p)
+          PY
+      - name: Restore last complete companion package
+        run: python tools/publish_gdi_suite.py restore --data-dir run/cam-dynamics-data --state-file run/cam-dynamics-state.json
+      - name: Build the exact seven hourly HRRR, RRFS and blended companion frames
+        id: build
+        continue-on-error: true
+        run: python tools/gdi/build_forecast_dynamics.py --base run/cam-dynamics/base/metadata.json --public run/cam-dynamics-data/public
+      - name: Publish complete companion suite atomically
+        if: steps.build.outcome == 'success'
+        run: python tools/publish_gdi_suite.py publish --data-dir run/cam-dynamics-data --state-file run/cam-dynamics-state.json
+      - name: Validate retained companions after incomplete input
+        if: steps.build.outcome == 'failure'
+        run: |
+          python - <<'PY'
+          import datetime as d,json,sys
+          from pathlib import Path
+          sys.path.insert(0,'tools')
+          import publish_gdi_suite as publisher
+          root=Path('run/cam-dynamics-data')
+          if not (root/'public/metadata.json').exists():raise SystemExit('No complete prior CAM companions exist')
+          publisher.verify(root)
+          m=json.loads((root/'public/metadata.json').read_text())
+          if d.datetime.now(d.timezone.utc)>=d.datetime.fromisoformat(m['expires_at']):raise SystemExit('Retained companions expired')
+          print('::warning::Incomplete companion inputs; retained package keeps its actual model cycles and valid times. Viewer requires an exact GDI selection match.')
+          PY
+      - uses: actions/cache/save@v6
+        if: always()
+        with:
+          path: run/cam-dynamics/native
+          key: cam-gdi-dynamics-v1-${{ github.run_id }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cam-gdi-dynamics-metadata
+          path: |
+            run/cam-dynamics/render/suite.json
+            run/cam-dynamics-data/public/metadata.json
           retention-days: 14

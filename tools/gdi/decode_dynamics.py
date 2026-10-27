@@ -1,4 +1,4 @@
-"""Validated AWS/NOMADS inputs for the RAP GDI companion diagnostics."""
+"""Validated AWS/NOMADS inputs for RAP, HRRR and RRFS companion diagnostics."""
 import argparse
 import datetime as dt
 import hashlib
@@ -33,10 +33,12 @@ def tasks(source, lead):
     raise ValueError('No complete dynamics inventory: '+str(failures))
 
 
-def decode(cycle, lead, out, cache):
-    source = PressureSource('rap',cycle,cache=cache)
+def decode(cycle, lead, out, cache, model='rap'):
+    if model not in ('rap','hrrr','rrfs') or not 0 <= lead <= 84:
+        raise ValueError('Invalid model/forecast hour')
+    source = PressureSource(model,cycle,cache=cache)
     fields, provenance, flags = {}, [], None
-    lat = lon = spacing = radius = None
+    lat = lon = spacing = radius = projection = None
     for meta, raw in source.fetch_batch(tasks(source,lead)):
         h = record_handle(raw,meta)
         try:
@@ -52,8 +54,13 @@ def decode(cycle, lead, out, cache):
                 lon = (codes_get_array(h,'longitudes').reshape(shape)+180)%360-180
                 spacing = (float(codes_get(h,'DxInMetres')),float(codes_get(h,'DyInMetres')))
                 radius = float(codes_get(h,'radiusInMetres'))
-                if not 12000 < min(spacing) < 15000 or not 6.3e6 < radius < 6.5e6:
-                    raise ValueError('Unexpected RAP spacing or earth radius')
+                low,high = (12000,15000) if model == 'rap' else (2900,3100)
+                if not low < min(spacing) <= max(spacing) < high or not 6.3e6 < radius < 6.5e6:
+                    raise ValueError('Unexpected native spacing or earth radius')
+                projection = {'lat_1':float(codes_get(h,'Latin1InDegrees')),
+                              'lat_2':float(codes_get(h,'Latin2InDegrees')),
+                              'lat_0':float(codes_get(h,'LaDInDegrees')),
+                              'lon_0':float(codes_get(h,'LoVInDegrees')),'radius':radius}
             if meta['variable'] in ('UGRD','VGRD'):
                 f = {'grid_relative':bool(codes_get(h,'uvRelativeToGrid')),
                      'i_negative':bool(codes_get(h,'iScansNegatively')),
@@ -64,7 +71,7 @@ def decode(cycle, lead, out, cache):
         finally:
             codes_release(h)
         provenance.append(meta)
-        print('RAP dynamics',cycle,lead,meta['variable'],meta['level'],meta['provider'],flush=True)
+        print(model.upper(),'dynamics',cycle,lead,meta['variable'],meta['level'],meta['provider'],flush=True)
     result = calculate(fields,Geometry(lon,lat,radius),dx=spacing[0],dy=spacing[1],wind_flags=flags)
     inside = (lon >= -125)&(lon <= -66)&(lat >= 24)&(lat <= 50)
     result = {k:np.where(inside,a,np.nan).astype('float32') for k,a in result.items()}
@@ -73,9 +80,9 @@ def decode(cycle, lead, out, cache):
     out = Path(out)
     out.parent.mkdir(parents=True,exist_ok=True)
     np.savez_compressed(out,latitude=lat,longitude=lon,**result)
-    stamp = {'model':'rap','recipe':RECIPE,'cycle':dt.datetime.strptime(cycle,'%Y%m%d%H').replace(tzinfo=dt.timezone.utc).isoformat(),
+    stamp = {'model':model,'recipe':RECIPE if model=='rap' else 'cam_gdi_dynamics_v1','cycle':dt.datetime.strptime(cycle,'%Y%m%d%H').replace(tzinfo=dt.timezone.utc).isoformat(),
              'lead':lead,'grid_md5':source.grid,'wind_flags':flags,'dx_m':spacing[0],'dy_m':spacing[1],'radius_m':radius,
-             'smoothing_sigma_km':SIGMA_KM,'sources':provenance,'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),
+             'projection':projection,'smoothing_sigma_km':SIGMA_KM,'sources':provenance,'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),
              'humidity_conversion':'RH to q using Bolton liquid-water saturation; mixing ratio r=q/(1-q) for moisture flux',
              'moisture_convergence':'Pressure mean of levelwise -div(r*wind), complete above-ground segments 950/900/850/700 hPa, minimum 100 hPa depth',
              'derivatives':'Earth-relative winds; actual native lat/lon Jacobian and spherical metric',
@@ -87,9 +94,10 @@ def decode(cycle, lead, out, cache):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
+    p.add_argument('--model',choices=('rap','hrrr','rrfs'),default='rap')
     p.add_argument('--cycle',required=True)
-    p.add_argument('--lead',type=int,choices=(0,3),required=True)
+    p.add_argument('--lead',type=int,required=True)
     p.add_argument('--out',required=True)
     p.add_argument('--cache',default='run/rap-dynamics/cache')
     a = p.parse_args()
-    decode(a.cycle,a.lead,a.out,a.cache)
+    decode(a.cycle,a.lead,a.out,a.cache,a.model)

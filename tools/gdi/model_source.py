@@ -63,11 +63,20 @@ class PressureSource(HRRRSource):
    if '.' in x[0]:records[k]['submessage']=int(x[0].split('.')[1])
   if self.model=='rrfs':
    surface_url=u.replace('.prslev.','.2dfld.');surface_lines=self.transport(surface_url+'.idx').decode().strip().splitlines()
-   for a,b in zip(surface_lines,surface_lines[1:]):
-    x,y=a.split(':'),b.split(':')
-    if x[3:5]!=['PRES','surface']:continue
-    if x[2]!=f'd={self.cycle:%Y%m%d%H}' or int(y[1])<=int(x[1]):raise ValueError('Invalid RRFS surface index')
-    records[('PRES','surface')]={'variable':'PRES','level':'surface','start':int(x[1]),'end':int(y[1])-1,'url':surface_url,'provider':provider,'forecast_hour':lead}
+   parsed_surface=[line.split(':') for line in surface_lines]
+   surface_offsets=list(dict.fromkeys(int(x[1]) for x in parsed_surface))
+   if surface_offsets!=sorted(surface_offsets):raise ValueError('Unordered RRFS surface messages')
+   surface_ends={a:b-1 for a,b in zip(surface_offsets,surface_offsets[1:])}
+   for x in parsed_surface:
+    # The pressure file's PWAT is a shallow above-ground layer. Only the
+    # separate 2-D file contains the total atmospheric column required here.
+    if x[3:5]!=['PRES','surface'] and not (x[3]=='PWAT' and x[4].startswith('entire atmosphere')):continue
+    start=int(x[1])
+    if start not in surface_ends:continue
+    if x[2]!=f'd={self.cycle:%Y%m%d%H}':raise ValueError('Invalid RRFS surface index')
+    key=(x[3],x[4])
+    records[key]={'variable':key[0],'level':key[1],'start':start,'end':surface_ends[start],'url':surface_url,'provider':provider,'forecast_hour':lead}
+    if '.' in x[0]:records[key]['submessage']=int(x[0].split('.')[1])
   required=[('TMP',f'{p} mb') for p in LEVELS]+[('PRES','surface')]
   if any(k not in records for k in required) or any(not any((v,f'{p} mb') in records for v in ('SPFH','RH')) for p in LEVELS):raise ValueError('Missing GDI inputs')
   with self.lock:self.indices[key]=records
