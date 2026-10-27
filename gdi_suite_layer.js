@@ -48,7 +48,7 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   if(buffer.loop&&commonForecast(buffer.m))forecastValidTime=buffer.m.products[f.key].valid_time;
   // Keep decoded overlays mounted: playback changes visibility, not image URLs.
   buffer.frames.forEach((frame,index)=>frame.overlays.forEach(o=>o.setOpacity(!buffer.loop||index===forecastIndex?layers[base].options.opacity:0)));
-  shown={m:buffer.m,k:f.key,base};dynamics?.setContext(buffer.m,buffer.m.products[f.key]);onChange();schedule();
+  shown={m:buffer.m,k:f.key,base};dynamics?.setContext(buffer.m,buffer.m.products[f.key],f.key);onChange();schedule();
  }
  async function draw(){
   stop();const base=selected(),token=++serial,m=metadata;
