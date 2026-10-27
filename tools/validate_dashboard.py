@@ -1589,8 +1589,13 @@ for layer_id in ['gdi-forecast-hrrr','gdi-forecast-rrfs','gdi-forecast-blend',
         errors.append(f'Missing retained GDI layer: {layer_id}')
 if any(marker in app for marker in ['gdiTLE','gdi-merged-tle','gdi-tle-','data/tle-gdi/']):
     errors.append('Retired GDI TLE layers must not be registered or fetched by the dashboard')
-if 'gdi_dynamics_layer.js?v=rap-dynamics-v1' not in index or 'dynamics: rapGDIDynamics' not in app:
+if 'gdi_dynamics_layer.js?v=cam-dynamics-v2' not in index or 'dynamics: rapGDIDynamics' not in app:
     errors.append('RAP GDI companion controls must be loaded and attached to the RAP suite')
+if 'dynamics: forecastGDIDynamics' not in app or 'data/forecast-dynamics-gdi/public/metadata.json' not in app:
+    errors.append('HRRR/RRFS/blend forecast companions must be attached to the synchronized GDI loops')
+focused_gdi_workflow=(ROOT/'.github/workflows/publish_gdi_product.yml').read_text()
+if 'needs: publish' not in focused_gdi_workflow or focused_gdi_workflow.count('gdi-forecast-base-for-dynamics') != 2:
+    errors.append('CAM companions must inherit the actual published GDI selection through the existing workflow')
 if "label: 'GDI + Dynamics'" not in rap_menu:
     errors.append('RAP GDI + Dynamics must remain within RAP Mesoanalysis Data')
 rap_gdi_workflow=(ROOT/'.github/workflows/publish_rap_gdi.yml').read_text()
