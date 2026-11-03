@@ -44,6 +44,11 @@ on:
       - 'fetch_lightningcast.py'
       - '.github/workflows/update_lightningcast.yml'
       - 'fetch_hrrr_tle.py'
+      - 'cam_*.py'
+      - 'cam_display.js'
+      - 'cam_spc_members.json'
+      - 'tools/test_cam*'
+      - 'tools/prune_cam_cache.py'
       - 'fetch_cam.py'
       - 'fetch_cam_ero.py'
       - '.github/workflows/update_hrrr_tle.yml'
@@ -99,6 +104,11 @@ on:
       - 'fetch_lightningcast.py'
       - '.github/workflows/update_lightningcast.yml'
       - 'fetch_hrrr_tle.py'
+      - 'cam_*.py'
+      - 'cam_display.js'
+      - 'cam_spc_members.json'
+      - 'tools/test_cam*'
+      - 'tools/prune_cam_cache.py'
       - 'fetch_cam.py'
       - 'fetch_cam_ero.py'
       - '.github/workflows/update_hrrr_tle.yml'
@@ -141,6 +151,8 @@ jobs:
           node --check surface_cartography.js
           node --check surface_sampling.js
           node --check app.js
+          node --check cam_display.js
+          node tools/test_cam_display.cjs
           node --check gdi_layer.js
           node --check gdi_suite_layer.js
           node --check gdi_dynamics_layer.js
@@ -157,7 +169,8 @@ jobs:
 
       - name: Check GDI valid-time alignment and aggregation
         run: |
-          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy matplotlib
+          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy matplotlib cartopy
+          python tools/test_cam_probability.py
           python tools/gdi/test_guidance.py
           python tools/gdi/test_dynamics.py
           python tools/gdi/test_forecast_dynamics.py
@@ -216,3 +229,4 @@ jobs:
 
       - name: Validate menu order and required layers
         run: python tools/validate_dashboard.py
+

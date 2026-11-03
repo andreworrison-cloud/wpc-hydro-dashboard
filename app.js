@@ -2410,20 +2410,20 @@ const camLayers = {};
 const camTempBounds = [[20, -130], [50, -60]]; 
 
 ['3h_to_9h', '9h_to_15h'].forEach(w => {
-    ['href', 'refs', 'super'].forEach(m => {
-        camLayers[`ffg_${w}_${m}`] = L.imageOverlay(`static/cam_ffg_${w}_${m}.png`, camTempBounds, {zIndex: 11});
+    ['spc_refs', 'omd_refs', 'super'].forEach(m => {
+        camLayers[`ffg_${w}_${m}`] = L.imageOverlay(`static/cam_ffg_${w}_${m}.png`, camTempBounds, {zIndex: 11, opacity: 0});
         ['0.5_inch', '1_inch', '2_inch', '3_inch'].forEach(q => {
-            camLayers[`qpf_${w}_${q}_${m}`] = L.imageOverlay(`static/cam_qpf_${w}_${q}_${m}.png`, camTempBounds, {zIndex: 11});
+            camLayers[`qpf_${w}_${q}_${m}`] = L.imageOverlay(`static/cam_qpf_${w}_${q}_${m}.png`, camTempBounds, {zIndex: 11, opacity: 0});
         });
     });
 });
 
 // --- NEW DAY 1 ERO CAM LAYERS ---
 const eroCamLayers = {};
-['href', 'refs', 'super'].forEach(m => {
-    eroCamLayers[`ffg_${m}`] = L.imageOverlay(`static/ero_ffg_${m}.png`, camTempBounds, {zIndex: 11});
+['spc_refs', 'omd_refs', 'super'].forEach(m => {
+    eroCamLayers[`ffg_${m}`] = L.imageOverlay(`static/ero_ffg_${m}.png`, camTempBounds, {zIndex: 11, opacity: 0});
     ['0.5_inch', '1_inch', '2_inch', '3_inch'].forEach(q => {
-        eroCamLayers[`qpf_${q}_${m}`] = L.imageOverlay(`static/ero_qpf_${q}_${m}.png`, camTempBounds, {zIndex: 11});
+        eroCamLayers[`qpf_${q}_${m}`] = L.imageOverlay(`static/ero_qpf_${q}_${m}.png`, camTempBounds, {zIndex: 11, opacity: 0});
     });
 });
 
@@ -4226,10 +4226,38 @@ let nldas3SlopeMetadata = null;
 // --- DYNAMIC METADATA FETCHING AND AUTO-UPDATING ---
 let rapValidTime = "Unknown";
 let rapValidTimeF03 = "Unknown";
-let camCycles = { href: "Unknown", refs: "Unknown" };
-let camInitTimes = { href: null, refs: null };
-let eroCamCycles = { href: "Unknown", refs: "Unknown" };
-let eroValidRangeStr = "Unknown";
+let camMetadata = null;
+let eroCamMetadata = null;
+let camActiveSelection = null;
+
+function refreshCAMAvailability() {
+    [[camLayers, camMetadata, 'cam'], [eroCamLayers, eroCamMetadata, 'ero']].forEach(([layers, metadata, kind]) => {
+        Object.entries(layers).forEach(([key, layer]) => {
+            const available = WPC_CAM.state(metadata, kind, key).available;
+            if (!available) {
+                if (layer._camWasAvailable) layer._camSavedOpacity = layer.options.opacity;
+                layer.setOpacity(0);
+            } else if (!layer._camWasAvailable) {
+                layer.setOpacity(layer._camSavedOpacity ?? 1);
+            }
+            layer._camWasAvailable = available;
+        });
+    });
+    if (!camActiveSelection || !map.hasLayer(camActiveSelection.layer)) {
+        const choices = [];
+        [[camLayers, 'cam'], [eroCamLayers, 'ero']].forEach(([layers, kind]) => {
+            Object.entries(layers).forEach(([key, layer]) => {
+                if (map.hasLayer(layer) && layer._camDisplayName) choices.push({kind, key, layer, name: layer._camDisplayName});
+            });
+        });
+        camActiveSelection = choices.pop() || null;
+    }
+    if (camActiveSelection) {
+        const {kind, key, name} = camActiveSelection;
+        camTimeBox.innerHTML = WPC_CAM.timeHTML(kind === 'ero' ? eroCamMetadata : camMetadata, kind, key, name);
+    }
+}
+
 let nwmValidTime = "Unknown";
 let sportValidTime = "Unknown";
 let nrcsHsgSourceVintage = "Unknown";
@@ -4263,61 +4291,34 @@ function fetchRAPMetadata() {
         .catch(err => console.log("RAP metadata not found yet."));
 }
 
-function fetchCAMMetadata() {
-    fetch('static/cam_metadata.json?t=' + new Date().getTime())
-        .then(r => r.json())
+function fetchCAMPackage(kind) {
+    const isERO = kind === 'ero';
+    const filename = isERO ? 'ero_cam_metadata.json' : 'cam_metadata.json';
+    const layers = isERO ? eroCamLayers : camLayers;
+    return fetch('static/' + filename + '?t=' + Date.now(), {cache: 'no-store'})
+        .then(response => {if (!response.ok) throw new Error('CAM metadata unavailable'); return response.json();})
         .then(data => {
-            if (data.valid_time) {
-                const match = data.valid_time.match(/HREF (\d{2})Z \| REFS (\d{2})Z/);
-                if (match) {
-                    camCycles.href = match[1]; 
-                    camCycles.refs = match[2];
-                }
-            }
-
-            const hrefInit = new Date(data.href_init_utc || '');
-            const refsInit = new Date(data.refs_init_utc || '');
-            camInitTimes.href = Number.isNaN(hrefInit.getTime()) ? null : hrefInit;
-            camInitTimes.refs = Number.isNaN(refsInit.getTime()) ? null : refsInit;
-
-            if (data.bounds) {
-                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-                Object.values(camLayers).forEach(layer => {
-                    layer.setBounds(exactBounds);
-                    const base = layer._url.split('?')[0];
-                    layer.setUrl(base + '?t=' + new Date().getTime());
-                });
-            }
+            WPC_CAM.validate(data, kind);
+            validateRasterBounds(data.bounds, 'CAM');
+            if (isERO) eroCamMetadata = data; else camMetadata = data;
+            const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
+            Object.values(layers).forEach(layer => {
+                layer.setBounds(exactBounds);
+                const base = layer._url.split('?')[0];
+                layer.setUrl(base + '?v=' + encodeURIComponent(data.generated_at_utc));
+            });
+            refreshCAMAvailability();
         })
-        .catch(err => console.log("CAM metadata not found yet."));
+        .catch(error => {
+            // Retain a verified package only through its own valid period.
+            // Legacy HREF metadata is never interpreted as SPC guidance.
+            console.log('CAM package update:', error.message);
+            refreshCAMAvailability();
+        });
 }
-
-function fetchEROCAMMetadata() {
-    fetch('static/ero_cam_metadata.json?t=' + new Date().getTime())
-        .then(r => r.json())
-        .then(data => {
-            if (data.ero_window_str) eroValidRangeStr = data.ero_window_str;
-
-            const hrefInit = new Date(data.href_init_utc || '');
-            const refsInit = new Date(data.refs_init_utc || '');
-            if (!Number.isNaN(hrefInit.getTime())) {
-                eroCamCycles.href = String(hrefInit.getUTCHours()).padStart(2, '0');
-            }
-            if (!Number.isNaN(refsInit.getTime())) {
-                eroCamCycles.refs = String(refsInit.getUTCHours()).padStart(2, '0');
-            }
-
-            if (data.bounds) {
-                const exactBounds = L.latLngBounds(data.bounds[0], data.bounds[1]);
-                Object.values(eroCamLayers).forEach(layer => {
-                    layer.setBounds(exactBounds);
-                    const base = layer._url.split('?')[0];
-                    layer.setUrl(base + '?t=' + new Date().getTime());
-                });
-            }
-        })
-        .catch(err => console.log("ERO CAM metadata not found yet."));
-}
+function fetchCAMMetadata() { return fetchCAMPackage('cam'); }
+function fetchEROCAMMetadata() { return fetchCAMPackage('ero'); }
+window.setInterval(refreshCAMAvailability, 30000);
 
 function validateRasterBounds(bounds, productName) {
     if (
@@ -7017,32 +7018,6 @@ const rapLegendMapping = {
     "250mb Divergence": "static/leg_div.png"
 };
 
-const camLegendQPF = `
-    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px; max-width: 250px;">
-        <strong>Max Hourly QPF Probability (%)</strong><br>
-        <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
-            <div style="background: #ffffcc; flex: 1; padding: 2px 5px;">10</div>
-            <div style="background: #a1dab4; flex: 1; padding: 2px 5px;">30</div>
-            <div style="background: #41b6c4; flex: 1; padding: 2px 5px;">50</div>
-            <div style="background: #2c7fb8; flex: 1; padding: 2px 5px; color: white;">70</div>
-            <div style="background: #253494; flex: 1; padding: 2px 5px; color: white;">90+</div>
-        </div>
-    </div>
-`;
-
-const camLegendFFG = `
-    <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; text-align: center; color: black; font-size: 13px; max-width: 250px;">
-        <strong>Max FFG Exceedance Probability (%)</strong><br>
-        <div style="display: flex; margin-top: 5px; border: 1px solid #333;">
-            <div style="background: #ffffb2; flex: 1; padding: 2px 5px;">10</div>
-            <div style="background: #fecc5c; flex: 1; padding: 2px 5px;">30</div>
-            <div style="background: #fd8d3c; flex: 1; padding: 2px 5px;">50</div>
-            <div style="background: #f03b20; flex: 1; padding: 2px 5px; color: white;">70</div>
-            <div style="background: #bd0026; flex: 1; padding: 2px 5px; color: white;">90+</div>
-        </div>
-    </div>
-`;
-
 const hazardLegendHTML = `
     <div style="background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; color: black; font-size: 12px; min-width: 200px; text-align: left;">
         <strong style="display: block; text-align: center; margin-bottom: 5px; font-size: 13px;">Hydro Warnings & Advisories</strong>
@@ -7565,14 +7540,11 @@ function updateLegends() {
         addLegendBlock(mrmsLegendQPEMulti);
     }
 
-    const activeCAM = Array.from(activeLayerNames).find(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
-    if (activeCAM) {
-        if (activeCAM.includes('Max FFG Exceedance')) {
-            addLegendBlock(camLegendFFG);
-        } else {
-            addLegendBlock(camLegendQPF);
-        }
-    }
+    const activeCAMNames = Array.from(activeLayerNames).filter(name => WPC_CAM.modelFromName(name));
+    [true, false].forEach(ffg => {
+        const names = activeCAMNames.filter(name => name.includes('Max FFG Exceedance') === ffg);
+        if (names.length) addLegendBlock(WPC_CAM.legend(ffg, names));
+    });
 
     const activeRAP = Array.from(activeLayerNames).find(name => rapLegendMapping[name]);
     if (activeRAP) {
@@ -7785,57 +7757,14 @@ map.on('overlayadd', function(eventLayer) {
         }
     }
 
-    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS')) {
-        const isEROCAM = eventLayer.name.includes('[ERO]');
-        const displayedCycles = isEROCAM ? eroCamCycles : camCycles;
-        let titleText = "";
-        let cycleText = `HREF: ${displayedCycles.href}Z &nbsp;|&nbsp; REFS: ${displayedCycles.refs}Z`;
-        let targetCycleForMath = displayedCycles.href;
-        let targetInitForMath = isEROCAM ? null : camInitTimes.href;
-        
-        if (eventLayer.name.includes('SuperEnsemble')) {
-            titleText = "SuperEnsemble Blend";
-        } else if (eventLayer.name.includes('HREF')) {
-            titleText = "HREF Only";
-            cycleText = `Latest Run: ${displayedCycles.href}Z`;
-            targetCycleForMath = displayedCycles.href;
-            targetInitForMath = isEROCAM ? null : camInitTimes.href;
-        } else if (eventLayer.name.includes('REFS')) {
-            titleText = "REFS Only";
-            cycleText = `Latest Run: ${displayedCycles.refs}Z`;
-            targetCycleForMath = displayedCycles.refs;
-            targetInitForMath = isEROCAM ? null : camInitTimes.refs;
-        }
-
-        let validRangeStr = "Valid Time Unknown";
-        if (isEROCAM) {
-            titleText = titleText + " (Day 1 ERO)";
-            validRangeStr = eroValidRangeStr;
-        } else {
-            let currentWindow = "+3h to +9h";
-            let matchedKey = Object.keys(camLayers).find(key => camLayers[key] === eventLayer.layer);
-            if (matchedKey && matchedKey.includes('9h_to_15h')) {
-                currentWindow = "+9h to +15h";
-            }
-            validRangeStr = getValidTimeRange(
-                targetCycleForMath,
-                currentWindow,
-                targetInitForMath
-            );
-        }
-
-        let productName = "Probabilistic Guidance";
-        if (eventLayer.name.includes(':')) {
-            productName = eventLayer.name.split(':')[1].trim(); 
-        }
-
-        camTimeBox.innerHTML = `
-            <strong>${titleText}</strong><br>
-            <span style="color: #4fc3f7; font-weight: bold; font-size: 0.95em;">${productName}</span><br>
-            <span style="font-size: 0.9em;">${cycleText}</span>
-            <hr style="margin: 5px 0; border-color: #555;">
-            <span style="font-size: 0.95em; color: #ffeb3b;">Valid: ${validRangeStr}</span>
-        `;
+    if (WPC_CAM.modelFromName(eventLayer.name)) {
+        const kind = eventLayer.name.includes('[ERO]') ? 'ero' : 'cam';
+        const layers = kind === 'ero' ? eroCamLayers : camLayers;
+        const key = Object.keys(layers).find(k => layers[k] === eventLayer.layer);
+        eventLayer.layer._camDisplayName = eventLayer.name;
+        camActiveSelection = {kind, key: key || '', layer: eventLayer.layer, name: eventLayer.name};
+        refreshCAMAvailability();
+        camTimeBox.innerHTML = WPC_CAM.timeHTML(kind === 'ero' ? eroCamMetadata : camMetadata, kind, key || '', eventLayer.name);
         camTimeBox.style.display = 'block';
     }
 
@@ -7956,9 +7885,10 @@ map.on('overlayremove', function(eventLayer) {
         if (nldas3SlopeTimeBox) nldas3SlopeTimeBox.style.display = 'none';
     }
 
-    if (eventLayer.name.includes('SuperEnsemble') || eventLayer.name.includes('HREF') || eventLayer.name.includes('REFS') || eventLayer.name.includes('[ERO]')) {
-        const hasCAM = Array.from(activeLayerNames).some(name => name.includes('SuperEnsemble') || name.includes('HREF') || name.includes('REFS'));
+    if (WPC_CAM.modelFromName(eventLayer.name)) {
+        const hasCAM = Array.from(activeLayerNames).some(name => WPC_CAM.modelFromName(name));
         if (!hasCAM) camTimeBox.style.display = 'none';
+        else refreshCAMAvailability();
     }
     
     if (eventLayer.name.includes('NEXRAD Radar') || (eventLayer.name.includes('GOES-') && !glmConfigByName.has(eventLayer.name))) {
@@ -8378,20 +8308,20 @@ const dashboardSections = [
         title: 'CAM Nowcasts (+3h to +9h)',
         layers: [
             {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
-            {id: 'cam-3-9-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q1-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q1-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q2-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q2-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-3-9-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q3-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q3-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_refs'], kind: 'raster', nested: true}
+            {id: 'cam-3-9-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-3-9-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_omd_refs'], kind: 'raster', nested: true}
         ]
     },
     {
@@ -8399,20 +8329,20 @@ const dashboardSections = [
         title: 'CAM Nowcasts (+9h to +15h)',
         layers: [
             {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
-            {id: 'cam-9-15-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q1-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q1-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q2-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q2-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'cam-9-15-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q3-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_href'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q3-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_refs'], kind: 'raster', nested: true}
+            {id: 'cam-9-15-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'cam-9-15-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_omd_refs'], kind: 'raster', nested: true}
         ]
     },
     {
@@ -8420,20 +8350,20 @@ const dashboardSections = [
         title: 'Day 1 ERO CAMs',
         layers: [
             {id: 'ero-ffg-super', label: '<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_super'], kind: 'raster'},
-            {id: 'ero-ffg-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_href'], kind: 'raster', nested: true},
-            {id: 'ero-ffg-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_refs'], kind: 'raster', nested: true},
+            {id: 'ero-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_spc_refs'], kind: 'raster', nested: true},
+            {id: 'ero-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_omd_refs'], kind: 'raster', nested: true},
             {id: 'ero-q05-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_super'], kind: 'raster'},
-            {id: 'ero-q05-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_href'], kind: 'raster', nested: true},
-            {id: 'ero-q05-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'ero-q1-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_super'], kind: 'raster'},
-            {id: 'ero-q1-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_href'], kind: 'raster', nested: true},
-            {id: 'ero-q1-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'ero-q2-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_super'], kind: 'raster'},
-            {id: 'ero-q2-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_href'], kind: 'raster', nested: true},
-            {id: 'ero-q2-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_omd_refs'], kind: 'raster', nested: true},
             {id: 'ero-q3-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_super'], kind: 'raster'},
-            {id: 'ero-q3-href', label: '&nbsp;&nbsp;&nbsp;&nbsp;HREF [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_href'], kind: 'raster', nested: true},
-            {id: 'ero-q3-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;REFS [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_refs'], kind: 'raster', nested: true}
+            {id: 'ero-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_spc_refs'], kind: 'raster', nested: true},
+            {id: 'ero-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_omd_refs'], kind: 'raster', nested: true}
         ]
     },
     {
@@ -9017,5 +8947,6 @@ setTimeout(() => {
 
     refreshLegendDockSummary();
 }, 1500);
+
 
 

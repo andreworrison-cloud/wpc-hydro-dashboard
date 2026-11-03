@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
+import struct
+import hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -17,18 +21,18 @@ UTC = timezone.utc
 CAM_FILES = [
     *(f"cam_ffg_{window}_{model}.png"
       for window in ("3h_to_9h", "9h_to_15h")
-      for model in ("href", "refs", "super")),
+      for model in ("spc_refs", "omd_refs", "super")),
     *(f"cam_qpf_{window}_{threshold}_inch_{model}.png"
       for window in ("3h_to_9h", "9h_to_15h")
       for threshold in ("0.5", "1", "2", "3")
-      for model in ("href", "refs", "super")),
+      for model in ("spc_refs", "omd_refs", "super")),
 ]
 
 ERO_FILES = [
-    *(f"ero_ffg_{model}.png" for model in ("href", "refs", "super")),
+    *(f"ero_ffg_{model}.png" for model in ("spc_refs", "omd_refs", "super")),
     *(f"ero_qpf_{threshold}_inch_{model}.png"
       for threshold in ("0.5", "1", "2", "3")
-      for model in ("href", "refs", "super")),
+      for model in ("spc_refs", "omd_refs", "super")),
 ]
 
 RAP_FILES = [
@@ -97,59 +101,116 @@ def require_files(root: Path, names: list[str], label: str) -> None:
         )
 
 
-def validate_cam(root: Path, now: datetime) -> None:
-    meta = load_json(root / "cam_metadata.json")
-    href = parse_time(meta.get("href_init_utc"), "CAM HREF initialization")
-    refs = parse_time(meta.get("refs_init_utc"), "CAM REFS initialization")
-    if href != refs:
-        raise ValueError(
-            f"CAM HREF/REFS cycles are not aligned: {href.isoformat()} vs {refs.isoformat()}"
-        )
-    valid_end = href + timedelta(hours=15)
-    if now >= valid_end:
-        raise ValueError(
-            f"CAM retained package expired at {valid_end.isoformat()} "
-            f"(now {now.isoformat()})"
-        )
+def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict, datetime]:
+    prefix = "cam" if kind == "cam" else "ero_cam"
+    meta = load_json(root / (prefix + "_metadata.json"))
+    if meta.get("schema") != "wpc-spc-omd-cam-v1":
+        raise ValueError("Legacy HREF metadata cannot be published as SPC REFS")
+    spc = parse_time(meta.get("spc_refs_init_utc"), "SPC REFS initialization")
+    omd = parse_time(meta.get("omd_refs_init_utc"), "OMD REFS initialization")
+    if spc != omd or spc.hour not in (0, 6, 12, 18) or any((spc.minute, spc.second, spc.microsecond)):
+        raise ValueError("SPC/OMD cycles must be identical whole 00/06/12/18Z initializations")
+    if spc > now + timedelta(minutes=15):
+        raise ValueError("CAM initialization is in the future")
+    members = meta.get("members") or []
+    identity = [(m.get("family"), m.get("perturbation"), m.get("lag_hours")) for m in members]
+    expected_members = {("HRRR", "control", h) for h in (0, 6, 12)} | {
+        ("RRFS", "control", h) for h in (0, 6, 12)} | {
+        ("RRFS_ENS", f"m{n:03d}", 0) for n in (1, 2, 3, 5)}
+    if len(identity) != 10 or set(identity) != expected_members or meta.get("spc_member_count") != 10 or any(m.get("weight") != 1 for m in members):
+        raise ValueError("The fixed ten-member SPC population is incomplete or changed")
+    ffg = meta.get("ffg") or {}
+    published = ffg.get("source", {}).get("http_last_modified")
+    from email.utils import parsedate_to_datetime
+    if not published or parsedate_to_datetime(published).astimezone(UTC) > spc:
+        raise ValueError("SPC FFG was not demonstrably available at model initialization")
+    snap = parse_time(ffg.get("snapshot_time_utc"), "FFG snapshot")
+    ref = parse_time(ffg.get("reference_time_utc"), "FFG reference")
+    if not timedelta(0) <= spc-snap < timedelta(hours=3) or not timedelta(0) <= spc-ref < timedelta(hours=9):
+        raise ValueError("SPC cycle-time FFG snapshot or reference is stale")
+    if parse_time(ffg.get("asof_model_init_utc"), "FFG as-of initialization") != spc:
+        raise ValueError("FFG baseline belongs to a different model cycle")
+    periods = {"3h_to_9h": (3, 9), "9h_to_15h": (9, 15)} if kind == "cam" else {"ero": (max(0, 12-spc.hour), 36-spc.hour)}
     contract = meta.get("window_contract") or {}
-    if set(contract) != {"3h_to_9h", "9h_to_15h"}:
-        raise ValueError("CAM metadata does not contain both required nowcast windows")
-    require_files(root, CAM_FILES, "CAM")
-    print(
-        f"CAM package PASS: aligned {href:%Y-%m-%d %HZ}; "
-        f"{len(CAM_FILES)} PNGs; valid through {valid_end:%Y-%m-%d %HZ}."
-    )
+    if set(contract) != set(periods):
+        raise ValueError("Missing or unexpected CAM valid windows")
+    expected_hours = []
+    for key, (start, end) in periods.items():
+        w = contract[key]
+        hours = list(range(start+1, end+1)); expected_hours += hours
+        slots = [{"forecast_hour": h, "duration_hours": d} for h in hours
+                 for d in (1, 3, 6) if h-d >= start and (d == 1 or h % 3 == 0)]
+        if (w.get("forecast_hours") != hours or w.get("ffg_slots") != slots
+                or parse_time(w.get("valid_start_utc"), key+" start") != spc+timedelta(hours=start)
+                or parse_time(w.get("valid_end_utc"), key+" end") != spc+timedelta(hours=end)):
+            raise ValueError("Incomplete or mismatched accumulation window/cadence contract")
+    end = spc+timedelta(hours=max(b for a, b in periods.values()))
+    if now >= end:
+        raise ValueError("CAM retained package has expired")
+    sources = load_json(root / (prefix + "_sources.json"))
+    if sources.get("schema") != meta["schema"] or parse_time(sources.get("init_utc"), "Source initialization") != spc:
+        raise ValueError("Source evidence belongs to a different generation")
+    rows = sources.get("spc_member_hours") or []
+    expected_keys = {(m["id"], iso_end) for m in members for h in expected_hours
+                     for iso_end in [(spc+timedelta(hours=h)).isoformat()]}
+    actual_keys = {(r.get("member"), parse_time(r.get("valid_end_utc"), "Member valid end").isoformat()) for r in rows}
+    if len(rows) != len(expected_keys) or actual_keys != expected_keys or sources.get("expected_spc_member_hours") != len(expected_keys):
+        raise ValueError("Source evidence does not contain all ten members at every required hour")
+    by_id = {m["id"]: m for m in members}
+    for row in rows:
+        member = by_id[row["member"]]
+        mi = spc-timedelta(hours=member["lag_hours"])
+        valid = parse_time(row["valid_end_utc"], "Member valid end")
+        if (parse_time(row.get("init_utc"), "Member init") != mi
+                or parse_time(row.get("valid_start_utc"), "Member valid start") != valid-timedelta(hours=1)
+                or row.get("native_forecast_hour") != int((valid-mi).total_seconds()/3600)
+                or row.get("family") != member["family"] or row.get("perturbation") != member["perturbation"]
+                or not re.fullmatch("[0-9a-f]{64}", str(row.get("sha256", "")))):
+            raise ValueError("Source member identity, accumulation or hash is invalid")
+    omd_rows = sources.get("omd_fields") or []
+    if len(omd_rows) != 2*len(expected_hours) or {(r.get("forecast_hour"), r.get("product")) for r in omd_rows} != {(h, p) for h in expected_hours for p in ("prob", "ffri")}:
+        raise ValueError("OMD source evidence has missing or duplicate probability products")
+    expected_files = CAM_FILES if kind == "cam" else ERO_FILES
+    if set(meta.get("expected_files") or []) != set(expected_files):
+        raise ValueError("Metadata does not declare the complete new model image set")
+    require_files(root, expected_files, kind.upper())
+    hashes = meta.get("file_sha256") or {}
+    required_hashes = [*expected_files, prefix + "_sources.json"]
+    if set(hashes) != set(required_hashes):
+        raise ValueError("CAM image/source integrity manifest is incomplete")
+    for name in required_hashes:
+        if hashlib.sha256((root/name).read_bytes()).hexdigest() != hashes[name]:
+            raise ValueError("CAM package mixes generations or has changed bytes: " + name)
+    size = meta.get("rendering", {}).get("map_pixel_dimensions")
+    if size != [6000, 3600]:
+        raise ValueError("CAM product dimensions must remain 6000 x 3600")
+    for name in expected_files:
+        with (root/name).open("rb") as f:
+            header = f.read(24)
+        if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or list(struct.unpack(">II", header[16:24])) != size:
+            raise ValueError("Invalid or mixed-dimension CAM image: " + name)
+    bounds = meta.get("bounds")
+    if not isinstance(bounds, list) or len(bounds) != 2 or any(len(p) != 2 or any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in p) for p in bounds):
+        raise ValueError("Invalid CAM geographic bounds")
+    if not (-90 <= bounds[0][0] < bounds[1][0] <= 90 and -180 <= bounds[0][1] < bounds[1][1] <= 180):
+        raise ValueError("CAM geographic bounds are out of range")
+    return meta, spc
+
+
+def validate_cam(root: Path, now: datetime) -> None:
+    meta, init = validate_cam_generation(root, now, "cam")
+    print(f"CAM package PASS: aligned SPC/OMD {init:%Y-%m-%d %HZ}; 120/120 member-hours; {len(CAM_FILES)} PNGs.")
 
 
 def validate_ero(root: Path, now: datetime) -> None:
-    meta = load_json(root / "ero_cam_metadata.json")
-    href = parse_time(meta.get("href_init_utc"), "ERO HREF initialization")
-    refs = parse_time(meta.get("refs_init_utc"), "ERO REFS initialization")
-    start = parse_time(meta.get("ero_start_utc"), "ERO window start")
-    end = parse_time(meta.get("ero_end_utc"), "ERO window end")
-    if start >= end:
-        raise ValueError("ERO window start/end are invalid")
-    if now >= end:
-        raise ValueError(
-            f"ERO CAM retained package expired at {end.isoformat()} "
-            f"(now {now.isoformat()})"
-        )
-    window_type = meta.get("ero_window_type")
-    if window_type not in {"full_day1", "18z_update"}:
-        raise ValueError(f"Unexpected ERO window type: {window_type!r}")
-    if window_type == "18z_update" and href != refs:
-        raise ValueError("18Z ERO update requires matching HREF/REFS initializations")
-    coverage = int(meta.get("ero_coverage_hours", -1))
-    expected = int((end - start).total_seconds() // 3600)
-    if coverage != expected:
-        raise ValueError(
-            f"ERO coverage metadata mismatch: declared {coverage} h, expected {expected} h"
-        )
-    require_files(root, ERO_FILES, "ERO CAM")
-    print(
-        f"ERO CAM package PASS: {window_type}; HREF {href:%HZ}; REFS {refs:%HZ}; "
-        f"{len(ERO_FILES)} PNGs; valid through {end:%Y-%m-%d %HZ}."
-    )
+    meta, init = validate_cam_generation(root, now, "ero")
+    expected_type = "18z_update" if init.hour == 18 else "full_day1"
+    start = max(0, 12-init.hour); end = 36-init.hour
+    if (meta.get("ero_window_type") != expected_type or meta.get("ero_coverage_hours") != end-start
+            or parse_time(meta.get("ero_start_utc"), "ERO start") != init+timedelta(hours=start)
+            or parse_time(meta.get("ero_end_utc"), "ERO end") != init+timedelta(hours=end)):
+        raise ValueError("Invalid cycle-relative Day 1 ERO coverage")
+    print(f"ERO CAM package PASS: {expected_type}; aligned SPC/OMD {init:%HZ}; {10*(end-start)} member-hours; {len(ERO_FILES)} PNGs.")
 
 
 def validate_rap(root: Path, now: datetime) -> None:
@@ -244,3 +305,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
