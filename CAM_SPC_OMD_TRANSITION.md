@@ -126,7 +126,7 @@ source URLs, native forecast hours, hashes, cache use, and the FFG snapshot.
 - Live 3 November 12Z run: 120/120 distinct physical member-hours for CAM;
   240/240 for the full Day 1. Every raw GRIB-message hash was unique.
 - 30 CAM and 15 ERO overlays passed the new publication checks at 6000×3600.
-- 20 scientific/decoder regression tests and 9 presentation checks passed.
+- 20 scientific/decoder regression tests and 10 presentation checks passed.
 - Independent reconstruction from native hourly rainfall at four locations
   across all three periods matched all 12 location/window comparisons.
 - Whole-field probability bounds, SPC 10-point quantization and equal-weight

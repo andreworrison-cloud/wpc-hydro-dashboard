@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const display = require('../cam_display.js');
 const root = path.resolve(__dirname, '..');
 let count = 0;
@@ -48,5 +49,25 @@ test('All 45 menu layers bind to real new image keys',()=>{
     const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
     assert.ok(html.indexOf('cam_display.js')<html.indexOf('app.js'));
     assert.match(html,/app\.js\?cam=spc-omd-cam-v1/);
+});
+test('Automatic refresh updates the real time-box element and tolerates pre-DOM startup',()=>{
+    const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+    const start=app.indexOf('function refreshCAMAvailability()');
+    const body=app.slice(start,app.indexOf('\n}\n',start)+2);
+    const box={innerHTML:''};
+    const layer={options:{opacity:.7},setOpacity(value){this.options.opacity=value;}};
+    const key='ffg_9h_to_15h_spc_refs';
+    const fixed=new Date('2026-11-03T20:00:00Z');
+    const context={camLayers:{[key]:layer},eroCamLayers:{},camMetadata:meta,eroCamMetadata:null,
+        camActiveSelection:{kind:'cam',key,layer,name:'SPC REFS: Max FFG Exceedance'},
+        map:{hasLayer:()=>true},document:{getElementById:()=>box},
+        WPC_CAM:{...display,state:(m,k,p)=>display.state(m,k,p,fixed),timeHTML:(m,k,p,n)=>display.timeHTML(m,k,p,n,fixed)}};
+    vm.runInNewContext('('+body+')()',context);
+    assert.match(box.innerHTML,/03 Nov 21Z – 04 Nov 03Z/);
+    layer.options.opacity=.25;
+    vm.runInNewContext('('+body+')()',context);
+    assert.equal(layer.options.opacity,.25);
+    context.document.getElementById=()=>null;
+    assert.doesNotThrow(()=>vm.runInNewContext('('+body+')()',context));
 });
 console.log(`${count} CAM presentation checks passed.`);

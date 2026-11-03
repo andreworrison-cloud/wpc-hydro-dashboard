@@ -4254,7 +4254,8 @@ function refreshCAMAvailability() {
     }
     if (camActiveSelection) {
         const {kind, key, name} = camActiveSelection;
-        camTimeBox.innerHTML = WPC_CAM.timeHTML(kind === 'ero' ? eroCamMetadata : camMetadata, kind, key, name);
+        const timeBox = document.getElementById('cam-time-box');
+        if (timeBox) timeBox.innerHTML = WPC_CAM.timeHTML(kind === 'ero' ? eroCamMetadata : camMetadata, kind, key, name);
     }
 }
 
