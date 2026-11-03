@@ -7,7 +7,6 @@ configurations share members and are not independent ensembles.
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 import gc
 import hashlib
 import json
@@ -33,7 +32,7 @@ from cam_probability import WindowAccumulator, expected_ffg_durations, blend_max
 
 UTC = timezone.utc
 LOG = logging.getLogger(__name__)
-SCHEMA = "wpc-spc-omd-cam-v1"
+SCHEMA = "wpc-spc-omd-cam-v2"
 QPF_IN = (.5, 1, 2, 3)
 PROBABILITY_LEVELS = (10, 30, 50, 70, 90, 100.0001)
 QPF_COLORS = ("#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494")
@@ -69,25 +68,30 @@ def read_members():
     return members
 
 
-def load_cycle_ffg(sources, init):
-    """Freeze the freshest official FFG actually published at/before model init.
+def require_cycle_ffg(meta, init):
+    """The national official FFG snapshot and encoded reference must match init."""
+    for key in ("snapshot_time_utc", "reference_time_utc"):
+        if datetime.fromisoformat(meta[key].replace("Z", "+00:00")) != init:
+            raise ValueError(f"{key} does not match the ensemble/official FFG cycle")
+    if datetime.fromisoformat(meta["model_cycle_utc"].replace("Z", "+00:00")) != init:
+        raise ValueError("FFG metadata belongs to a different model cycle")
+    if meta.get("ffg_cycle_policy") != "official_synoptic_model_cycle":
+        raise ValueError("Unqualified FFG cycle policy")
 
-    A nominal 12Z filename posted at 12:38Z is not an as-of-12Z input. The
-    older 11Z snapshot is eligible if its publication and reference are fresh.
-    The notebook's checked duration/value decoder is reused unchanged.
+
+def load_cycle_ffg(sources, init):
+    """Use the official RFC FFG for this exact synoptic ensemble cycle.
+
+    An 18Z suite requires the official 18Z snapshot with encoded reference 18Z.
+    Publication after 18Z is normal and allowed. No 17Z, latest-available,
+    older-reference or previous-cycle substitution is permitted.
     """
-    folder = sources.cache / "cycle-ffg-v1" / init.strftime("%Y%m%d%H")
+    folder = sources.cache / "cycle-ffg-v2" / init.strftime("%Y%m%d%H")
     path, meta_path = folder / "ffg.npz", folder / "metadata.json"
     if path.exists() and meta_path.exists():
         try:
             meta = json.loads(meta_path.read_text())
-            if meta["asof_model_init_utc"] != iso(init):
-                raise ValueError("Cycle FFG cache identity mismatch")
-            published = parsedate_to_datetime(meta["source"]["http_last_modified"]).astimezone(UTC)
-            snapshot = datetime.fromisoformat(meta["snapshot_time_utc"])
-            reference = datetime.fromisoformat(meta["reference_time_utc"])
-            if published > init or not timedelta(0) <= init-snapshot < timedelta(hours=3) or not timedelta(0) <= init-reference < timedelta(hours=9):
-                raise ValueError("Unqualified cached FFG timing")
+            require_cycle_ffg(meta, init)
             with np.load(path, allow_pickle=False) as z:
                 fields = {d: z[f"ffg_{d}"] for d in (1, 3, 6)}
             g = meta["grid"]
@@ -98,24 +102,21 @@ def load_cycle_ffg(sources, init):
             meta["from_cycle_cache"] = True
             return fields, grid, meta
         except Exception as exc:
-            LOG.warning("Discarding unusable cycle FFG checkpoint: %s", exc)
-    errors = []
-    for lag in range(3):
-        snapshot = (init-timedelta(hours=lag)).strftime("%Y%m%d%H")
-        try:
-            fields, grid, meta = load_ffg(sources, init, snapshot=snapshot)
-            modified = meta["source"].get("http_last_modified")
-            if not modified or parsedate_to_datetime(modified).astimezone(UTC) > init:
-                raise ValueError("FFG publication was later than model initialization, or cannot be verified")
-            meta.update(asof_model_init_utc=iso(init), from_cycle_cache=False,
-                        policy="fresh official snapshot demonstrably published by model initialization; frozen for this cycle")
-            folder.mkdir(parents=True, exist_ok=True)
-            atomic_npz(path, **{f"ffg_{d}": a for d, a in fields.items()})
-            atomic_json(meta_path, meta)
-            return fields, grid, meta
-        except Exception as exc:
-            errors.append(f"{snapshot}: {exc}")
-    raise RuntimeError("No qualified cycle-time FFG snapshot: " + "; ".join(errors))
+            LOG.warning("Discarding FFG cache that fails exact-cycle qualification: %s", exc)
+    snapshot = init.strftime("%Y%m%d%H")
+    try:
+        fields, grid, meta = load_ffg(sources, datetime.now(UTC),
+                                     snapshot=snapshot, expected_cycle=init)
+        require_cycle_ffg(meta, init)
+    except Exception as exc:
+        raise RuntimeError(f"Official {iso(init)} RFC FFG is unavailable/unqualified; no earlier FFG substitution is allowed: {exc}") from exc
+    meta["from_cycle_cache"] = False
+    folder.mkdir(parents=True, exist_ok=True)
+    atomic_npz(path, **{f"ffg_{d}": a for d, a in fields.items()})
+    atomic_json(meta_path, meta)
+    LOG.info("Official common FFG cycle %s; snapshot %s; encoded reference %s; SHA256 %s",
+             iso(init), meta["snapshot_time_utc"], meta["reference_time_utc"], meta["source"]["sha256"])
+    return fields, grid, meta
 
 
 def select_cycle(kind, sources, omd, members, now, pinned=None):
@@ -262,7 +263,16 @@ def run(kind, *, cache=Path("grib_cache_cam_members"), output=Path("static"), pi
     sources = Sources(cache, workers); omd = OMDReader(sources); members = read_members()
     init, windows, preflight = select_cycle(kind, sources, omd, members, now, pinned)
     ffg, ffg_grid, ffg_meta = load_cycle_ffg(sources, init)
+    require_cycle_ffg(ffg_meta, init)
     products, grid, hourly_sources, contracts = compute(kind, init, windows, sources, omd, members, ffg, ffg_grid)
+    # Native OMD FFRI is bound to its synoptic initialization under the
+    # operational FFG contract. SPC must use that same official FFG cycle.
+    for record in omd.records:
+        if record["product"] == "ffri":
+            if datetime.fromisoformat(record["init_utc"]) != init:
+                raise ValueError("OMD FFRI initialization differs from the official FFG cycle")
+            record["ffg_reference_time_utc"] = iso(init)
+            record["ffg_reference_basis"] = "native OMD official synoptic-cycle FFG contract"
     expected = len(members)*sum(b-a for a, b in windows.values())
     if len(hourly_sources) != expected or len({(r["member"], r["valid_end_utc"]) for r in hourly_sources}) != expected:
         raise ValueError("Member-hour population is incomplete or duplicated")
@@ -274,13 +284,15 @@ def run(kind, *, cache=Path("grib_cache_cam_members"), output=Path("static"), pi
             "spc_refs_init_utc": iso(init), "omd_refs_init_utc": iso(init),
             "valid_start_utc": iso(init+timedelta(hours=start)), "valid_end_utc": iso(init+timedelta(hours=end)),
             "window_contract": contracts, "members": members, "spc_member_count": 10,
-            "ffg": ffg_meta, "hourly_qpf_thresholds_in": list(QPF_IN), "ffg_durations_hours": [1, 3, 6],
+            "ffg": ffg_meta, "common_ffg_reference_utc": iso(init),
+            "hourly_qpf_thresholds_in": list(QPF_IN), "ffg_durations_hours": [1, 3, 6],
             "method": {"probability": "maximum of individual rolling-window neighborhood member frequencies",
                        "ffg_combination": "maximum across duration-specific probabilities and eligible times; no duration/time event union",
                        "spc_neighborhood_radius_km": 40, "extra_neighborhood_or_smoothing": False,
                        "ffg_cadence": "1h hourly; 3h/6h at forecast hours divisible by 3; entire accumulation inside selected window",
-                       "spc_ffg_baseline": "official numerical FFG published by model initialization, frozen per cycle",
-                       "omd_ffg_baseline": "native producer FFG baseline; raw producer snapshot identity is not published in this GRIB",
+                       "spc_ffg_baseline": "official RFC FFG for the exact synoptic ensemble cycle; publication after initialization is allowed",
+                       "omd_ffg_baseline": "native OMD official synoptic-cycle RFC FFG contract; same FFG cycle required for SPC",
+                       "common_ffg_reference_utc": iso(init),
                        "omd_processing": "native producer neighborhood probabilities (generating process 194); no additional dilation",
                        "blend": "50% SPC suite maximum + 50% OMD suite maximum on identical native grids and valid periods; both required",
                        "shared_members": True, "independent_ensemble_samples": False,

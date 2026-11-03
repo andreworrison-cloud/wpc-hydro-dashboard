@@ -57,32 +57,55 @@ OMD products use indexed byte ranges when possible and bounded full GRIB
 downloads otherwise. Quick discovery probes are separate from retried data
 transfers, so an unfinished new cycle does not cause lengthy repeated downloads.
 
-## FFG timing and native OMD qualification
+## Common official FFG cycle
 
-SPC uses one official WPC numerical FFG mosaic **demonstrably published by
-the model initialization**, frozen for that cycle and shared between the two
-scripts. Filename timestamps alone are insufficient. Publication must not be
-later than initialization; at initialization, snapshot age must be <3 h and
-encoded reference age <9 h. Durations, units, depths, masks and projection are
-checked. FFG is sampled onto the native member grid by nearest neighbor.
+**SPC REFS and OMD REFS must use the same official synoptic-cycle RFC FFG.**
+For an 18Z ensemble cycle, SPC uses the official 18Z national 1-/3-/6-hour FFG
+mosaic corresponding to the OMD 18Z producer cycle. The same rule applies at
+00Z, 06Z and 12Z. The reference is the current suite cycle, including for the
+older physical forecasts that constitute its time-lagged members.
 
-For example, the 3 November 12Z snapshot was posted at 12:38Z. It is ineligible
-for an as-of-12Z calculation; the 11Z snapshot posted at 11:38Z is eligible.
-Re-running the same cycle does not replace that baseline with newer FFG.
+Publication after model initialization is allowed: an official 18Z file posted
+at 18:38Z is eligible for the 18Z suite. A 17Z file is not eligible. Requiring
+publication before initialization was an error in the first dashboard
+integration and has been removed.
 
-OMD retains **native producer** probabilities. The reader verifies the cycle,
-time interval, threshold, neighborhood-process identifier 194, REFS model
-identifier 136, and 14-member probability metadata. It applies no additional
-neighborhood. Negative native PPFFG values, including the producer's −10
-no-coverage sentinel and intermediate negative values, remain missing rather
-than becoming zero. Tiny GRIB packing errors around 0/100 are bounded separately.
+Both the official archive filename timestamp and the encoded FFG reference
+must equal the model cycle. A file labeled 18Z but encoded with an older
+reference is rejected. Missing, mixed-cycle or unqualified official FFG
+withholds the new package; there is no previous-hour, latest-available or
+previous-cycle FFG substitution. An independently verified earlier *complete
+suite* may remain visible until its own window expires, with its actual
+initialization and matching official FFG cycle clearly displayed.
 
-The native OMD GRIB does **not** identify the exact source FFG mosaic. Its
-internal producer postprocessing is retained. Therefore the two displayed
-FFG perspectives share window, threshold-duration and maximum definitions,
-but they are **not a controlled roster-only experiment with a certified
-identical FFG snapshot and postprocessing kernel**. The metadata and FFG legend
-state the distinction. No claim of identical internal SPC/NCEP processing is made.
+The exact official national mosaic is frozen per cycle and shared by both
+dashboard scripts. Encoded 1-/3-/6-hour durations, units, positive depths, masks
+and projection are checked. Spatial gaps stay missing. FFG is sampled onto the
+native member grid by nearest neighbor. Individual RFC input issuance times
+are not separately encoded in this national mosaic.
+
+OMD retains its native producer probabilities under the official synoptic-cycle
+FFG contract. The reader verifies the model initialization, time interval,
+threshold, neighborhood-process identifier 194, REFS model identifier 136,
+and 14-member probability metadata. OMD records state the required common FFG
+cycle and explicitly identify it as the operational producer contract; the
+native probability GRIB does not repeat the raw FFG input-file hash. SPC input
+provenance records the downloaded official mosaic URL, encoded reference and
+SHA256. We do not infer a different FFG baseline from that metadata limitation.
+
+No extra neighborhood is applied to native OMD probabilities. Negative PPFFG
+values, including the producer's −10 no-coverage sentinel and intermediate
+negative values, remain missing rather than becoming zero. Tiny GRIB packing
+errors around 0/100 are bounded separately.
+
+Schema `wpc-spc-omd-cam-v2`, FFG cache `cycle-ffg-v2`, and Actions cache keys
+`cam-native-v2-*` invalidate products based on the erroneous prior-hour rule.
+Raw hourly forecast checkpoints may be reused after their identity checks;
+old FFG arrays and v1 output packages cannot pass the new qualification.
+Publication and frontend checks require both model cycles, the official FFG
+snapshot, encoded reference, FFG model-cycle binding and common FFG reference
+to agree. FFG legends identify the shared baseline, and every FFG time box
+(including OMD and SuperEnsemble) displays the official common FFG cycle.
 
 ## SuperEnsemble and presentation
 
@@ -123,10 +146,17 @@ source URLs, native forecast hours, hashes, cache use, and the FFG snapshot.
 
 ## Validation
 
+The original integration checks below established the precipitation and
+rendering behavior. The FFG timing correction requires regenerated v2 packages;
+a v1 run does not certify a corrected FFG baseline.
+
 - Live 3 November 12Z run: 120/120 distinct physical member-hours for CAM;
   240/240 for the full Day 1. Every raw GRIB-message hash was unique.
 - 30 CAM and 15 ERO overlays passed the new publication checks at 6000×3600.
-- 20 scientific/decoder regression tests and 10 presentation checks passed.
+- Regression checks cover the precipitation operators, native OMD decoder,
+  exact official FFG cycle, publication after initialization, rejection of
+  prior-hour/older-reference FFG, cache invalidation and all three time boxes.
+  GitHub Actions runs these checks for the corrected source.
 - Independent reconstruction from native hourly rainfall at four locations
   across all three periods matched all 12 location/window comparisons.
 - Whole-field probability bounds, SPC 10-point quantization and equal-weight

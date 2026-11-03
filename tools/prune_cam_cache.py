@@ -19,7 +19,7 @@ def prune(manifest_path, cache_root):
         path = root/'omd-native-v1'/init/f"{row['product']}_f{row['forecast_hour']:02d}_{signature}.grib2"
         keep.update((path, path.with_suffix('.json')))
     init = datetime.fromisoformat(manifest['init_utc'].replace('Z', '+00:00')).strftime('%Y%m%d%H')
-    keep.update((root/'cycle-ffg-v1'/init/'ffg.npz', root/'cycle-ffg-v1'/init/'metadata.json'))
+    keep.update((root/'cycle-ffg-v2'/init/'ffg.npz', root/'cycle-ffg-v2'/init/'metadata.json'))
     raw = Path(manifest['ffg'].get('source_file', '')).resolve()
     if raw.is_relative_to(root):
         keep.add(raw)

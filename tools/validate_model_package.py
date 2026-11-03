@@ -104,8 +104,8 @@ def require_files(root: Path, names: list[str], label: str) -> None:
 def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict, datetime]:
     prefix = "cam" if kind == "cam" else "ero_cam"
     meta = load_json(root / (prefix + "_metadata.json"))
-    if meta.get("schema") != "wpc-spc-omd-cam-v1":
-        raise ValueError("Legacy HREF metadata cannot be published as SPC REFS")
+    if meta.get("schema") != "wpc-spc-omd-cam-v2":
+        raise ValueError("Legacy or prior-hour FFG packages cannot be published as corrected SPC/OMD guidance")
     spc = parse_time(meta.get("spc_refs_init_utc"), "SPC REFS initialization")
     omd = parse_time(meta.get("omd_refs_init_utc"), "OMD REFS initialization")
     if spc != omd or spc.hour not in (0, 6, 12, 18) or any((spc.minute, spc.second, spc.microsecond)):
@@ -120,16 +120,14 @@ def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict,
     if len(identity) != 10 or set(identity) != expected_members or meta.get("spc_member_count") != 10 or any(m.get("weight") != 1 for m in members):
         raise ValueError("The fixed ten-member SPC population is incomplete or changed")
     ffg = meta.get("ffg") or {}
-    published = ffg.get("source", {}).get("http_last_modified")
-    from email.utils import parsedate_to_datetime
-    if not published or parsedate_to_datetime(published).astimezone(UTC) > spc:
-        raise ValueError("SPC FFG was not demonstrably available at model initialization")
-    snap = parse_time(ffg.get("snapshot_time_utc"), "FFG snapshot")
-    ref = parse_time(ffg.get("reference_time_utc"), "FFG reference")
-    if not timedelta(0) <= spc-snap < timedelta(hours=3) or not timedelta(0) <= spc-ref < timedelta(hours=9):
-        raise ValueError("SPC cycle-time FFG snapshot or reference is stale")
-    if parse_time(ffg.get("asof_model_init_utc"), "FFG as-of initialization") != spc:
-        raise ValueError("FFG baseline belongs to a different model cycle")
+    snap = parse_time(ffg.get("snapshot_time_utc"), "Official FFG snapshot")
+    ref = parse_time(ffg.get("reference_time_utc"), "Official FFG reference")
+    cycle = parse_time(ffg.get("model_cycle_utc"), "FFG model cycle")
+    common = parse_time(meta.get("common_ffg_reference_utc"), "Common SPC/OMD FFG reference")
+    if snap != spc or ref != spc or cycle != spc or common != spc:
+        raise ValueError("SPC, OMD, official FFG snapshot and encoded FFG reference must all use the same synoptic cycle")
+    if ffg.get("ffg_cycle_policy") != "official_synoptic_model_cycle":
+        raise ValueError("FFG publication-before-init/older-cycle policies are forbidden")
     periods = {"3h_to_9h": (3, 9), "9h_to_15h": (9, 15)} if kind == "cam" else {"ero": (max(0, 12-spc.hour), 36-spc.hour)}
     contract = meta.get("window_contract") or {}
     if set(contract) != set(periods):
@@ -170,6 +168,9 @@ def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict,
     omd_rows = sources.get("omd_fields") or []
     if len(omd_rows) != 2*len(expected_hours) or {(r.get("forecast_hour"), r.get("product")) for r in omd_rows} != {(h, p) for h in expected_hours for p in ("prob", "ffri")}:
         raise ValueError("OMD source evidence has missing or duplicate probability products")
+    for row in omd_rows:
+        if row.get("product") == "ffri" and parse_time(row.get("ffg_reference_time_utc"), "OMD FFG cycle contract") != ref:
+            raise ValueError("OMD and SPC FFG reference cycles differ")
     expected_files = CAM_FILES if kind == "cam" else ERO_FILES
     if set(meta.get("expected_files") or []) != set(expected_files):
         raise ValueError("Metadata does not declare the complete new model image set")

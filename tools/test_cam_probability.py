@@ -7,15 +7,54 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import rasterio
+
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cam_probability import WindowAccumulator, expected_ffg_durations, blend_maxima
-from cam_ensemble import windows_for, read_members, remove_legacy_images, load_cycle_ffg
-from cam_member_io import Grid, member_urls
+from cam_ensemble import windows_for, read_members, remove_legacy_images, load_cycle_ffg, require_cycle_ffg
+from cam_member_io import Grid, member_urls, load_ffg
 from cam_omd import decode, selected_ranges, product_urls
 
 UTC = timezone.utc
 INIT = datetime(2026, 11, 3, 12, tzinfo=UTC)
+
+
+def official_cycle_meta(init,grid):
+    return {'snapshot_time_utc':init.isoformat(),'reference_time_utc':init.isoformat(),
+            'model_cycle_utc':init.isoformat(),'ffg_cycle_policy':'official_synoptic_model_cycle',
+            'source':{'http_last_modified':(init+timedelta(minutes=38)).strftime('%a, %d %b %Y %H:%M:%S GMT'),
+                      'sha256':'a'*64},'grid':grid.metadata()}
+
+
+def official_ffg_fixture(cache,init,reference=None):
+    # Mock only transport/container I/O; run the actual FFG band/time qualification.
+    reference=reference or init
+    class Source:
+        def __init__(self):self.cache=cache
+        def get(self,url,**kwargs):
+            if url.endswith('/'):
+                return f'<a href="5kmffg_{init:%Y%m%d%H}.g2">official</a>'.encode(),{}
+            return b'fixture',{'sha256':'a'*64,'http_last_modified':
+                              (init+timedelta(minutes=38)).strftime('%a, %d %b %Y %H:%M:%S GMT')}
+    class Dataset:
+        indexes=(1,3,6)
+        shape=(3,3)
+        crs=rasterio.crs.CRS.from_epsg(4326)
+        transform=rasterio.Affine(1,0,0,0,-1,3)
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def tags(self,d):
+            p=[0]*29
+            p[21]=p[25]=1;p[26]=d
+            return {'GRIB_ELEMENT':'FFLDG','GRIB_UNIT':'[kg/(m^2)]',
+                    'GRIB_IDS':'CENTER=7(US-NCEP) SUBCENTER=5(HPC)','GRIB_PDS_PDTN':'8',
+                    'GRIB_PDS_TEMPLATE_ASSEMBLED_VALUES':' '.join(map(str,p)),
+                    'GRIB_REF_TIME':str(int(reference.timestamp())),
+                    'GRIB_VALID_TIME':str(int((reference+timedelta(hours=d)).timestamp())),
+                    'GRIB_FORECAST_SECONDS':'0'}
+        def read(self,d,masked=True):return np.ma.array(np.ones((3,3),np.float32)*25.4)
+    return Source(),Dataset()
 
 
 class ProbabilityTests(unittest.TestCase):
@@ -122,22 +161,80 @@ class ProbabilityTests(unittest.TestCase):
             remove_legacy_images(root,'cam_')
             self.assertEqual({p.name for p in root.iterdir()}, {'cam_test_spc_refs.png','cam_test_omd_refs.png','cam_test_super.png','ero_test_href.png'})
 
-    def test_cycle_ffg_does_not_use_later_publication(self):
-        grid=Grid((3,3),'EPSG:4326',(1,0,0,0,-1,3))
+    def test_official_cycle_ffg_allows_publication_after_initialization(self):
+        grid=Grid((3,3),rasterio.crs.CRS.from_epsg(4326).to_wkt(),(1,0,0,0,-1,3))
+        for hour in (0,6,12,18):
+            init=INIT.replace(hour=hour)
+            calls=[]
+            def fake(sources,when,snapshot,expected_cycle):
+                calls.append(snapshot)
+                self.assertEqual(expected_cycle,init)
+                meta=official_cycle_meta(init,grid)
+                return {d:np.ones((3,3)) for d in (1,3,6)},grid,meta
+            with self.subTest(cycle=hour),tempfile.TemporaryDirectory() as temp,patch('cam_ensemble.load_ffg',fake):
+                class Source:cache=Path(temp)
+                _,_,meta=load_cycle_ffg(Source(),init)
+                self.assertEqual(calls,[init.strftime('%Y%m%d%H')])
+                self.assertEqual(meta['reference_time_utc'],init.isoformat())
+                _,_,cached=load_cycle_ffg(Source(),init)
+                self.assertTrue(cached['from_cycle_cache'])
+                self.assertEqual(len(calls),1)
+
+    def test_cycle_ffg_never_substitutes_an_earlier_snapshot(self):
         calls=[]
-        def fake(sources,when,snapshot):
+        def unavailable(sources,when,snapshot,expected_cycle):
             calls.append(snapshot)
-            stamp=INIT-timedelta(hours=0 if snapshot.endswith('12') else 1)
-            published=stamp+timedelta(minutes=38)
-            meta={'snapshot_time_utc':stamp.isoformat(),'reference_time_utc':INIT.replace(hour=6).isoformat(),
-                  'source':{'http_last_modified':published.strftime('%a, %d %b %Y %H:%M:%S GMT')},'grid':grid.metadata()}
-            return {d:np.ones((3,3)) for d in (1,3,6)},grid,meta
-        with tempfile.TemporaryDirectory() as temp,patch('cam_ensemble.load_ffg',fake):
+            raise ValueError('official cycle not posted yet')
+        with tempfile.TemporaryDirectory() as temp,patch('cam_ensemble.load_ffg',unavailable):
             class Source:cache=Path(temp)
-            _,_,meta=load_cycle_ffg(Source(),INIT)
-            self.assertEqual(calls,['2026110312','2026110311'])
-            self.assertEqual(meta['snapshot_time_utc'],(INIT-timedelta(hours=1)).isoformat())
-            load_cycle_ffg(Source(),INIT);self.assertEqual(len(calls),2)
+            with self.assertRaisesRegex(RuntimeError,'no earlier FFG substitution'):
+                load_cycle_ffg(Source(),INIT)
+        self.assertEqual(calls,['2026110312'])
+
+    def test_cycle_ffg_rejects_prior_hour_or_older_encoded_reference(self):
+        grid=Grid((3,3),'EPSG:4326',(1,0,0,0,-1,3))
+        for key in ('snapshot_time_utc','reference_time_utc','model_cycle_utc'):
+            bad=official_cycle_meta(INIT,grid)
+            bad[key]=(INIT-timedelta(hours=1)).isoformat()
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                require_cycle_ffg(bad,INIT)
+
+    def test_cycle_ffg_ignores_prior_policy_cache(self):
+        grid=Grid((3,3),rasterio.crs.CRS.from_epsg(4326).to_wkt(),(1,0,0,0,-1,3))
+        with tempfile.TemporaryDirectory() as temp:
+            class Source:cache=Path(temp)
+            for version in ('cycle-ffg-v1','cycle-ffg-v2'):
+                folder=Path(temp)/version/INIT.strftime('%Y%m%d%H')
+                folder.mkdir(parents=True)
+                bad=official_cycle_meta(INIT,grid)
+                bad['snapshot_time_utc']=(INIT-timedelta(hours=1)).isoformat()
+                (folder/'metadata.json').write_text(json.dumps(bad))
+                np.savez(folder/'ffg.npz',**{f'ffg_{d}':np.full((3,3),99) for d in (1,3,6)})
+            def fake(sources,when,snapshot,expected_cycle):
+                return {d:np.ones((3,3)) for d in (1,3,6)},grid,official_cycle_meta(INIT,grid)
+            with patch('cam_ensemble.load_ffg',side_effect=fake) as fetch:
+                fields,_,meta=load_cycle_ffg(Source(),INIT)
+                self.assertEqual(fetch.call_count,1)
+                self.assertFalse(meta['from_cycle_cache'])
+                self.assertEqual(float(fields[1][0,0]),1)
+
+    def test_official_ffg_loader_uses_cycle_not_publication_cutoff(self):
+        for hour in (0,6,12,18):
+            init=INIT.replace(hour=hour)
+            with self.subTest(cycle=hour),tempfile.TemporaryDirectory() as temp:
+                source,dataset=official_ffg_fixture(Path(temp),init)
+                with patch('cam_member_io.rasterio.open',return_value=dataset),patch('cam_member_io.grib_framing'):
+                    _,_,meta=load_ffg(source,init+timedelta(hours=1),expected_cycle=init)
+                self.assertEqual(meta['snapshot_time_utc'],init.isoformat())
+                self.assertEqual(meta['reference_time_utc'],init.isoformat())
+                self.assertIsNone(meta['expires_at_utc'])
+
+    def test_official_ffg_loader_rejects_stale_reference_inside_current_filename(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source,dataset=official_ffg_fixture(Path(temp),INIT,reference=INIT-timedelta(hours=6))
+            with patch('cam_member_io.rasterio.open',return_value=dataset),patch('cam_member_io.grib_framing'):
+                with self.assertRaisesRegex(ValueError,'encoded reference must equal'):
+                    load_ffg(source,INIT+timedelta(hours=1),expected_cycle=INIT)
 
     def test_index_selection_rejects_wrong_period_and_point_probability(self):
         index='1:0:d=2026110312:APCP:surface:5-6 hour acc fcst:prob >12.7:Neighborhood Probability\n2:100:d=2026110312:TMP:surface:6 hour fcst\n'

@@ -354,7 +354,14 @@ def ffg_band_contract(tags):
     return duration, datetime.fromtimestamp(ref, UTC), datetime.fromtimestamp(end, UTC)
 
 
-def load_ffg(sources, decision_time, snapshot=None):
+def load_ffg(sources, decision_time, snapshot=None, expected_cycle=None):
+    # Dashboard products require the official synoptic FFG cycle, not an
+    # earlier snapshot selected by a publication-before-initialization rule.
+    if expected_cycle is not None:
+        expected_snapshot = expected_cycle.strftime("%Y%m%d%H")
+        if snapshot is not None and snapshot != expected_snapshot:
+            raise ValueError("FFG snapshot must match the requested model cycle exactly")
+        snapshot = expected_snapshot
     listing = sources.get(FFG_SOURCE, max_bytes=3_000_000)[0].decode()
     names = sorted(set(re.findall(r'href="(5kmffg_\d{10}\.g2)"', listing)))
     eligible = [n for n in names if datetime.strptime(n[7:17], "%Y%m%d%H").replace(tzinfo=UTC) <= decision_time]
@@ -367,7 +374,10 @@ def load_ffg(sources, decision_time, snapshot=None):
     else:
         raise ValueError("No eligible official FFG snapshot")
     snapshot_time = datetime.strptime(name[7:17], "%Y%m%d%H").replace(tzinfo=UTC)
-    if not timedelta(0) <= decision_time-snapshot_time < timedelta(hours=3):
+    if expected_cycle is not None:
+        if snapshot_time != expected_cycle:
+            raise ValueError("Official FFG snapshot does not match the model cycle")
+    elif not timedelta(0) <= decision_time-snapshot_time < timedelta(hours=3):
         raise ValueError("Official FFG snapshot is stale at issue time")
     raw, transfer = sources.get(FFG_SOURCE + name)
     if transfer.get("http_last_modified"):
@@ -396,16 +406,24 @@ def load_ffg(sources, decision_time, snapshot=None):
         if set(fields) != {1, 3, 6} or len(references) != 1:
             raise ValueError("Missing FFG durations or mixed reference cycles")
         reference = references.pop()
-        if reference > snapshot_time or not timedelta(0) <= decision_time-reference < timedelta(hours=9):
+        if expected_cycle is not None:
+            if reference != expected_cycle:
+                raise ValueError("Official FFG encoded reference must equal the model cycle; older FFG is forbidden")
+        elif reference > snapshot_time or not timedelta(0) <= decision_time-reference < timedelta(hours=9):
             raise ValueError("FFG reference time is inconsistent or stale")
         grid = Grid.from_source(src)
-    expiry = min(snapshot_time+timedelta(hours=3), reference+timedelta(hours=9))
+    expiry = (None if expected_cycle is not None else
+              min(snapshot_time+timedelta(hours=3), reference+timedelta(hours=9)))
     meta = {"snapshot_time_utc": snapshot_time.isoformat(), "reference_time_utc": reference.isoformat(),
-            "encoded_period_ends_utc": period_ends, "expires_at_utc": expiry.isoformat(),
+            "encoded_period_ends_utc": period_ends, "expires_at_utc": expiry.isoformat() if expiry else None,
             "decision_time_utc": decision_time.isoformat(), "source": transfer, "source_file": str(path),
             "grid": grid.metadata(), "units": "mm", "policy": "one frozen issue-time FFG mosaic for the complete run",
             "individual_rfc_issue_times_available": False,
             "qualification": "valid encoded durations and values; spatial gaps remain masked"}
+    if expected_cycle is not None:
+        meta.update(model_cycle_utc=expected_cycle.isoformat(),
+                    ffg_cycle_policy="official_synoptic_model_cycle",
+                    policy="official model-cycle RFC FFG; snapshot and encoded reference must both match the ensemble cycle; later publication is permitted")
     return fields, grid, meta
 
 

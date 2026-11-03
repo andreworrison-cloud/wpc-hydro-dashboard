@@ -1,7 +1,7 @@
 /* Shared presentation contract for the SPC/OMD CAM transition. */
 (function (root) {
     'use strict';
-    const SCHEMA = 'wpc-spc-omd-cam-v1';
+    const SCHEMA = 'wpc-spc-omd-cam-v2';
     const models = ['spc_refs', 'omd_refs', 'super'];
     const labels = {spc_refs: 'SPC REFS (Experimental)', omd_refs: 'OMD REFS', super: 'SuperEnsemble (50/50)'};
     const colors = {
@@ -31,6 +31,12 @@
         if (!meta || meta.schema !== SCHEMA) throw new Error('Awaiting verified SPC/OMD CAM package');
         const spc = date(meta.spc_refs_init_utc), omd = date(meta.omd_refs_init_utc);
         if (!spc || !omd || spc.getTime() !== omd.getTime()) throw new Error('SPC/OMD cycles are not aligned');
+        const ffg = meta.ffg || {};
+        for (const value of [ffg.snapshot_time_utc, ffg.reference_time_utc, ffg.model_cycle_utc, meta.common_ffg_reference_utc]) {
+            const reference = date(value);
+            if (!reference || reference.getTime() !== spc.getTime()) throw new Error('Awaiting the same official model-cycle RFC FFG for SPC and OMD');
+        }
+        if (ffg.ffg_cycle_policy !== 'official_synoptic_model_cycle') throw new Error('Official cycle-matched RFC FFG is required');
         const keys = kind === 'ero' ? ['ero'] : ['3h_to_9h', '9h_to_15h'];
         if (meta.spc_member_count !== 10) throw new Error('SPC member population is incomplete');
         for (const key of keys) {
@@ -54,8 +60,8 @@
         if (!info.available) return `<strong>${title}</strong><br><span style="color:#ffeb3b;">${info.reason}</span>`;
         const init = utc(meta.spc_refs_init_utc);
         const field = name.split(':').slice(1).join(':').trim() || 'Probabilistic guidance';
-        const ffg = name.includes('FFG') && model !== 'omd_refs'
-            ? `<br><span style="font-size:.85em;">SPC FFG snapshot: ${utc(meta.ffg?.snapshot_time_utc)} (available by initialization)</span>` : '';
+        const ffg = name.includes('FFG')
+            ? `<br><span style="font-size:.85em;">Common official RFC FFG: ${utc(meta.common_ffg_reference_utc)}</span>` : '';
         return `<strong>${title}</strong><br><span style="color:#4fc3f7;font-weight:bold;">${field}</span><br>` +
             `<span style="font-size:.9em;">Initialization: ${init}</span><hr style="margin:5px 0;border-color:#555;">` +
             `<span style="color:#ffeb3b;">Valid: ${utc(info.window.valid_start_utc)} – ${utc(info.window.valid_end_utc)}</span>${ffg}`;
@@ -68,7 +74,7 @@
         return `<div style="background:white;padding:10px;border-radius:5px;font-family:sans-serif;text-align:center;color:black;font-size:13px;max-width:280px;">` +
             `<strong>${names.join(' / ')}</strong><br>${ffg ? 'Max FFG Exceedance' : 'Max Hourly QPF'} Probability (%)` +
             `<div style="display:flex;margin-top:5px;border:1px solid #333;">${boxes}</div>` +
-            `<div style="font-size:11px;margin-top:5px;">40-km neighborhood · peak in the stated window${ffg ? '<br>Maximum over 1-, 3- and 6-hour FFG probabilities<br>SPC: cycle-time FFG · OMD: producer FFG baseline' : ''}</div>` +
+            `<div style="font-size:11px;margin-top:5px;">40-km neighborhood · peak in the stated window${ffg ? '<br>Maximum over 1-, 3- and 6-hour FFG probabilities<br>Same official model-cycle RFC FFG for SPC and OMD' : ''}</div>` +
             (names.some(n => n.includes('SuperEnsemble')) ? '<div style="font-size:11px;margin-top:4px;">50% SPC maximum + 50% OMD maximum; configurations share members.</div>' : '') + '</div>';
     }
     root.WPC_CAM = {SCHEMA, models, labels, colors, date, utc, modelFromKey, modelFromName, validate, state, timeHTML, legend};
