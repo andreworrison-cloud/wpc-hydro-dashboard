@@ -104,8 +104,15 @@ def require_files(root: Path, names: list[str], label: str) -> None:
 def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict, datetime]:
     prefix = "cam" if kind == "cam" else "ero_cam"
     meta = load_json(root / (prefix + "_metadata.json"))
-    if meta.get("schema") != "wpc-spc-omd-cam-v2":
+    if meta.get("schema") != "wpc-spc-omd-cam-v3":
         raise ValueError("Legacy or prior-hour FFG packages cannot be published as corrected SPC/OMD guidance")
+    if meta.get("method", {}).get("probability_method") != "emc-neighborhood-qpf-local-ffg-gaussian-v1":
+        raise ValueError("SPC probability processing does not match the qualified producer method")
+    method = meta["method"]
+    if (method.get("native_neighborhood_radius_grid_cells") != 13
+            or method.get("probability_smoothing") != {"kernel": "Gaussian", "sigma_grid_cells": 5,
+                "half_width_grid_cells": 8, "sigma_km": 15, "half_width_km": 24}):
+        raise ValueError("Incorrect producer neighborhood or probability smoothing settings")
     spc = parse_time(meta.get("spc_refs_init_utc"), "SPC REFS initialization")
     omd = parse_time(meta.get("omd_refs_init_utc"), "OMD REFS initialization")
     if spc != omd or spc.hour not in (0, 6, 12, 18) or any((spc.minute, spc.second, spc.microsecond)):
@@ -148,6 +155,8 @@ def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict,
     sources = load_json(root / (prefix + "_sources.json"))
     if sources.get("schema") != meta["schema"] or parse_time(sources.get("init_utc"), "Source initialization") != spc:
         raise ValueError("Source evidence belongs to a different generation")
+    if sources.get("probability_method") != meta["method"]["probability_method"]:
+        raise ValueError("CAM source manifest uses a different probability method")
     rows = sources.get("spc_member_hours") or []
     expected_keys = {(m["id"], iso_end) for m in members for h in expected_hours
                      for iso_end in [(spc+timedelta(hours=h)).isoformat()]}

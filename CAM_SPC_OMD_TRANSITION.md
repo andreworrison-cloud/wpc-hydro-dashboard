@@ -42,9 +42,29 @@ required valid hour. Missing members are never dropped from the denominator.
 
 Only exact one-hour APCP GRIB records are retrieved. Native 3-km grids must
 match; rainfall is not interpolated. For FFG, each member's 1/3/6-hour rainfall
-sum is compared with the corresponding **local** numerical FFG first. A single
-nominal 40-km circular neighborhood ANY operation follows that comparison, then
-members are counted. No second neighborhood or additional smoothing is applied.
+sum is first replaced by its neighborhood maximum using EMC's native 13-grid-cell
+circle (39 km on the 3-km grid, conventionally labeled 40 km). That rainfall
+maximum is compared with FFG **at the output center**. The fixed-member
+probability is then smoothed using EMC's Gaussian settings: sigma 5 cells
+(15 km), truncated to a square half-width of 8 cells (24 km). Smoothing occurs
+at each eligible time/duration **before** taking the period maximum. Constant
+hourly QPF thresholds use the same neighborhood and probability smoothing.
+
+The initial SPC implementation instead compared local rainfall/FFG first,
+then expanded those exceedances through 40 km without producer smoothing.
+That is a different, valid experimental event-ANY statistic, but it was an
+incorrect match to native OMD processing and exaggerated the footprint of
+isolated low-FFG pockets in this dashboard comparison. It has been replaced
+in schema v3. Standalone notebooks retain their separately defined statistics.
+
+The implementation follows the published EMC source at commit
+[081f905354e5](https://github.com/NOAA-EMC/HREF/tree/081f905354e512b854f9505f49938991658475fc/sorc/refs_ensprod.fd):
+`sref_ens_gen.f` applies `neighborhood_max` to rainfall before the FFG
+comparison and calls `Gsmoothing` before publication; `util.f` defines the
+13-cell circle and Gaussian kernel. An exact row-filter decomposition avoids
+a slow per-cell circular scan. Missing rainfall invalidates the affected
+neighborhood/smoothing footprint. FFG no-data uses the producer's -10
+smoothing sentinel, with negative outputs and missing FFG centers masked.
 
 The native hourly reader and neighborhood operator derive from the verified
 SPC Day 1 v0.2 notebook. The dashboard's explicit peak/cadence rules are shared
@@ -93,15 +113,17 @@ native probability GRIB does not repeat the raw FFG input-file hash. SPC input
 provenance records the downloaded official mosaic URL, encoded reference and
 SHA256. We do not infer a different FFG baseline from that metadata limitation.
 
-No extra neighborhood is applied to native OMD probabilities. Negative PPFFG
+No extra neighborhood or Gaussian filter is applied to native OMD probabilities;
+they already contain the producer processing described above. Negative PPFFG
 values, including the producer's −10 no-coverage sentinel and intermediate
 negative values, remain missing rather than becoming zero. Tiny GRIB packing
 errors around 0/100 are bounded separately.
 
-Schema `wpc-spc-omd-cam-v2`, FFG cache `cycle-ffg-v2`, and Actions cache keys
-`cam-native-v2-*` invalidate products based on the erroneous prior-hour rule.
-Raw hourly forecast checkpoints may be reused after their identity checks;
-old FFG arrays and v1 output packages cannot pass the new qualification.
+Schema v2 fixed the FFG timing rule; schema `wpc-spc-omd-cam-v3` additionally
+requires the corrected producer probability method. The qualified FFG cache
+`cycle-ffg-v2` and Actions cache keys `cam-native-v2-*` remain reusable because
+the raw rainfall and correct cycle-matched FFG inputs are unchanged. Old FFG
+arrays and v1/v2 output packages cannot pass v3 publication qualification.
 Publication and frontend checks require both model cycles, the official FFG
 snapshot, encoded reference, FFG model-cycle binding and common FFG reference
 to agree. FFG legends identify the shared baseline, and every FFG time box
@@ -116,9 +138,10 @@ previously, not the maximum of hourly blended fields or a pooled 24-member
 ensemble. The configurations share members and are not independent samples.
 
 The original legend colors and boundaries (10/30/50/70/90/100%) are retained.
-The PNG renderer now uses those exact five legend colors. Ten-member SPC
-frequencies occur in 10-point increments; OMD and blended fields can have
-intermediate values. Values below 10% and unavailable cells are transparent.
+The PNG renderer now uses those exact five legend colors. Raw ten-member SPC
+frequencies occur in 10-point increments. The published SPC probabilities,
+OMD probabilities and blends can have intermediate values because probability
+smoothing is part of the product calculation. Values below 10% and unavailable cells are transparent.
 Output resolution remains 6000×3600 pixels in Web Mercator for Leaflet.
 
 Menus, legend titles and time boxes identify SPC REFS (experimental), OMD REFS,
@@ -143,6 +166,22 @@ publisher. Raw grids remain in Actions caches, bounded to the current verified
 suite before saving, with at most one immutable cache key per product/cycle.
 They are not committed to the durable source branch. Metadata records exact
 source URLs, native forecast hours, hashes, cache use, and the FFG snapshot.
+
+## Minnesota processing audit — 3 November 2026
+
+The initial 18Z SPC Day 1/+9–15-hour fields reached 90% near 47.885N, 93.301W.
+Independent reconstruction of all 180 member-hours identified the 03–09Z
+4 November six-hour period. Nine of ten members exceeded isolated official
+six-hour FFG values of 7–8 mm (about 0.28–0.31 inches) somewhere in the 40-km
+circle, while no member exceeded the 2.72-inch FFG at the output center.
+The raw 7-mm source value was confirmed with both GDAL and ecCodes.
+
+Applying EMC's ordering and Gaussian kernel to the same ten members reduced
+that cell to about 0.612%; the native 14-member OMD value for the same slot
+was about 0.5%. The northern Minnesota envelope maximum for that six-hour
+slot was about 12.56% for the corrected ten-member calculation versus about
+13% in native OMD. These comparisons expose a processing mismatch, not stale
+FFG, incorrect units, a changed denominator, or excessive six-hour rainfall.
 
 ## Validation
 

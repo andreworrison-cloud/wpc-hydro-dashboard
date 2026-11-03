@@ -1,6 +1,7 @@
-"""Shared 40-km member-neighborhood probability operator.
+"""Checked experimental and producer-style neighborhood probability operators.
 
-Inherited from the verified SPC Day 1 v0.2 engine; no second dilation.
+The dashboard uses ProducerWindowAccumulator; the local-event ANY diagnostic
+remains a separate statistic for comparison and standalone verification.
 """
 import numpy as np
 from collections import deque
@@ -16,10 +17,10 @@ def expected_ffg_durations(fxx, window_start):
 
 
 class WindowAccumulator:
-    """Peak rolling probability; each comparison uses a fixed member population.
+    """Experimental local-event ANY peaks with a fixed member population.
 
-    This dashboard deliberately uses max(window member frequency), rather than
-    the member-wise event union offered separately in the standalone notebook.
+    This differs from the producer-style dashboard accumulator below and from
+    the member-wise time/duration event union in the standalone notebook.
     """
     def __init__(self, start_hour, end_hour, weights, ffg, spacing, radius=40000):
         self.start, self.end = int(start_hour), int(end_hour)
@@ -134,3 +135,108 @@ class ProjectedNeighborhood:
             bad = domain & ~valid[n]
             known[n] = domain & self.interior & ~self.dilate(bad)
         return out, known
+
+# The separate local-exceedance operator above remains an experimental ANY
+# diagnostic. Dashboard comparisons use the producer ordering below.
+from math import isqrt
+from scipy.ndimage import maximum_filter1d, convolve1d, maximum_filter
+
+PRODUCER_METHOD = "emc-neighborhood-qpf-local-ffg-gaussian-v1"
+PRODUCER_SOURCE = "https://github.com/NOAA-EMC/HREF/tree/081f905354e512b854f9505f49938991658475fc/sorc/refs_ensprod.fd"
+
+
+class ProducerNeighborhood:
+    """EMC A/A settings: 13-cell QPF radius, Gaussian sigma 5, half-width 8.
+
+    Native 3-km spacing gives nominal 40 km (39 km on the grid), sigma 15 km,
+    and a 24-km smoothing half-width. Missing QPF is never a zero rainfall.
+    """
+    def __init__(self, shape, spacing, radius=40000, sigma=5, half_width=8):
+        if not np.isclose(spacing[0], spacing[1], rtol=0, atol=.01):
+            raise ValueError("Producer neighborhood requires a square projected grid")
+        self.cells = int(round(radius / spacing[0]))
+        self.operator = ProjectedNeighborhood(shape, spacing, self.cells*spacing[0])
+        self.sigma, self.half_width = float(sigma), int(half_width)
+        offsets = np.arange(-self.half_width, self.half_width+1)
+        self.kernel = (np.exp(-.5*(offsets/self.sigma)**2) if self.sigma else
+                       np.array([1.]))
+        self.kernel /= self.kernel.sum()
+
+    def maximum(self, values):
+        """Exact circular maximum, decomposed into linear row filters."""
+        values = np.asarray(values)
+        finite = np.isfinite(values)
+        safe = values if finite.all() else np.where(finite, values, -np.inf)
+        output = np.full_like(safe, -np.inf)
+        groups = {}
+        for dy in range(-self.cells, self.cells+1):
+            half = isqrt(self.cells*self.cells-dy*dy)
+            groups.setdefault(half, []).append(dy)
+        horizontal = np.empty_like(safe)
+        height = values.shape[-2]
+        for half, shifts in groups.items():
+            maximum_filter1d(safe, 2*half+1, axis=-1, output=horizontal,
+                             mode="constant", cval=-np.inf)
+            for dy in shifts:
+                if abs(dy) >= height:
+                    continue
+                target = slice(max(0, -dy), min(height, height-dy))
+                source = slice(max(0, dy), min(height, height+dy))
+                np.maximum(output[:, target, :], horizontal[:, source, :],
+                           out=output[:, target, :])
+        known = np.empty_like(finite)
+        for n in range(len(values)):
+            known[n] = self.operator.interior & ~self.operator.dilate(~finite[n])
+        return output, known
+
+    def smooth(self, probability, domain=None):
+        """Smooth each probability slot before the period maximum.
+
+        EMC uses -10 for unavailable FFG before smoothing. Preserve that
+        treatment, mask negative results, and retain missing FFG centers.
+        Unknown member rainfall invalidates the smoothing footprint.
+        """
+        p = np.asarray(probability, np.float64)
+        domain = np.ones(p.shape, bool) if domain is None else np.asarray(domain, bool)
+        unknown = domain & ~np.isfinite(p)
+        values = np.where(domain, np.nan_to_num(p, nan=0.), -10.)
+        def convolution(a):
+            return convolve1d(convolve1d(a, self.kernel, axis=0, mode="constant", cval=0.),
+                              self.kernel, axis=1, mode="constant", cval=0.)
+        result = convolution(values)/convolution(np.ones(p.shape))
+        bad = maximum_filter(unknown, size=2*self.half_width+1, mode="constant", cval=0)
+        result[bad | ~domain | (result < 0)] = np.nan
+        return result.astype(np.float32)
+
+
+class ProducerWindowAccumulator(WindowAccumulator):
+    """Producer-style dashboard peaks; not the local-event ANY diagnostic."""
+    def __init__(self, start_hour, end_hour, weights, ffg, spacing, radius=40000,
+                 sigma=5, half_width=8):
+        super().__init__(start_hour, end_hour, weights, ffg, spacing, radius)
+        self.producer = ProducerNeighborhood(self.shape, spacing, radius, sigma, half_width)
+
+    def add(self, fxx, qpf):
+        if fxx != self.next_hour or fxx > self.end:
+            raise ValueError("Missing, duplicate, out-of-order or out-of-window hour")
+        qpf = np.asarray(qpf, np.float32)
+        if qpf.shape != (len(self.weights), *self.shape) or np.isinf(qpf).any() or np.any(qpf[np.isfinite(qpf)] < 0):
+            raise ValueError("Hourly member rainfall must match the fixed population/grid")
+        self.history.append(qpf.copy())
+        good = np.isfinite(qpf)
+        domain = np.ones(self.shape, bool)
+        for i, threshold in enumerate(QPF_THRESHOLDS_MM):
+            event, known = self.producer.operator.apply(qpf > threshold, good, domain)
+            p = self.producer.smooth(fixed_probability(event, known, self.weights))
+            np.fmax(self.qpf_peak[i], p, out=self.qpf_peak[i])
+            self.qpf_complete &= np.isfinite(p)
+        for d in expected_ffg_durations(fxx, self.start):
+            total = np.add.reduce(list(self.history)[-d:], dtype=np.float64)
+            maximum, known = self.producer.maximum(total)
+            domain = np.isfinite(self.ffg[d])
+            probability = fixed_probability(maximum > self.ffg[d], known & domain, self.weights)
+            p = self.producer.smooth(probability, domain)
+            np.fmax(self.ffg_peak[d], p, out=self.ffg_peak[d])
+            self.ffg_complete[d] &= np.isfinite(p)
+            self.slots.append((fxx, d))
+        self.next_hour += 1

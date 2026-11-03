@@ -1,7 +1,7 @@
 /* Shared presentation contract for the SPC/OMD CAM transition. */
 (function (root) {
     'use strict';
-    const SCHEMA = 'wpc-spc-omd-cam-v2';
+    const SCHEMA = 'wpc-spc-omd-cam-v3';
     const models = ['spc_refs', 'omd_refs', 'super'];
     const labels = {spc_refs: 'SPC REFS (Experimental)', omd_refs: 'OMD REFS', super: 'SuperEnsemble (50/50)'};
     const colors = {
@@ -31,6 +31,7 @@
         if (!meta || meta.schema !== SCHEMA) throw new Error('Awaiting verified SPC/OMD CAM package');
         const spc = date(meta.spc_refs_init_utc), omd = date(meta.omd_refs_init_utc);
         if (!spc || !omd || spc.getTime() !== omd.getTime()) throw new Error('SPC/OMD cycles are not aligned');
+        if (meta.method?.probability_method !== 'emc-neighborhood-qpf-local-ffg-gaussian-v1') throw new Error('Awaiting producer-consistent SPC probability processing');
         const ffg = meta.ffg || {};
         for (const value of [ffg.snapshot_time_utc, ffg.reference_time_utc, ffg.model_cycle_utc, meta.common_ffg_reference_utc]) {
             const reference = date(value);
@@ -74,7 +75,7 @@
         return `<div style="background:white;padding:10px;border-radius:5px;font-family:sans-serif;text-align:center;color:black;font-size:13px;max-width:280px;">` +
             `<strong>${names.join(' / ')}</strong><br>${ffg ? 'Max FFG Exceedance' : 'Max Hourly QPF'} Probability (%)` +
             `<div style="display:flex;margin-top:5px;border:1px solid #333;">${boxes}</div>` +
-            `<div style="font-size:11px;margin-top:5px;">40-km neighborhood · peak in the stated window${ffg ? '<br>Maximum over 1-, 3- and 6-hour FFG probabilities<br>Same official model-cycle RFC FFG for SPC and OMD' : ''}</div>` +
+            `<div style="font-size:11px;margin-top:5px;">Nominal 40-km QPF neighborhood · smoothed probabilities · peak in the stated window${ffg ? '<br>Neighborhood-maximum QPF vs local 1-, 3- and 6-hour FFG<br>Same official model-cycle RFC FFG for SPC and OMD' : ''}</div>` +
             (names.some(n => n.includes('SuperEnsemble')) ? '<div style="font-size:11px;margin-top:4px;">50% SPC maximum + 50% OMD maximum; configurations share members.</div>' : '') + '</div>';
     }
     root.WPC_CAM = {SCHEMA, models, labels, colors, date, utc, modelFromKey, modelFromName, validate, state, timeHTML, legend};

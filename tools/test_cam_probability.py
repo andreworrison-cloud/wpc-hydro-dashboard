@@ -11,7 +11,7 @@ import rasterio
 
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cam_probability import WindowAccumulator, expected_ffg_durations, blend_maxima
+from cam_probability import WindowAccumulator, ProducerWindowAccumulator, ProducerNeighborhood, expected_ffg_durations, blend_maxima
 from cam_ensemble import windows_for, read_members, remove_legacy_images, load_cycle_ffg, require_cycle_ffg
 from cam_member_io import Grid, member_urls, load_ffg
 from cam_omd import decode, selected_ranges, product_urls
@@ -240,6 +240,112 @@ class ProbabilityTests(unittest.TestCase):
         index='1:0:d=2026110312:APCP:surface:5-6 hour acc fcst:prob >12.7:Neighborhood Probability\n2:100:d=2026110312:TMP:surface:6 hour fcst\n'
         # All four fixed thresholds are required; an individual match is not enough.
         with self.assertRaises(ValueError):selected_ranges(index,INIT,6,'prob')
+
+
+
+class ProducerProbabilityTests(unittest.TestCase):
+    def make(self,shape=(41,41),**kwargs):
+        ffg={d:np.full(shape,1000.) for d in (1,3,6)}
+        return ProducerWindowAccumulator(0,6,np.ones(10),ffg,(1,1),**kwargs)
+
+    def test_circular_maximum_matches_direct_disk_filter(self):
+        from scipy.ndimage import maximum_filter
+        rng=np.random.default_rng(412)
+        values=rng.uniform(0,100,(3,31,47))
+        for radius in (0,1,2,3,7,13):
+            op=ProducerNeighborhood(values.shape[1:],(1,1),radius,0,0)
+            actual,_=op.maximum(values)
+            off=np.arange(-radius,radius+1)
+            yy,xx=np.meshgrid(off,off,indexing='ij')
+            expected=maximum_filter(values,footprint=((xx*xx+yy*yy)<=radius*radius)[None,:,:],
+                                    mode='constant',cval=-np.inf)
+            with self.subTest(radius=radius):np.testing.assert_array_equal(actual,expected)
+
+    def test_ffg_uses_neighborhood_rainfall_then_center_threshold(self):
+        a=self.make(radius=1,sigma=0,half_width=0)
+        a.ffg[1][:]=100
+        a.ffg[1][20,21]=1
+        for hour in range(1,7):
+            q=np.zeros((10,41,41),np.float32)
+            if hour==1:q[:,20,21]=2
+            a.add(hour,q)
+        p=a.finish()['FFG_MAX']
+        self.assertEqual(p[20,21],100)
+        self.assertEqual(p[20,20],0)
+
+    def test_gaussian_matches_explicit_two_dimensional_kernel(self):
+        from scipy.signal import convolve2d
+        op=ProducerNeighborhood((41,51),(3000,3000))
+        p=np.random.default_rng(10).uniform(0,100,(41,51))
+        offsets=np.arange(-8,9)
+        yy,xx=np.meshgrid(offsets,offsets,indexing='ij')
+        weights=np.exp(-.5*(xx*xx+yy*yy)/25)
+        expected=convolve2d(p,weights,mode='same')/convolve2d(np.ones(p.shape),weights,mode='same')
+        np.testing.assert_allclose(op.smooth(p),expected,rtol=1e-6,atol=1e-5)
+
+    def test_smoothing_each_slot_precedes_period_maximum(self):
+        a=self.make(radius=0,sigma=1,half_width=2)
+        p1=np.zeros((41,41));p2=p1.copy()
+        p1[20,18]=100;p2[20,22]=100
+        for hour in range(1,7):
+            q=np.zeros((10,41,41),np.float32)
+            if hour==1:q[:,20,18]=20
+            if hour==6:q[:,20,22]=20
+            a.add(hour,q)
+        result=a.finish()['QPF'][0]
+        expected=np.maximum(a.producer.smooth(p1),a.producer.smooth(p2))
+        np.testing.assert_allclose(result,expected,atol=1e-5)
+        self.assertLess(result[20,20],a.producer.smooth(np.maximum(p1,p2))[20,20])
+
+    def test_missing_member_does_not_reduce_denominator(self):
+        a=self.make(radius=0,sigma=0,half_width=0)
+        for hour in range(1,7):
+            q=np.zeros((10,41,41),np.float32)
+            if hour==1:q[0,20,20]=np.nan
+            a.add(hour,q)
+        result=a.finish()
+        self.assertTrue(np.isnan(result['QPF'][:,20,20]).all())
+        self.assertTrue(np.isnan(result['FFG_MAX'][20,20]))
+
+    def test_distinct_hour_rolling_sum(self):
+        a=self.make(radius=0,sigma=0,half_width=0)
+        a.ffg[3][:]=15
+        for hour in range(1,7):
+            q=np.zeros((10,41,41),np.float32)
+            if hour<=3:q[0,20,20]=6
+            a.add(hour,q)
+        self.assertEqual(a.finish()['FFG_MAX'][20,20],10)
+
+    def test_missing_ffg_center_stays_masked_after_smoothing(self):
+        a=self.make(radius=0,sigma=1,half_width=2)
+        for d in (1,3,6):a.ffg[d][20,20]=np.nan
+        for hour in range(1,7):
+            q=np.full((10,41,41),20,np.float32)
+            a.add(hour,q)
+        self.assertTrue(np.isnan(a.finish()['FFG_MAX'][20,20]))
+
+    def test_dashboard_uses_producer_accumulator(self):
+        from cam_ensemble import WindowAccumulator as dashboard_accumulator
+        self.assertIs(dashboard_accumulator,ProducerWindowAccumulator)
+
+    def test_native_settings_and_smoothed_ten_member_values(self):
+        op=ProducerNeighborhood((41,41),(3000,3000))
+        self.assertEqual(op.cells,13)
+        self.assertEqual(op.operator.radius,39000)
+        self.assertEqual(op.sigma,5)
+        self.assertEqual(op.half_width,8)
+        p=np.zeros((41,41));p[20,20]=10
+        self.assertGreater(op.smooth(p)[20,20],0)
+        self.assertLess(op.smooth(p)[20,20],10)
+
+    def test_strict_exceedance_at_equal_ffg(self):
+        a=self.make(radius=0,sigma=0,half_width=0)
+        a.ffg[1][:]=10
+        for hour in range(1,7):
+            q=np.zeros((10,41,41),np.float32)
+            if hour==1:q[:,20,20]=10
+            a.add(hour,q)
+        self.assertEqual(a.finish()['FFG_MAX'][20,20],0)
 
 
 def synthetic_message(parameter,upper,values,init=INIT,process=194):

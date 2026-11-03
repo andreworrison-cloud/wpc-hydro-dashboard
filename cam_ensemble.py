@@ -28,11 +28,11 @@ from rasterio.transform import xy
 
 from cam_member_io import Sources, Grid, atomic_json, atomic_npz, load_ffg, ffg_on_member_grid
 from cam_omd import OMDReader
-from cam_probability import WindowAccumulator, expected_ffg_durations, blend_maxima
+from cam_probability import ProducerWindowAccumulator as WindowAccumulator, expected_ffg_durations, blend_maxima, PRODUCER_METHOD, PRODUCER_SOURCE
 
 UTC = timezone.utc
 LOG = logging.getLogger(__name__)
-SCHEMA = "wpc-spc-omd-cam-v2"
+SCHEMA = "wpc-spc-omd-cam-v3"
 QPF_IN = (.5, 1, 2, 3)
 PROBABILITY_LEVELS = (10, 30, 50, 70, 90, 100.0001)
 QPF_COLORS = ("#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494")
@@ -286,9 +286,14 @@ def run(kind, *, cache=Path("grib_cache_cam_members"), output=Path("static"), pi
             "window_contract": contracts, "members": members, "spc_member_count": 10,
             "ffg": ffg_meta, "common_ffg_reference_utc": iso(init),
             "hourly_qpf_thresholds_in": list(QPF_IN), "ffg_durations_hours": [1, 3, 6],
-            "method": {"probability": "maximum of individual rolling-window neighborhood member frequencies",
-                       "ffg_combination": "maximum across duration-specific probabilities and eligible times; no duration/time event union",
-                       "spc_neighborhood_radius_km": 40, "extra_neighborhood_or_smoothing": False,
+            "method": {"probability": "peak of producer-style smoothed neighborhood probabilities",
+                       "probability_method": PRODUCER_METHOD, "producer_source": PRODUCER_SOURCE,
+                       "ffg_operator": "neighborhood-maximum duration QPF compared with local matching-duration FFG, then Gaussian smoothing at each slot before the period maximum",
+                       "native_neighborhood_radius_grid_cells": 13,
+                       "native_neighborhood_radius_km": 39,
+                       "probability_smoothing": {"kernel": "Gaussian", "sigma_grid_cells": 5, "half_width_grid_cells": 8, "sigma_km": 15, "half_width_km": 24},
+                       "ffg_combination": "maximum across smoothed duration-specific probabilities and eligible times; no duration/time event union",
+                       "spc_neighborhood_radius_km": 40, "additional_display_smoothing": False,
                        "ffg_cadence": "1h hourly; 3h/6h at forecast hours divisible by 3; entire accumulation inside selected window",
                        "spc_ffg_baseline": "official RFC FFG for the exact synoptic ensemble cycle; publication after initialization is allowed",
                        "omd_ffg_baseline": "native OMD official synoptic-cycle RFC FFG contract; same FFG cycle required for SPC",
@@ -312,7 +317,7 @@ def run(kind, *, cache=Path("grib_cache_cam_members"), output=Path("static"), pi
         bounds, files = render(kind, products, grid, stage, dpi)
         meta.update(bounds=bounds, expected_files=files, elapsed_seconds=round(time.monotonic()-began, 2))
         source_name = "cam_sources.json" if kind == "cam" else "ero_cam_sources.json"
-        atomic_json(stage/source_name, {"schema": SCHEMA, "init_utc": iso(init), "analysis_grid": grid.metadata(),
+        atomic_json(stage/source_name, {"schema": SCHEMA, "probability_method": PRODUCER_METHOD, "init_utc": iso(init), "analysis_grid": grid.metadata(),
                                       "spc_member_hours": hourly_sources, "omd_fields": omd.records,
                                       "ffg": ffg_meta, "expected_spc_member_hours": expected})
         meta["file_sha256"] = {name: hashlib.sha256((stage/name).read_bytes()).hexdigest()
