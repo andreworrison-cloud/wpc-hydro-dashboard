@@ -1,0 +1,28 @@
+name: Publish Day 1 ERO GDI Maxima
+on:
+  workflow_dispatch:
+  # The existing cron-job.org ERO CAM job publishes its source-cycle metadata
+  # before this dependent calculation reads it. No separate recurring timer.
+  workflow_run:
+    workflows: ["Update Day 1 ERO CAMs"]
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish_gdi_day1.yml'
+      - '.github/workflows/publish_gdi_product.yml'
+      - 'tools/gdi/build_guidance.py'
+      - 'tools/gdi/guidance_contract.py'
+      - 'tools/gdi/render_suite.py'
+      - 'tools/gdi/contours.py'
+      - 'tools/publish_gdi_suite.py'
+permissions:
+  contents: write
+jobs:
+  maxima:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    uses: ./.github/workflows/publish_gdi_product.yml
+    with:
+      mode: ero
+      suite: day1

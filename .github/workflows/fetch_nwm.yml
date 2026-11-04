@@ -1,0 +1,68 @@
+name: Fetch Hourly NWM Soil Moisture
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths: ['fetch_nwm.py', '.github/workflows/fetch_nwm.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-nwm-soil-moisture
+  cancel-in-progress: false
+
+jobs:
+  update-nwm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify NWM data contract
+        run: python -m unittest discover -s tools -p test_nwm_contract.py -v
+
+      - name: Restore current NWM snapshot
+        run: |
+          python tools/publish_pages_snapshot.py restore \
+            --branch pages-live \
+            --path static/nwm_soil_saturation.png \
+            --path static/nwm_metadata.json
+      - name: Run NWM script
+        id: ingest
+        continue-on-error: true
+        run: python fetch_nwm.py
+
+      - name: Publish NWM products to pages-live
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python tools/publish_pages_snapshot.py publish \
+            --branch pages-live \
+            --message "Automated update: NWM Hourly soil saturation" \
+            --path static/nwm_soil_saturation.png \
+            --path static/nwm_metadata.json
+
+      - name: Validate current or retained NWM package
+        run: python tools/validate_model_package.py nwm
+
+      - name: Report retained NWM update
+        if: always() && steps.ingest.outcome == 'failure' && success()
+        run: echo "::warning::NWM upstream update failed; retained dashboard product remains inside its validated freshness window."

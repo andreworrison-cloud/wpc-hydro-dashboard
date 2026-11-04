@@ -1,0 +1,49 @@
+name: Publish GDI Model and Window Guidance
+on:
+  workflow_dispatch:
+  # The existing hourly cron-job.org HRRR dispatch drives deterministic forecasts.
+  workflow_run:
+    workflows: ["Update HRRR-TLE Flash Flood Guidance"]
+    types: [requested]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish_gdi_guidance.yml'
+      - '.github/workflows/publish_gdi_product.yml'
+      - 'tools/gdi/build_guidance.py'
+      - 'tools/gdi/guidance_contract.py'
+      - 'tools/gdi/render_suite.py'
+      - 'tools/gdi/contours.py'
+      - 'tools/gdi/*dynamics*.py'
+      - 'tools/gdi/model_source.py'
+      - 'tools/publish_gdi_suite.py'
+      - 'tools/prune_gdi_dynamics_cache.py'
+      - 'tools/prune_actions_caches.py'
+      - 'tools/test_cache_budget.py'
+permissions:
+  contents: write
+jobs:
+  forecasts:
+    uses: ./.github/workflows/publish_gdi_product.yml
+    with:
+      mode: forecast
+      suite: forecast
+
+  cache-housekeeping:
+    # Disposable derived arrays only. Keep the newest complete cache; retired
+    # copies are rebuildable and are not the published scientific data branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify the protected cache namespace and current-frame budget
+        run: python tools/test_cache_budget.py
+      - name: Retire superseded CAM GDI cache copies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/prune_actions_caches.py --delete-superseded

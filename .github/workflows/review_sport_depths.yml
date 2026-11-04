@@ -1,0 +1,79 @@
+name: Review SPoRT-LIS Four Depths
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'app.js'
+      - 'index.html'
+      - 'sport_suite_layer.js'
+      - 'sport_rsm_layer.js'
+      - 'tools/sport_rsm_suite.py'
+      - 'tools/test_sport_rsm_suite.py'
+      - 'tools/test_sport_rsm_display.cjs'
+      - 'tools/build_sport_rsm_review.py'
+      - 'tools/test_sport_display.cjs'
+      - 'fetch_sport.py'
+      - 'tools/publish_sport.py'
+      - 'tools/test_publish_sport.py'
+      - '.github/workflows/fetch_sport.yml'
+      - 'tools/sport_suite.py'
+      - 'tools/test_sport_suite.py'
+      - 'tools/build_sport_depth_review.py'
+      - '.github/workflows/review_sport_depths.yml'
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'numpy>=2,<3' 'rasterio>=1.4,<2' requests pillow
+      - name: Check whole-suite retention and expiry
+        run: python -m unittest tools.test_sport_suite tools.test_sport_rsm_suite tools.test_publish_sport -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check dashboard depth, legend and freshness behavior
+        run: |
+          node --check app.js
+          node --check sport_suite_layer.js
+          node --check sport_rsm_layer.js
+          node --test tools/test_sport_display.cjs tools/test_sport_rsm_display.cjs
+      - name: Retrieve and validate four current numerical fields
+        run: python fetch_sport.py --suite-dir diagnostics/sport-suite
+      - name: Retrieve and validate current numerical RSM pair
+        run: python -m tools.sport_rsm_suite --suite-dir diagnostics/sport-rsm
+      - name: Preserve review evidence and original floats
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sport-four-depths-${{ github.run_id }}
+          path: |
+            diagnostics/sport-suite
+            diagnostics/sport-rsm
+          retention-days: 14
+
+      - name: Assemble dashboard review bundle
+        run: |
+          mkdir -p diagnostics/dashboard-review
+          git archive HEAD | tar -x -C diagnostics/dashboard-review
+          mkdir -p diagnostics/dashboard-review/review/sport-suite
+          cp -R diagnostics/sport-suite/. diagnostics/dashboard-review/review/sport-suite/
+          mkdir -p diagnostics/dashboard-review/review/sport-rsm
+          cp -R diagnostics/sport-rsm/. diagnostics/dashboard-review/review/sport-rsm/
+          python -m tools.build_sport_rsm_review --suite-dir diagnostics/sport-rsm --states review/vendor/us-states.json --output diagnostics/dashboard-review/review/sport_rsm_two_depths.png
+          python - <<'PYTHON'
+          from pathlib import Path
+          for path in Path('diagnostics/dashboard-review/review').rglob('*.tif'):
+              path.unlink()
+          PYTHON
+      - name: Preserve dashboard review bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: sport-dashboard-review-${{ github.run_id }}
+          path: diagnostics/dashboard-review
+          retention-days: 14
