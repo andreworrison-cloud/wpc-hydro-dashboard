@@ -422,7 +422,8 @@ def build(args) -> int:
     ]
     median_interval = float(np.median(actual_intervals)) if actual_intervals else math.nan
     latest = actual_times[-1]
-    latest_age = (now - latest).total_seconds() / 60.0
+    finished = rala.utc_now()
+    latest_age = (finished - latest).total_seconds() / 60.0
     if latest_age > args.freshness_minutes:
         raise RuntimeError(
             f"Newest published 10-minute MRMS RALA frame is {latest_age:.1f} minutes old; "
@@ -439,10 +440,12 @@ def build(args) -> int:
         "units": "dBZ",
         "latest_valid_time_utc": frames[-1]["valid_time_utc"],
         "latest_nominal_time_utc": frames[-1]["nominal_time_utc"],
-        "generated_utc": rala.iso_z(rala.utc_now()),
+        "generated_utc": rala.iso_z(finished),
+        "build_started_utc": rala.iso_z(now),
+        "build_duration_seconds": round((finished-now).total_seconds(),3),
         "freshness_limit_minutes": float(args.freshness_minutes),
         "latest_age_minutes_at_build": round(latest_age, 2),
-        "newest_live_source_age_minutes_at_build": round(newest_live_age, 2),
+        "newest_live_source_age_minutes_at_build": round((finished-newest_live.timestamp).total_seconds()/60.0,2),
         "loop_window_minutes": int(args.loop_minutes),
         "target_frame_cadence_minutes": int(args.cadence_minutes),
         "slot_tolerance_minutes": float(args.slot_tolerance_minutes),

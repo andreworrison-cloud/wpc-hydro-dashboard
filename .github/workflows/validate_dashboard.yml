@@ -63,6 +63,8 @@ on:
       - '.github/workflows/update_hrrr_tle.yml'
       - 'fetch_mrms_rala.py'
       - 'fetch_mrms_rala_loop.py'
+      - 'tools/test_mrms_rala_health.py'
+      - 'tools/test_rala_freshness.cjs'
       - 'fetch_mrms_winter_type.py'
       - 'winter_precip.py'
       - 'winter_precip_display.js'
@@ -132,6 +134,8 @@ on:
       - '.github/workflows/update_hrrr_tle.yml'
       - 'fetch_mrms_rala.py'
       - 'fetch_mrms_rala_loop.py'
+      - 'tools/test_mrms_rala_health.py'
+      - 'tools/test_rala_freshness.cjs'
       - 'fetch_mrms_winter_type.py'
       - 'winter_precip.py'
       - 'winter_precip_display.js'
@@ -184,6 +188,7 @@ jobs:
           node tools/gdi/test_adapter.cjs
           node --check winter_precip_display.js
           node tools/test_radar_playback.cjs
+          node tools/test_rala_freshness.cjs
 
       - name: Check MRMS RALA Python syntax
         run: python -m py_compile fetch_mrms_rala.py fetch_mrms_rala_loop.py tools/validate_mrms_rala.py tools/validate_mrms_rala_loop.py
@@ -203,6 +208,7 @@ jobs:
           node tools/test_surface_cartography.cjs
           node tools/test_surface_sampling.cjs
           node tools/test_surface_layer.cjs
+          python tools/test_mrms_rala_health.py
           python tools/test_winter_precip.py
           python tools/test_winter_precip_sources.py
           node tools/test_winter_precip_display.cjs

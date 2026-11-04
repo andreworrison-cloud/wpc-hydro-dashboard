@@ -56,7 +56,6 @@ required_sections = [
     "CAM Nowcasts (+3h to +9h)",
     "CAM Nowcasts (+9h to +15h)",
     "Day 1 ERO CAMs",
-    "Experimental Models",
     "Dashboard Utilities",
 ]
 
