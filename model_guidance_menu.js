@@ -61,7 +61,7 @@
             Object.keys(GROUPS).forEach(g => {if (typeof saved.groups?.[g] === 'boolean') state.groups[g] = saved.groups[g];});
             if (Array.isArray(saved.active)) state.active = [...new Set(saved.active.filter(id=>byId.has(id)))];
         }
-        let node=null, statusNode=null, heading=null, searchNote=null, panels=[], controls=[], query='', busy=false, restored=false, lastSaved='';
+        let node=null, statusNode=null, heading=null, searchNote=null, panels=[], controls=[], query='', busy=false, restored=false, lastSaved='',lastStatus='';
         const current = () => registry.find(state.model,state.family,state.products[state.family]);
         function save() {
             const text = JSON.stringify({version:1,...state});
@@ -109,19 +109,17 @@
             if (!statusNode) return;
             const active=entries.filter(isActive), preferred=current();
             const selected=active.includes(preferred) ? preferred : active[active.length-1];
-            statusNode.replaceChildren();
-            const title=document.createElement('strong');
-            if (!selected) {
-                title.textContent='Select a product to display';statusNode.append(title);return;
-            }
-            title.textContent=MODELS[selected.guidance.model]+' · '+selected.menuLabel;
-            statusNode.append(title);
-            const info=getStatus(selected) || {};
-            const line=text=>{const item=document.createElement('small');item.textContent=text;statusNode.append(item);};
-            if (info.cycle) line('Cycle: '+formatTime(info.cycle));
-            if (info.start) line('Valid: '+formatTime(info.start)+(info.end&&info.end!==info.start?' — '+formatTime(info.end):''));
-            if (info.message) line(info.message);
-            if (active.length>1) line(active.length+' guidance layers active');
+            const titleText=selected ? MODELS[selected.guidance.model]+' · '+selected.menuLabel : 'Select a product to display';
+            const info=selected ? getStatus(selected)||{} : {},lines=[];
+            if (info.cycle) lines.push('Cycle: '+formatTime(info.cycle));
+            if (info.start) lines.push('Valid: '+formatTime(info.start)+(info.end&&info.end!==info.start?' — '+formatTime(info.end):''));
+            if (info.message) lines.push(info.message);
+            if (active.length>1) lines.push(active.length+' guidance layers active');
+            const signature=JSON.stringify([titleText,lines]);
+            if(signature===lastStatus)return;
+            lastStatus=signature;statusNode.replaceChildren();
+            const title=document.createElement('strong');title.textContent=titleText;statusNode.append(title);
+            lines.forEach(text=>{const item=document.createElement('small');item.textContent=text;statusNode.append(item);});
         }
         function sync() {
             if (busy || !restored) return;
@@ -157,7 +155,7 @@
             refreshStatus();
         }
         function mount(section, body, renderRow) {
-            node=section;panels=[];controls=[];
+            node=section;panels=[];controls=[];lastStatus='';
             function selector(name,title,values,change) {
                 const field=document.createElement('fieldset');field.className='guidance-selector';
                 const legend=document.createElement('legend');legend.textContent=title;field.append(legend);

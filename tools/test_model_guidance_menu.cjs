@@ -115,7 +115,8 @@ check('invalid or inaccessible saved preferences fall back without breaking the 
  }
 });
 check('status refresh does not write preferences for every GDI animation frame',()=>{
- const f=fixture();const before=f.writes;for(let i=0;i<25;i++){f.api.refreshStatus();f.api.sync();}
- assert.equal(f.writes,before);f.dom.window.close();
+ const f=fixture();const before=f.writes,child=document.querySelector('.guidance-active-status').firstChild;
+ for(let i=0;i<25;i++){f.api.refreshStatus();f.api.sync();}
+ assert.equal(f.writes,before);assert.equal(document.querySelector('.guidance-active-status').firstChild,child,'unrelated animation must not rebuild status nodes');f.dom.window.close();
 });
 console.log(`${checks} model-guidance menu scenarios passed.`);
