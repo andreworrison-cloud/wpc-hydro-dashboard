@@ -670,12 +670,12 @@ body.sidebar-open .map-title {
 .rfc-ffg-swatch {display:inline-block;width:22px;height:12px;margin-right:8px;border:1px solid #a9b8c2;}
 
 /* Compact, keyboard-accessible antecedent product families. */
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group {
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group {
     margin: 4px 0;
     border: 1px solid var(--sidebar-border);
     border-radius: 6px;
 }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group > summary {
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group > summary {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -687,12 +687,12 @@ body.sidebar-open .map-title {
     font-size: 12px;
     font-weight: 600;
 }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group > summary::-webkit-details-marker { display: none; }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group > summary::before { content: "▸"; color: var(--sidebar-accent); }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group[open] > summary::before { content: "▾"; }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group > summary > span:first-child { flex: 1; }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group > summary:focus-visible { outline: 2px solid var(--sidebar-accent); outline-offset: -2px; }
-:is([data-section-id="antecedent"], [data-section-id="gdi"]) .dashboard-layer-group-body { padding: 0 3px 4px 9px; }
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group > summary::-webkit-details-marker { display: none; }
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group > summary::before { content: "▸"; color: var(--sidebar-accent); }
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group[open] > summary::before { content: "▾"; }
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group > summary > span:first-child { flex: 1; }
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group > summary:focus-visible { outline: 2px solid var(--sidebar-accent); outline-offset: -2px; }
+:is([data-section-id="antecedent"], [data-section-id="gdi"], [data-section-id="model-guidance"]) .dashboard-layer-group-body { padding: 0 3px 4px 9px; }
 
 /* Visible roles and rainfall times for both multisensor QPE passes. */
 [data-section-id="antecedent"] .group-description,
@@ -704,6 +704,27 @@ body.sidebar-open .map-title {
 .ffg-tendency-control {display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;}
 .ffg-tendency-control select {background:#172b3b;color:#eef5fa;border:1px solid #526776;border-radius:4px;padding:5px;}
 [data-ffg-tendency-status] {display:block;padding:0 10px 8px;line-height:1.4;}
+
+/* Compact HRRR/RRFS guidance selection and active-product context. */
+.guidance-experimental-badge {flex:0 0 auto;padding:3px 6px;border:1px solid #b99249;border-radius:4px;color:#efd398;background:#b9924914;font-size:9px;font-weight:600;}
+[data-section-id="model-guidance"] > .section-body {padding:12px 8px 9px;}
+.guidance-selector {min-inline-size:0;margin:0 0 12px;padding:0;border:0;}
+.guidance-selector legend {padding:0 0 6px;color:var(--sidebar-muted);font-size:11px;font-weight:600;}
+.guidance-selector-options {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;}
+.guidance-selector-options label {position:relative;display:flex;align-items:center;justify-content:center;min-height:38px;padding:5px 4px;border:1px solid #536675;border-radius:5px;background:#162938;color:#d6e2eb;font-size:12px;line-height:1.25;text-align:center;cursor:pointer;}
+.guidance-selector-options input {position:absolute;opacity:0;width:1px;height:1px;}
+.guidance-selector-options label:has(input:checked) {border-color:var(--sidebar-accent);background:#1e526f;color:#fff;box-shadow:inset 0 -2px var(--sidebar-accent);}
+.guidance-selector-options label:has(input:focus-visible) {outline:2px solid #c5e8ff;outline-offset:2px;}
+.guidance-selector-options label:hover {border-color:#9bcbe9;}
+.guidance-active-status {margin:4px 0 15px;padding:9px;border-left:2px solid var(--sidebar-accent);background:#10232f;line-height:1.45;overflow-wrap:anywhere;}
+.guidance-active-status strong {display:block;font-size:12px;color:#e0f1ff;}
+.guidance-active-status small {display:block;margin-top:4px;color:var(--sidebar-muted);font-size:11px;font-variant-numeric:tabular-nums;}
+.guidance-family-title {margin:0 2px 8px;color:#d9edfa;font-size:12px;font-weight:600;}
+.guidance-search-note {margin:0 2px 8px;color:var(--sidebar-muted);font-size:11px;line-height:1.4;}
+.guidance-search-context {margin:12px 3px 6px;color:var(--sidebar-accent);font-size:12px;line-height:1.4;}
+.model-guidance-panel .layer-row {padding-top:9px;padding-bottom:9px;}
+.model-guidance-panel .guidance-last-used:not(.is-selected) {box-shadow:inset 2px 0 #57b9ff55;}
+.model-guidance-panel[hidden],.model-guidance-panel .dashboard-layer-group[hidden],.guidance-search-note[hidden],.guidance-search-context[hidden] {display:none;}
 
 /* Shared GDI legends: tick positions follow the actual discrete raster bins. */
 .gdi-legend { padding: 3px 1px 5px; line-height: 1.45; }

@@ -1,3 +1,5 @@
+let modelGuidanceMenu = null;
+
 // --- POPUP / TOOLTIP PRIORITY ---
 // The full dashboard interface is styled in style.css.
 const customStyle = document.createElement('style');
@@ -5902,7 +5904,7 @@ async function fetchHRRRTLEMetadata({expectedCycle = null, expectedHRRRCycle = n
         config.layer.setBounds(metadata.bounds);
         config.layer.setUrl(urls[index]);
         config.layer.setOpacity(
-            hrrrTLEReady && Number.isFinite(currentOpacity) ? currentOpacity : 1.0
+            (hrrrTLEReady || currentOpacity>0) && Number.isFinite(currentOpacity) ? currentOpacity : 1.0
         );
     });
 
@@ -7498,6 +7500,7 @@ function patchGDILegendNode(current, fresh) {
 }
 
 function updateLegends() {
+    modelGuidanceMenu?.refreshStatus();
     const legendContainer = document.getElementById('legend-container');
     if (!legendContainer) return;
 
@@ -8415,6 +8418,8 @@ const dashboardSections = [
 ];
 
 
+const modelGuidanceRegistry = window.WPCModelGuidance.consolidate(dashboardSections);
+
 // Independent map-reference overlays. These controls are intentionally kept
 // outside the meteorological/hydrological data registry so they can be combined
 // with any basemap without changing primary data-layer counts or exclusivity.
@@ -8482,7 +8487,7 @@ function rebuildLayerEntryIndex() {
             throw new Error(`Duplicate dashboard layer id: ${entry.id}`);
         }
         entry.searchText = cleanLayerLabel(
-            `${entry.label} ${entry.description || ''} ${entry.keywords || ''}`
+            `${entry.menuLabel || entry.label} ${entry.description || ''} ${entry.guidance ? (entry.keywords || '').replace(/\bHRRR(?:\/RRFS)?\b|\bRRFS\b/g,'') : entry.keywords || ''} ${entry.guidance ? window.WPCModelGuidance.MODELS[entry.guidance.model]+' '+window.WPCModelGuidance.FAMILIES[entry.guidance.family] : ''}`
         ).toLowerCase();
         layerEntriesById.set(entry.id, entry);
     });
@@ -8511,9 +8516,10 @@ function setDashboardLayerActive(entry, shouldBeActive) {
     syncSidebarWithMap();
 }
 
-function selectDashboardLayer(entryId) {
+function selectDashboardLayer(entryId, {rememberGuidance = true} = {}) {
     selectedDashboardLayerId = entryId;
     const selected = layerEntriesById.get(entryId) || null;
+    if (rememberGuidance) modelGuidanceMenu?.pick(selected);
     const selectedName = document.getElementById('selected-layer-name');
     const opacitySlider = document.getElementById('layer-opacity');
     const opacityValue = document.getElementById('opacity-value');
@@ -8578,7 +8584,8 @@ function syncSidebarWithMap() {
         if (entry) input.checked = map.hasLayer(entry.layer);
     });
     updateActiveLayerCount();
-    if (selectedDashboardLayerId) selectDashboardLayer(selectedDashboardLayerId);
+    if (selectedDashboardLayerId) selectDashboardLayer(selectedDashboardLayerId,{rememberGuidance:false});
+    modelGuidanceMenu?.sync();
 }
 
 function updateQPEFFGMenuStatus() {
@@ -8649,7 +8656,7 @@ function renderLayerRow(entry) {
 
     const label = document.createElement('span');
     label.className = 'layer-label';
-    label.innerHTML = entry.label;
+    label.innerHTML = entry.menuLabel || entry.label;
     if (entry.description) {
         const description = document.createElement('small');
         description.className = 'layer-description';
@@ -8814,6 +8821,10 @@ function applyLayerSearch() {
 
     document.querySelectorAll('.dashboard-section[data-section-id]').forEach(sectionEl => {
         if (sectionEl.dataset.sectionId === 'utilities') return;
+        if (sectionEl.dataset.sectionId === 'model-guidance') {
+            modelGuidanceMenu.applySearch(query);
+            return;
+        }
         const rows = Array.from(sectionEl.querySelectorAll('.layer-row'));
         let visibleRows = 0;
         rows.forEach(row => {
@@ -8861,13 +8872,15 @@ function renderDashboardSidebar() {
             const count = getSectionLayerEntries(sectionConfig).length;
             summary.innerHTML = `
                 <span class="section-title">${sectionConfig.title}</span>
-                <span class="section-count">${count}</span>
+                <span class="${sectionConfig.modelGuidance ? 'guidance-experimental-badge' : 'section-count'}">${sectionConfig.modelGuidance ? 'Experimental' : count}</span>
             `;
 
             const body = document.createElement('div');
             body.className = 'section-body';
 
-            if (count === 0) {
+            if (sectionConfig.modelGuidance) {
+                // Mount after insertion below, once its disclosure state is observable.
+            } else if (count === 0) {
                 const note = document.createElement('div');
                 note.className = 'empty-section-note';
                 note.textContent = sectionConfig.emptyMessage || 'No layers registered.';
@@ -8889,6 +8902,7 @@ function renderDashboardSidebar() {
 
             section.append(summary, body);
             container.append(section);
+            if (sectionConfig.modelGuidance) modelGuidanceMenu.mount(section,body,renderLayerRow);
         });
 
         renderUtilitySection(container);
@@ -8946,6 +8960,38 @@ window.WPCDashboard = Object.freeze({
         .filter(entry => map.hasLayer(entry.layer))
         .map(entry => ({id: entry.id, label: cleanLayerLabel(entry.label)}))
 });
+
+function describeModelGuidance(entry) {
+    const {model,family,product}=entry.guidance;
+    if(family==='gdi') {
+        const suite=product==='forecast'?gdiGuidance:gdiERO;
+        const state=suite.getDisplayState();
+        const key=product==='forecast'?model+'0':(model==='blend'?'blend':model)+'_maximum';
+        if(!state.shown||state.base!==key||state.expired) return {message:state.expired?'Expired guidance hidden; awaiting a complete update.':state.failed?'Complete guidance unavailable; retrying automatically.':'Loading verified guidance…'};
+        const m=state.metadata,p=state.product;
+        return {cycle:p.cycle||m.cycle,start:product==='forecast'?p.valid_time:m.window_start,
+            end:product==='forecast'?p.valid_time:m.window_end,
+            message:state.failed?'Retaining verified guidance; update pending.':null};
+    }
+    const m=model==='hrrr'?hrrrTLEMetadata:flashFloodSuites[model==='rrfs'?0:1].getMetadata();
+    if(!m)return {message:'Loading newest complete package…'};
+    const diagnostic=family==='diagnostics',legacy=model==='hrrr';
+    const cycle=diagnostic?(legacy?m.latest_hrrr_diagnostic_cycle_utc:m.diagnostic_cycle_utc):m.latest_cycle_utc;
+    let start=diagnostic?(legacy?m.hrrr_diagnostic_valid_start_utc:m.diagnostic_valid_start_utc):m.common_valid_start_utc;
+    let end=diagnostic?(legacy?m.hrrr_diagnostic_valid_end_utc:m.diagnostic_valid_end_utc):m.common_valid_end_utc;
+    const fullEnd=end;
+    const evolution=/^tle-evol-(\d{2})-(\d{2})$/.exec(product);
+    if(evolution){const base=Date.parse(start);start=new Date(base+Number(evolution[1])*3600000).toISOString();end=new Date(base+Number(evolution[2])*3600000).toISOString();}
+    return {cycle,start,end,message:Date.now()>=Date.parse(fullEnd)?'Expired package; awaiting complete guidance.':Date.now()-Date.parse(cycle)>4*3600000?'Retaining latest complete guidance; newer cycle pending.':null};
+}
+
+let guidanceStorage;
+try {guidanceStorage=window.localStorage;} catch (_) {}
+modelGuidanceMenu=window.WPCModelGuidance.create({registry:modelGuidanceRegistry,
+    isActive:entry=>map.hasLayer(entry.layer),setActive:setDashboardLayerActive,
+    select:entry=>{if(entry)selectDashboardLayer(entry.id);},getStatus:describeModelGuidance,
+    formatTime:formatHRRRTLEUTC,storage:guidanceStorage,
+    clearSearch:()=>{const input=document.getElementById('layer-search');if(input)input.value='';applyLayerSearch();}});
 
 initializeSidebarControls();
 renderDashboardSidebar();

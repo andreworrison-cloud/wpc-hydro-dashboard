@@ -130,7 +130,9 @@ function create({map,metadataURL,keys,paneName,forecastGroups={},requiredRecipe=
   html+='<div class="gdi-note">'+esc(p.legend)+'</div>'+(dynamics?.legendHTML()||'')+'</div>';return html;
  }
  refresh();setInterval(()=>{if(selected()&&(failed||contourFailed||Date.now()-lastCheck>=120000||expired(metadata)))refresh();},15000);
- return {layers,legendHTML,refresh};
+ return {layers,legendHTML,refresh,
+  getDisplayState:()=>({metadata:shown?.m||metadata,product:shown?.m.products[shown.k],base:shown?.base,
+   loading,failed,expired:Boolean(expired(shown?.m||metadata)),shown:Boolean(shown)})};
 }
 root.GDINamedSuite={create,validate};
 })(typeof window==='undefined'?globalThis:window);
