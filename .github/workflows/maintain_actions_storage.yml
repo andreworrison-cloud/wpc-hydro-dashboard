@@ -1,0 +1,57 @@
+name: Maintain Bounded Dashboard Storage
+on:
+  workflow_dispatch:
+  # Reuse the four daily production completions; no extra polling schedule.
+  workflow_run:
+    workflows: ["Publish SPoRT-LIS Soil Moisture"]
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/maintain_actions_storage.yml'
+      - 'tools/maintain_actions_storage.py'
+      - 'tools/test_actions_storage.py'
+      - 'tools/prune_actions_caches.py'
+      - 'tools/audit_repository_storage.py'
+      - 'tools/check_storage_budget.py'
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: bounded-dashboard-storage
+  cancel-in-progress: false
+jobs:
+  maintain:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check protected-data and retention rules
+        run: |
+          python tools/test_actions_storage.py
+          python tools/test_cache_budget.py
+      - name: Record storage before maintenance
+        run: python tools/audit_repository_storage.py --output diagnostics/storage/before.json
+      - name: Remove only superseded derived cache copies
+        run: python tools/prune_actions_caches.py --delete-superseded
+      - name: Retire obsolete generated review bundles and duplicate secondary backups
+        run: python tools/maintain_actions_storage.py --apply --report diagnostics/storage/cleanup.json
+      - name: Record storage after maintenance
+        if: always()
+        run: python tools/audit_repository_storage.py --output diagnostics/storage/after.json
+      - name: Enforce conservative operating budgets
+        run: python tools/check_storage_budget.py diagnostics/storage/after.json
+      - name: Preserve the small audit receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-storage-receipt-${{ github.run_id }}
+          path: diagnostics/storage/*.json
+          retention-days: 2
+          compression-level: 9
+          if-no-files-found: warn

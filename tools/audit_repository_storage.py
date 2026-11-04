@@ -5,11 +5,13 @@ These are distinct storage pools. Public API totals cannot verify the owner's
 billing balance, plan, spending budget, private repositories or bandwidth use.
 """
 import argparse
+import base64
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 import urllib.request
@@ -18,7 +20,10 @@ import urllib.request
 def audit(repository, output=None):
     base = 'https://api.github.com/repos/'+repository
     def get(path):
-        request = urllib.request.Request(base+path, headers={'Accept':'application/vnd.github+json','User-Agent':'WPC-Storage-Audit/1'})
+        headers={'Accept':'application/vnd.github+json','User-Agent':'WPC-Storage-Audit/1'}
+        if os.environ.get('GITHUB_TOKEN'):
+            headers['Authorization']='Bearer '+os.environ['GITHUB_TOKEN']
+        request = urllib.request.Request(base+path, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
     repo = get('')
@@ -40,6 +45,27 @@ def audit(repository, output=None):
         grouped[name]['count'] += 1
         grouped[name]['bytes'] += row['size_in_bytes']
     cache_rows = caches.get('actions_caches',[])
+    branches = get('/branches?per_page=100')
+    runtime = [b for b in branches if b['name'].startswith('data/')
+               or b['name'] in ('mrms-rala-data','surface-data','wfigs-data')]
+    def snapshot(branch):
+        sha=branch['commit']['sha']; commit=get('/git/commits/'+sha)
+        tree=get('/git/trees/'+commit['tree']['sha']+'?recursive=1')
+        row={'branch':branch['name'],'head':sha,'parent_count':len(commit.get('parents',[])),
+             'tree_complete':not tree.get('truncated'),
+             'payload_bytes':sum(p.get('size',0) for p in tree['tree'] if p['type']=='blob'),
+             'blob_count':sum(p['type']=='blob' for p in tree['tree'])}
+        if branch['name']=='mrms-rala-data':
+            content=get('/contents/mrms_rala_loop_manifest.json?ref='+sha)
+            manifest=json.loads(base64.b64decode(content['content']))
+            row['radar_archive']={'frame_count':manifest['frame_count'],
+                'first_valid_utc':manifest['frames'][0]['valid_time_utc'],
+                'last_valid_utc':manifest['latest_valid_time_utc'],
+                'generated_utc':manifest['generated_utc'],
+                'publication_validation':manifest.get('publication_validation')}
+        return row
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        snapshots=list(pool.map(snapshot,runtime))
     report = {
         'observed_at_utc':datetime.now(timezone.utc).isoformat(), 'repository':repository,
         'repository_reported_kib':repo['size'], 'repository_reported_gib':repo['size']/1024**2,
@@ -47,6 +73,8 @@ def audit(repository, output=None):
         'pages_parent_count':len(commit.get('parents',[])),
         'pages_tree_complete':not tree.get('truncated'),
         'pages_payload_bytes':sum(p.get('size',0) for p in tree['tree'] if p['type']=='blob'),
+        'runtime_branch_inventory_complete':len(branches)<100,
+        'runtime_snapshots':snapshots,
         'cache_count':caches['total_count'], 'cache_inventory_complete':caches['total_count'] <= 100,
         'cache_bytes':sum(r['size_in_bytes'] for r in cache_rows),
         'largest_caches':sorted([{'key':r['key'],'bytes':r['size_in_bytes']} for r in cache_rows],key=lambda r:r['bytes'],reverse=True)[:10],

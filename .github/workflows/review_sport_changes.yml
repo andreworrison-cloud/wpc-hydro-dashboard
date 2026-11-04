@@ -12,6 +12,10 @@ on:
       - '.github/workflows/review_sport_changes.yml'
 permissions:
   contents: read
+# Pull requests run offline contract checks. Full live-data bundles are manual.
+concurrency:
+  group: review_sport_changes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   review:
     runs-on: ubuntu-latest
@@ -33,8 +37,10 @@ jobs:
           node --test tools/test_sport_change_display.cjs tools/test_sport_rsm_display.cjs tools/test_sport_display.cjs
           python tools/validate_dashboard.py
       - name: Retrieve exact current products and check source revisions
+        if: github.event_name == 'workflow_dispatch'
         run: python -m tools.sport_change_suite --suite-dir diagnostics/sport-change
       - name: Build dashboard review bundle
+        if: github.event_name == 'workflow_dispatch'
         run: |
           mkdir -p diagnostics/dashboard-review/review/sport-change
           git archive HEAD | tar -x -C diagnostics/dashboard-review
@@ -42,9 +48,9 @@ jobs:
           cp -R diagnostics/sport-change/generations diagnostics/dashboard-review/review/sport-change/
           echo 'Serve this folder over HTTP; open index.html?h7Review=1. H7 remains review-only.' > diagnostics/dashboard-review/H7_REVIEW_START.txt
       - name: Preserve review bundle and numeric source versions
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: sport-h7-review-${{ github.run_id }}
           path: diagnostics/
-          retention-days: 30
+          retention-days: 3

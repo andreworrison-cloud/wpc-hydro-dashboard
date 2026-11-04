@@ -8,6 +8,7 @@ on:
       - 'fetch_mrms_rala.py'
       - 'fetch_mrms_rala_loop.py'
       - 'tools/validate_mrms_rala_loop.py'
+      - 'requirements-mrms-rala.txt'
   workflow_dispatch:
     inputs:
       source_mode:
@@ -56,6 +57,7 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: requirements-mrms-rala.txt
 
       - name: Install MRMS decoding and rendering dependencies
         timeout-minutes: 3
@@ -66,8 +68,7 @@ jobs:
           # PyPI bundles the library; apt was adding up to 13 minutes before
           # radar retrieval, blocking subsequent five-minute dispatches.
           python -m pip install --disable-pip-version-check --only-binary=:all: \
-            numpy requests pillow pyproj rasterio \
-            'eccodes==2.50.0' 'eccodeslib==2.50.0.33'
+            -r requirements-mrms-rala.txt
           python -m eccodes selfcheck
 
       - name: Validate MRMS loop code

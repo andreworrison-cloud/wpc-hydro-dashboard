@@ -1,0 +1,71 @@
+name: Validate Workflow Storage and Decoders
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'requirements-mrms-rala.txt'
+      - 'tools/maintain_actions_storage.py'
+      - 'tools/test_actions_storage.py'
+      - 'tools/prune_actions_caches.py'
+      - 'tools/test_cache_budget.py'
+      - 'tools/check_storage_budget.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'requirements-mrms-rala.txt'
+      - 'tools/maintain_actions_storage.py'
+      - 'tools/test_actions_storage.py'
+      - 'tools/prune_actions_caches.py'
+      - 'tools/test_cache_budget.py'
+      - 'tools/check_storage_budget.py'
+permissions:
+  contents: read
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          python tools/test_actions_storage.py
+          python tools/test_cache_budget.py
+          python tools/validate_dashboard.py
+  decoder:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install binary packages without system package mirrors
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: \
+            -r requirements-mrms-rala.txt scipy metpy xarray cfgrib matplotlib cartopy netCDF4
+          python -m eccodes selfcheck
+          python -m cfgrib selfcheck
+      - name: Check the decoder with a synthetic GRIB round trip
+        run: |
+          python - <<'PY'
+          import eccodes as ec
+          import numpy as np
+          gid=ec.codes_grib_new_from_samples('regular_ll_sfc_grib2')
+          try:
+              expected=np.arange(ec.codes_get_size(gid,'values'),dtype=float)/10
+              ec.codes_set(gid,'bitsPerValue',24)
+              ec.codes_set_values(gid,expected)
+              raw=ec.codes_get_message(gid)
+          finally:
+              ec.codes_release(gid)
+          decoded=ec.codes_new_from_message(raw)
+          try:
+              np.testing.assert_allclose(ec.codes_get_values(decoded),expected,atol=0.00001)
+          finally:
+              ec.codes_release(decoded)
+          print('Synthetic GRIB round trip PASS:',ec.codes_get_api_version())
+          PY

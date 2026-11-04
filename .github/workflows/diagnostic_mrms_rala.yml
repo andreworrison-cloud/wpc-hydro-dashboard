@@ -35,29 +35,12 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: requirements-mrms-rala.txt
 
       - name: Install GRIB and rendering dependencies
-        shell: bash
+        timeout-minutes: 3
         run: |
-          set -euo pipefail
-          # GitHub-hosted Ubuntu runners may include unrelated third-party apt
-          # sources (notably Google Chrome). This workflow does not need Chrome;
-          # disable that source before refreshing package metadata so a transient
-          # Chrome repository hash mismatch cannot block the meteorological job.
-          for source_file in /etc/apt/sources.list.d/*; do
-            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
-              echo "Disabling unused Google Chrome apt source: ${source_file}"
-              sudo rm -f "${source_file}"
-            fi
-          done
-
-          # Start from a clean apt-list snapshot and retry transient mirror failures.
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo apt-get clean
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y --no-install-recommends libeccodes0
-          python -m pip install --upgrade pip
-          python -m pip install numpy requests pillow pyproj rasterio eccodes
+          python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements-mrms-rala.txt
           python -m eccodes selfcheck
 
       - name: Run offline renderer self-test

@@ -39,23 +39,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (ecCodes)
-        run: |
-          # Google Chrome is preconfigured on GitHub-hosted runners but is not
-          # required by this RAP workflow. Disable its apt source so transient
-          # Chrome repository metadata-sync errors cannot block RAP updates.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-
-          # Clear runner package-list state, retry transient mirror failures,
-          # and install only the ecCodes system library we actually need.
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y --no-install-recommends libeccodes0
-
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install requests xarray cfgrib matplotlib numpy scipy metpy eccodes
+          python -m pip install --disable-pip-version-check --only-binary=:all: requests xarray cfgrib matplotlib numpy scipy metpy 'eccodes==2.50.0' 'eccodeslib==2.50.0.33'
+          python -m eccodes selfcheck
 
       - name: Restore current RAP dashboard snapshot
         run: |

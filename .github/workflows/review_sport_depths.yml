@@ -22,6 +22,10 @@ on:
       - '.github/workflows/review_sport_depths.yml'
 permissions:
   contents: read
+# Pull requests run offline contract checks. Full live-data bundles are manual.
+concurrency:
+  group: review_sport_depths-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   review:
     runs-on: ubuntu-latest
@@ -44,20 +48,23 @@ jobs:
           node --check sport_rsm_layer.js
           node --test tools/test_sport_display.cjs tools/test_sport_rsm_display.cjs
       - name: Retrieve and validate four current numerical fields
+        if: github.event_name == 'workflow_dispatch'
         run: python fetch_sport.py --suite-dir diagnostics/sport-suite
       - name: Retrieve and validate current numerical RSM pair
+        if: github.event_name == 'workflow_dispatch'
         run: python -m tools.sport_rsm_suite --suite-dir diagnostics/sport-rsm
       - name: Preserve review evidence and original floats
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: sport-four-depths-${{ github.run_id }}
           path: |
             diagnostics/sport-suite
             diagnostics/sport-rsm
-          retention-days: 14
+          retention-days: 3
 
       - name: Assemble dashboard review bundle
+        if: github.event_name == 'workflow_dispatch'
         run: |
           mkdir -p diagnostics/dashboard-review
           git archive HEAD | tar -x -C diagnostics/dashboard-review
@@ -72,8 +79,9 @@ jobs:
               path.unlink()
           PYTHON
       - name: Preserve dashboard review bundle
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: sport-dashboard-review-${{ github.run_id }}
           path: diagnostics/dashboard-review
-          retention-days: 14
+          retention-days: 3

@@ -54,5 +54,22 @@ class CacheTests(unittest.TestCase):
         one={'id':1,'key':'cam-gdi-dynamics-v1-1','ref':'refs/heads/main','created_at':'2026-11-04T18:00:00Z'}
         self.assertEqual(plan([one]),([one],[]))
 
+    def test_forecast_and_day1_keep_two_independent_recent_copies(self):
+        rows=[]
+        for prefix in ('gdi-focused-forecast-','gdi-focused-day1-'):
+            for i in range(1,5):
+                rows.append({'id':prefix+str(i),'key':prefix+str(i),'ref':'refs/heads/main',
+                             'created_at':f'2026-11-04T{i:02d}:00:00Z'})
+        keep,obsolete=plan(rows)
+        self.assertEqual({r['key'] for r in keep},{p+str(i) for p in ('gdi-focused-forecast-','gdi-focused-day1-') for i in (3,4)})
+        self.assertEqual(len(obsolete),4)
+
+    def test_lookalike_namespace_and_open_pr_caches_are_protected(self):
+        rows=[{'id':i,'key':key,'ref':ref,'created_at':'2026-11-04T00:00:00Z'} for i,key,ref in (
+            (1,'gdi-focused-forecast-private-1','refs/heads/main'),
+            (2,'gdi-focused-day1-123','refs/pull/39/merge'),
+            (3,'cam-native-v2-cam-2026110400','refs/heads/main'))]
+        self.assertEqual(plan(rows),([],[]))
+
 
 if __name__=='__main__':unittest.main(verbosity=2)
