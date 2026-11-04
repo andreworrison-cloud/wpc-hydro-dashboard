@@ -102,7 +102,7 @@ jobs:
         with:
           name: sport-h7-numeric-${{ github.run_id }}-${{ github.run_attempt }}
           path: diagnostics/sport/public/change/numeric-cache/
-          retention-days: 14
+          retention-days: 3
           if-no-files-found: error
       - name: Atomically publish all suites and status
         if: always() && steps.percentile.outcome != 'skipped' && steps.rsm.outcome != 'skipped' && steps.numeric_save.outcome != 'failure'
@@ -136,7 +136,7 @@ jobs:
           path: |
             diagnostics/sport/SPORT_LIS_DATA_BRANCH.json
             diagnostics/sport/public/**/metadata.json
-            diagnostics/sport/public/**/generations/**/*.png
-          retention-days: 14
+            diagnostics/sport/public/change/numeric-cache/index.json
+          retention-days: 7
           if-no-files-found: warn
           compression-level: 9

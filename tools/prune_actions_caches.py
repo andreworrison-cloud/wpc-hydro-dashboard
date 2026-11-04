@@ -1,4 +1,4 @@
-"""Retire only superseded, rebuildable CAM GDI cache copies, keeping newest.
+"""Retire superseded forecast checkpoints in exact main namespaces.
 
 No artifact, branch, publication or scientific archive deletion is supported.
 The normal command previews the plan; deletion needs --delete-superseded.
@@ -11,14 +11,22 @@ import re
 import urllib.error
 import urllib.request
 
-PREFIX = 'cam-gdi-dynamics-v1-'
+RETAIN = {'cam-gdi-dynamics-v1-': 1,
+          'gdi-focused-forecast-': 2,
+          'gdi-focused-day1-': 2,
+          'rap-gdi-dynamics-': 2,
+          'cam-native-v2-cam-': 2,
+          'cam-native-v2-ero-': 2}
 
 
 def plan(rows):
-    eligible = [r for r in rows if r.get('ref') == 'refs/heads/main'
-                and re.fullmatch(re.escape(PREFIX)+r'\d+',r.get('key',''))]
-    eligible.sort(key=lambda r:datetime.fromisoformat(r['created_at'].replace('Z','+00:00')),reverse=True)
-    return eligible[:1],eligible[1:]
+    keep, obsolete = [], []
+    for prefix, count in RETAIN.items():
+        eligible = [r for r in rows if r.get('ref') == 'refs/heads/main'
+                    and re.fullmatch(re.escape(prefix)+r'\d+',r.get('key',''))]
+        eligible.sort(key=lambda r:datetime.fromisoformat(r['created_at'].replace('Z','+00:00')),reverse=True)
+        keep.extend(eligible[:count]); obsolete.extend(eligible[count:])
+    return keep, obsolete
 
 
 def maintain(repository, token, delete=False):

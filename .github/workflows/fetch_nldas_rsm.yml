@@ -27,28 +27,9 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install ecCodes system library
-        run: |
-          # GitHub-hosted Ubuntu runners may include unrelated third-party apt
-          # sources (notably Google Chrome). This workflow does not need Chrome;
-          # disable that source before refreshing package metadata so a transient
-          # Chrome repository hash mismatch cannot block the meteorological job.
-          for source_file in /etc/apt/sources.list.d/*; do
-            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
-              echo "Disabling unused Google Chrome apt source: ${source_file}"
-              sudo rm -f "${source_file}"
-            fi
-          done
-
-          # Start from a clean apt-list snapshot and retry transient mirror failures.
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo apt-get clean
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y --no-install-recommends libeccodes0
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install \
+          python -m pip install --disable-pip-version-check --only-binary=:all: -c constraints-grib.txt \
             requests \
             numpy \
             xarray \
@@ -58,7 +39,8 @@ jobs:
             pyproj \
             affine \
             Pillow \
-            eccodes
+            eccodes eccodeslib
+          python -m eccodes selfcheck
 
       - name: Restore current NLDAS-2 RSM snapshot
         run: |
