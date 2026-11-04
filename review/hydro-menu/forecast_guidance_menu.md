@@ -13,3 +13,5 @@ The active-product status displays the model, product, source cycle and valid ti
 Search spans all models and families. Matching products open their groups; clearing search returns to the selected model and family. Search result headings retain model and family context even though ordinary product rows use shorter labels.
 
 Validation includes nine DOM/controller scenarios covering registry preservation, three-model switching, opacity, multiple products, GDI product identity, search recovery, preference restoration and unavailable local storage; the existing flash-flood, GDI playback, legend/checkbox and CAM checks; and browser checks on the preview and live dashboard. No new data producer, model download, schedule, cache or artifact stream is introduced by this menu change.
+
+Live publication and browser checks passed on 4 November 2026. The [verification record](forecast_guidance_verification_20261104.json) and [live menu image](forecast_guidance_live_20261104.jpg) document all 66 controls, model switching, source/valid-time labels, GDI hourly comparison at 00Z, and the Day 1 window.
