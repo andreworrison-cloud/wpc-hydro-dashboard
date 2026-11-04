@@ -44,14 +44,28 @@ def hourly_times(start, end, include_start=True):
 
 
 def cam_ero_contract(metadata, now):
-    """Use the exact published HREF/REFS cycles and their common ERO period.
+    """Use the exact published CAM cycles and their common ERO period.
 
     GDI is instantaneous, so include the initial boundary as well as the hourly
     endpoints. Accumulated CAM QPF instead describes the hours ending at them.
     """
-    h = utc(metadata['href_init_utc'])
-    r = utc(metadata['refs_init_utc'])
-    start, end = utc(metadata['ero_start_utc']), utc(metadata['ero_end_utc'])
+    current = metadata.get('schema') == 'wpc-spc-omd-cam-v3'
+    if metadata.get('schema') and not current:
+        raise ValueError('Unsupported ERO CAM metadata schema')
+    if current:
+        h = utc(metadata['spc_refs_init_utc'])
+        r = utc(metadata['omd_refs_init_utc'])
+        if h != r:
+            raise ValueError('SPC/OMD CAM cycles must match')
+        window = metadata['window_contract']['ero']
+        start, end = utc(window['valid_start_utc']), utc(window['valid_end_utc'])
+        if (utc(metadata['valid_start_utc']) != start or utc(metadata['valid_end_utc']) != end
+                or utc(metadata['ero_start_utc']) != start or utc(metadata['ero_end_utc']) != end):
+            raise ValueError('Published ERO CAM windows disagree')
+    else:
+        h = utc(metadata['href_init_utc'])
+        r = utc(metadata['refs_init_utc'])
+        start, end = utc(metadata['ero_start_utc']), utc(metadata['ero_end_utc'])
     if h.hour not in (0, 6, 12, 18) or r.hour not in (0, 6, 12, 18):
         raise ValueError('ERO CAM source uses a non-synoptic cycle')
     base = h.replace(hour=12)
@@ -68,11 +82,15 @@ def cam_ero_contract(metadata, now):
         raise ValueError('CAM cycles are future-dated or their window is expired')
     expected = {0: list(range(13, 37)), 6: list(range(7, 31)),
                 12: list(range(1, 25)), 18: list(range(1, 19))}
-    for model, cycle in (('href', h), ('refs', r)):
-        if metadata.get(model + '_forecast_hours') != expected[cycle.hour]:
-            raise ValueError('CAM hourly endpoints are incomplete or misaligned')
-    if metadata.get('ero_coverage_hours') != int((end - start).total_seconds() / 3600):
-        raise ValueError('CAM coverage duration disagrees with its window')
+    if current:
+        if window.get('forecast_hours') != expected[h.hour]:
+            raise ValueError('SPC/OMD CAM hourly endpoints are incomplete or misaligned')
+    else:
+        for model, cycle in (('href', h), ('refs', r)):
+            if metadata.get(model + '_forecast_hours') != expected[cycle.hour]:
+                raise ValueError('CAM hourly endpoints are incomplete or misaligned')
+        if metadata.get('ero_coverage_hours') != int((end - start).total_seconds() / 3600):
+            raise ValueError('CAM coverage duration disagrees with its window')
     return {'hrrr': [h], 'rrfs': [r]}, start, end, hourly_times(start, end)
 
 
@@ -238,7 +256,7 @@ def verify_spec(m, suite, allow_legacy_forecast=False):
         if (s, e, t) != (start, end, times):
             raise ValueError('Day 1 GDI differs from its ERO CAM reference')
         if any(utc(r['cycle']) != cycles[r['model']][0] for r in runs):
-            raise ValueError('Day 1 GDI source cycles differ from HREF/REFS cycles')
+            raise ValueError('Day 1 GDI source cycles differ from the published CAM reference')
 
 
 def verify_unavailable(m):

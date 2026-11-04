@@ -47,6 +47,34 @@ def fake_frame(model, cycle, lead, cache, grids):
 
 
 class Contracts(unittest.TestCase):
+    def current_cam(self,hour=12):
+        old=cam(hour)
+        window={'valid_start_utc':old['ero_start_utc'],'valid_end_utc':old['ero_end_utc'],
+                'forecast_hours':old['href_forecast_hours']}
+        return {'schema':'wpc-spc-omd-cam-v3',
+                'spc_refs_init_utc':old['href_init_utc'],'omd_refs_init_utc':old['refs_init_utc'],
+                'valid_start_utc':old['ero_start_utc'],'valid_end_utc':old['ero_end_utc'],
+                'ero_start_utc':old['ero_start_utc'],'ero_end_utc':old['ero_end_utc'],
+                'window_contract':{'ero':window}}
+
+    def test_current_spc_omd_cycles_preserve_all_day1_windows(self):
+        for hour in (0,6,12,18):
+            now=NOW.replace(hour=max(hour+1,1))
+            current=cam_ero_contract(self.current_cam(hour),now)
+            self.assertEqual(current,cam_ero_contract(cam(hour),now))
+
+    def test_current_cam_rejects_mixed_cycles_or_incomplete_hours(self):
+        broken=self.current_cam();broken['omd_refs_init_utc']=cam(6)['refs_init_utc']
+        with self.assertRaises(ValueError):cam_ero_contract(broken,NOW)
+        broken=self.current_cam();broken['window_contract']['ero']['forecast_hours'].pop()
+        with self.assertRaises(ValueError):cam_ero_contract(broken,NOW)
+
+    def test_current_cam_rejects_conflicting_windows_and_unknown_schema(self):
+        broken=self.current_cam();broken['valid_start_utc']=cam(18)['ero_start_utc']
+        with self.assertRaises(ValueError):cam_ero_contract(broken,NOW)
+        broken=self.current_cam();broken['schema']='unqualified-schema'
+        with self.assertRaises(ValueError):cam_ero_contract(broken,NOW)
+
     def test_fft_neighborhood_matches_exact_spatial_counts(self):
         from scipy.ndimage import convolve
         rng = np.random.default_rng(42)
