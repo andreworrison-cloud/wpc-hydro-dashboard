@@ -154,6 +154,23 @@ controls garbage collection of old unreachable snapshot objects, so bounded
 branch ancestry does not guarantee immediate reduction in its reported disk
 figure.
 
+The final cache check also found overlapping old/new CAM GDI checkpoint copies
+at approximately 11 GiB. The forecast workflow now retains only its fourteen
+current derived frames (seven per model), verifies each frame's source identity
+and checksum, and skips cache upload above a 1-GiB uncompressed budget. Its
+scoped cache-maintenance job keeps the newest completed main-branch
+`cam-gdi-dynamics-v1-<run-id>` cache and retires only superseded copies. This is
+disposable derived-array cache maintenance: published data branches, scientific
+artifacts, source history and other cache namespaces are outside its scope.
+The existing hourly trigger also runs this maintenance; no extra timer is added.
+
+The first deployed FFG provenance artifact was 178,689 bytes, compared with
+317,929,754 bytes for a previous full upload. Full production readback of both
+new suites verified all forty PNGs, metadata hashes, 72/144 TLE member-hours and
+the matching 18Z model/FFG cycles. The served site was approximately 90.66 MiB;
+the new product packages totaled approximately 5.29 MiB. The live snapshot
+had no commit parents. See `review/rrfs-flash-flood/production_readback_20261104.json`.
+
 GitHub's [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 and [Actions billing/storage documentation](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 describe separate limits. The public API does not expose this account's billing
