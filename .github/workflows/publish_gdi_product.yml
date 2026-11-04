@@ -170,8 +170,14 @@ jobs:
           if d.datetime.now(d.timezone.utc)>=d.datetime.fromisoformat(m['expires_at']):raise SystemExit('Retained companions expired')
           print('::warning::Incomplete companion inputs; retained package keeps its actual model cycles and valid times. Viewer requires an exact GDI selection match.')
           PY
-      - uses: actions/cache/save@v6
+      - name: Keep only the fourteen current derived frames within a 1-GiB cache budget
+        id: cache-budget
         if: always()
+        run: |
+          python tools/test_cache_budget.py
+          python tools/prune_gdi_dynamics_cache.py --base run/cam-dynamics/base/metadata.json --cache run/cam-dynamics/native
+      - uses: actions/cache/save@v6
+        if: steps.cache-budget.outputs.save_cache == 'true'
         with:
           path: run/cam-dynamics/native
           key: cam-gdi-dynamics-v1-${{ github.run_id }}

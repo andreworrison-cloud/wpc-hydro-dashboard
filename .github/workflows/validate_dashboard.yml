@@ -21,6 +21,9 @@ on:
       - 'tools/test_gdi_dynamics.cjs'
       - 'tools/test_gdi_forecast_dynamics.cjs'
       - 'tools/publish_gdi_suite.py'
+      - 'tools/prune_gdi_dynamics_cache.py'
+      - 'tools/prune_actions_caches.py'
+      - 'tools/test_cache_budget.py'
       - '.github/workflows/publish_gdi.yml'
       - '.github/workflows/publish_rap_gdi.yml'
       - '.github/workflows/publish_gdi_guidance.yml'
@@ -85,6 +88,9 @@ on:
       - 'tools/test_gdi_dynamics.cjs'
       - 'tools/test_gdi_forecast_dynamics.cjs'
       - 'tools/publish_gdi_suite.py'
+      - 'tools/prune_gdi_dynamics_cache.py'
+      - 'tools/prune_actions_caches.py'
+      - 'tools/test_cache_budget.py'
       - '.github/workflows/publish_gdi.yml'
       - '.github/workflows/publish_rap_gdi.yml'
       - '.github/workflows/publish_gdi_guidance.yml'
@@ -203,6 +209,9 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/gdi-dom-test" --no-audit --no-fund --no-save jsdom@26.1.0
           node tools/test_gdi_legend.cjs
           node tools/test_winter_precip_dom.cjs
+
+      - name: Check disposable cache retention
+        run: python tools/test_cache_budget.py
 
       - name: Check model-data Python syntax
         run: |
