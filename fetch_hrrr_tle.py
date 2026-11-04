@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import io
 import math
 import os
 import shutil
@@ -761,6 +762,104 @@ def max_rolling_qpf_event(qpf_stack, hours, threshold_in):
     return (np.isfinite(max_accum) & (max_accum >= threshold_in)).astype(np.float32)
 
 
+def compute_tle_fields(member_records, ffg, latest_indices=(0, 1, 2), prior_indices=(3, 4, 5)):
+    """Apply the V3.3 science to complete, equally weighted aligned members.
+
+    For a pooled HRRR/RRFS ensemble each group contains three cycles from
+    each family. The run-change support fraction remains exactly two-thirds.
+    """
+    ffg_1h, ffg_3h, ffg_6h = ffg
+    if not member_records or not latest_indices or not prior_indices:
+        raise ValueError("Complete members and both run-change groups are required")
+    if set(latest_indices) & set(prior_indices) or set(latest_indices) | set(prior_indices) != set(range(len(member_records))):
+        raise ValueError("Run-change groups must partition the complete member population")
+    # Frozen V3.3 aggregation, shared by HRRR, RRFS and the pooled suite.
+    tle_member_neighborhood_ratio = np.stack(
+        [neighborhood_max(rec["ratios"]["combined"]).astype(np.float32) for rec in member_records],
+        axis=0,
+    )
+    tle_median_neighborhood_ratio = np.nanmedian(tle_member_neighborhood_ratio, axis=0).astype(np.float32)
+    del tle_member_neighborhood_ratio
+
+    tle_combined_events = []
+    for rec in member_records:
+        event = (np.isfinite(rec["ratios"]["combined"]) & (rec["ratios"]["combined"] >= 1.0)).astype(np.float32)
+        tle_combined_events.append(neighborhood_event(event).astype(np.uint8))
+    tle_frequency_raw = member_frequency(tle_combined_events).astype(np.float32)
+
+    tle_duration_frequency = {}
+    for duration in ("1h", "3h", "6h"):
+        events = []
+        for rec in member_records:
+            ratio = rec["ratios"][duration]
+            event = (np.isfinite(ratio) & (ratio >= 1.0)).astype(np.float32)
+            events.append(neighborhood_event(event).astype(np.uint8))
+        tle_duration_frequency[duration] = member_frequency(events).astype(np.float32)
+
+    tle_qpf1h_frequency = {}
+    for threshold in QPF_1H_THRESHOLDS_IN:
+        events = []
+        for rec in member_records:
+            max_qpf1h = np.nanmax(rec["qpf"], axis=0)
+            event = (np.isfinite(max_qpf1h) & (max_qpf1h >= threshold)).astype(np.float32)
+            events.append(neighborhood_event(event).astype(np.uint8))
+        tle_qpf1h_frequency[threshold] = member_frequency(events).astype(np.float32)
+
+    # Hourly / evolution / persistence.
+    for rec in member_records:
+        hourly_ratio = hourly_combined_ratio_stack(rec["qpf"], ffg_1h, ffg_3h, ffg_6h)
+        rec["hourly_neigh_ffg_event"] = hourly_neighborhood_exceedance_stack(hourly_ratio)
+        del hourly_ratio
+
+    evolution = {}
+    for start in range(0, TLE_COMMON_HOURS, EVOLUTION_WINDOW_HOURS):
+        end = start + EVOLUTION_WINDOW_HOURS
+        events = [any_event_in_hour_slice(rec["hourly_neigh_ffg_event"], start, end)
+                  for rec in member_records]
+        evolution[(start, end)] = member_frequency(events).astype(np.float32)
+
+    persistence = {}
+    for threshold in PERSISTENCE_HOURLY_THRESHOLDS_IN:
+        events = [
+            neighborhood_event(repeated_hourly_qpf_event(rec["qpf"], threshold)).astype(np.uint8)
+            for rec in member_records
+        ]
+        persistence[f"2of3_ge_{threshold:.2f}in"] = member_frequency(events).astype(np.float32)
+
+    for threshold in PERSISTENCE_3H_TOTAL_THRESHOLDS_IN:
+        events = [
+            neighborhood_event(max_rolling_qpf_event(rec["qpf"], 3, threshold)).astype(np.uint8)
+            for rec in member_records
+        ]
+        persistence[f"3h_ge_{threshold:.2f}in"] = member_frequency(events).astype(np.float32)
+
+    latest_group_count = np.sum(np.stack([tle_combined_events[i] for i in latest_indices], axis=0), axis=0)
+    prior_group_count = np.sum(np.stack([tle_combined_events[i] for i in prior_indices], axis=0), axis=0)
+    latest_group_frequency = (100.0 * latest_group_count / float(len(latest_indices))).astype(np.float32)
+    prior_group_frequency = (100.0 * prior_group_count / float(len(prior_indices))).astype(np.float32)
+
+    latest_signal = latest_group_count >= math.ceil(2 * len(latest_indices) / 3)
+    prior_signal = prior_group_count >= math.ceil(2 * len(prior_indices) / 3)
+    run_change = np.zeros(member_records[0]["qpf"].shape[1:], dtype=np.uint8)
+    run_change[prior_signal & ~latest_signal] = 1
+    run_change[prior_signal & latest_signal] = 2
+    run_change[~prior_signal & latest_signal] = 3
+
+    return {
+        "ffg_consensus": tle_frequency_raw,
+        "median_ratio": tle_median_neighborhood_ratio,
+        **{f"ffg_{d}": v for d, v in tle_duration_frequency.items()},
+        **{f"qpf1h_{int(t)}in": v for t, v in tle_qpf1h_frequency.items()},
+        **{f"evolution_{a:02d}_{b:02d}": v for (a, b), v in evolution.items()},
+        "persistence_1in_2of3": persistence["2of3_ge_1.00in"],
+        "persistence_3h_2in": persistence["3h_ge_2.00in"],
+        "persistence_3h_3in": persistence["3h_ge_3.00in"],
+        "latest3": latest_group_frequency,
+        "prior3": prior_group_frequency,
+        "run_change": run_change,
+    }
+
+
 # ====================================================================
 # RENDERING
 # ====================================================================
@@ -820,8 +919,10 @@ def render_overlay(data, out_path: Path, levels, colors, mask_below=None):
         edgecolors="none",
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = io.BytesIO()
     fig.savefig(
-        out_path,
+        encoded,
+        format="png",
         dpi=RENDER_DPI,
         transparent=True,
         facecolor="none",
@@ -829,6 +930,20 @@ def render_overlay(data, out_path: Path, levels, colors, mask_below=None):
         pad_inches=0,
     )
     plt.close(fig)
+
+    # Verify the complete encoded stream before exposing a file. Header-only
+    # checks cannot detect a truncated later IDAT chunk in a large PNG.
+    raw = encoded.getvalue()
+    with Image.open(io.BytesIO(raw)) as image:
+        image.verify()
+    with Image.open(io.BytesIO(raw)) as image:
+        image.load()
+    temporary = out_path.with_suffix(out_path.suffix + ".part")
+    with temporary.open("wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(out_path)
 
     # Catch any unexpected Matplotlib/Cartopy geometry regression immediately.
     with Image.open(out_path) as image:
@@ -1012,78 +1127,18 @@ def build(output_dir: Path, force: bool = False) -> int:
     if n_members != TLE_MEMBER_COUNT:
         raise RuntimeError(f"Dashboard publication requires 6/6 members; got {n_members}/6.")
 
-    # Core magnitude and consensus.
-    tle_member_neighborhood_ratio = np.stack(
-        [neighborhood_max(rec["ratios"]["combined"]).astype(np.float32) for rec in member_records],
-        axis=0,
-    )
-    tle_median_neighborhood_ratio = np.nanmedian(tle_member_neighborhood_ratio, axis=0).astype(np.float32)
-    del tle_member_neighborhood_ratio
-
-    tle_combined_events = []
-    for rec in member_records:
-        event = (np.isfinite(rec["ratios"]["combined"]) & (rec["ratios"]["combined"] >= 1.0)).astype(np.float32)
-        tle_combined_events.append(neighborhood_event(event).astype(np.uint8))
-    tle_frequency_raw = member_frequency(tle_combined_events).astype(np.float32)
-
-    tle_duration_frequency = {}
-    for duration in ("1h", "3h", "6h"):
-        events = []
-        for rec in member_records:
-            ratio = rec["ratios"][duration]
-            event = (np.isfinite(ratio) & (ratio >= 1.0)).astype(np.float32)
-            events.append(neighborhood_event(event).astype(np.uint8))
-        tle_duration_frequency[duration] = member_frequency(events).astype(np.float32)
-
-    tle_qpf1h_frequency = {}
-    for threshold in QPF_1H_THRESHOLDS_IN:
-        events = []
-        for rec in member_records:
-            max_qpf1h = np.nanmax(rec["qpf"], axis=0)
-            event = (np.isfinite(max_qpf1h) & (max_qpf1h >= threshold)).astype(np.float32)
-            events.append(neighborhood_event(event).astype(np.uint8))
-        tle_qpf1h_frequency[threshold] = member_frequency(events).astype(np.float32)
-
-    # Hourly / evolution / persistence.
-    for rec in member_records:
-        hourly_ratio = hourly_combined_ratio_stack(rec["qpf"], ffg_1h, ffg_3h, ffg_6h)
-        rec["hourly_neigh_ffg_event"] = hourly_neighborhood_exceedance_stack(hourly_ratio)
-        del hourly_ratio
-        gc.collect()
-
-    evolution = {}
-    for start in range(0, TLE_COMMON_HOURS, EVOLUTION_WINDOW_HOURS):
-        end = start + EVOLUTION_WINDOW_HOURS
-        events = [any_event_in_hour_slice(rec["hourly_neigh_ffg_event"], start, end)
-                  for rec in member_records]
-        evolution[(start, end)] = member_frequency(events).astype(np.float32)
-
-    persistence = {}
-    for threshold in PERSISTENCE_HOURLY_THRESHOLDS_IN:
-        events = [
-            neighborhood_event(repeated_hourly_qpf_event(rec["qpf"], threshold)).astype(np.uint8)
-            for rec in member_records
-        ]
-        persistence[f"2of3_ge_{threshold:.2f}in"] = member_frequency(events).astype(np.float32)
-
-    for threshold in PERSISTENCE_3H_TOTAL_THRESHOLDS_IN:
-        events = [
-            neighborhood_event(max_rolling_qpf_event(rec["qpf"], 3, threshold)).astype(np.uint8)
-            for rec in member_records
-        ]
-        persistence[f"3h_ge_{threshold:.2f}in"] = member_frequency(events).astype(np.float32)
-
-    latest_group_count = np.sum(np.stack(tle_combined_events[:3], axis=0), axis=0)
-    prior_group_count = np.sum(np.stack(tle_combined_events[3:6], axis=0), axis=0)
-    latest_group_frequency = (100.0 * latest_group_count / 3.0).astype(np.float32)
-    prior_group_frequency = (100.0 * prior_group_count / 3.0).astype(np.float32)
-
-    latest_signal = latest_group_count >= RUN_CHANGE_MIN_GROUP_MEMBERS
-    prior_signal = prior_group_count >= RUN_CHANGE_MIN_GROUP_MEMBERS
-    run_change = np.zeros(lats.shape, dtype=np.uint8)
-    run_change[prior_signal & ~latest_signal] = 1
-    run_change[prior_signal & latest_signal] = 2
-    run_change[~prior_signal & latest_signal] = 3
+    fields = compute_tle_fields(member_records, (ffg_1h, ffg_3h, ffg_6h))
+    tle_frequency_raw = fields["ffg_consensus"]
+    tle_median_neighborhood_ratio = fields["median_ratio"]
+    tle_duration_frequency = {d: fields[f"ffg_{d}"] for d in ("1h", "3h", "6h")}
+    tle_qpf1h_frequency = {t: fields[f"qpf1h_{int(t)}in"] for t in QPF_1H_THRESHOLDS_IN}
+    evolution = {(a, a + 3): fields[f"evolution_{a:02d}_{a+3:02d}"] for a in range(0, 12, 3)}
+    persistence = {
+        "2of3_ge_1.00in": fields["persistence_1in_2of3"],
+        "3h_ge_2.00in": fields["persistence_3h_2in"],
+        "3h_ge_3.00in": fields["persistence_3h_3in"],
+    }
+    latest_group_frequency, prior_group_frequency, run_change = (fields[k] for k in ("latest3", "prior3", "run_change"))
 
     # Build into a staging directory; publish only after every PNG + metadata succeeds.
     staging = Path(tempfile.mkdtemp(prefix="hrrr_tle_stage_", dir=str(output_dir.parent)))

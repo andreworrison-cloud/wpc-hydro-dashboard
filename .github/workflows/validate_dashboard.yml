@@ -44,6 +44,10 @@ on:
       - 'fetch_lightningcast.py'
       - '.github/workflows/update_lightningcast.yml'
       - 'fetch_hrrr_tle.py'
+      - 'flash_flood_suite.py'
+      - 'flash_flood_layer.js'
+      - 'tools/test_flash_flood*'
+      - 'tools/flash_flood_v33_fixture.json'
       - 'cam_*.py'
       - 'cam_display.js'
       - 'cam_spc_members.json'
@@ -104,6 +108,10 @@ on:
       - 'fetch_lightningcast.py'
       - '.github/workflows/update_lightningcast.yml'
       - 'fetch_hrrr_tle.py'
+      - 'flash_flood_suite.py'
+      - 'flash_flood_layer.js'
+      - 'tools/test_flash_flood*'
+      - 'tools/flash_flood_v33_fixture.json'
       - 'cam_*.py'
       - 'cam_display.js'
       - 'cam_spc_members.json'
@@ -151,6 +159,8 @@ jobs:
           node --check surface_cartography.js
           node --check surface_sampling.js
           node --check app.js
+          node --check flash_flood_layer.js
+          node tools/test_flash_flood_display.cjs
           node --check cam_display.js
           node tools/test_cam_display.cjs
           node --check gdi_layer.js
@@ -169,8 +179,9 @@ jobs:
 
       - name: Check GDI valid-time alignment and aggregation
         run: |
-          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy matplotlib cartopy
+          pip install numpy scipy eccodes rasterio pyproj requests pillow contourpy matplotlib cartopy xarray cfgrib
           python tools/test_cam_probability.py
+          python tools/test_flash_flood.py
           python tools/gdi/test_guidance.py
           python tools/gdi/test_dynamics.py
           python tools/gdi/test_forecast_dynamics.py
@@ -200,6 +211,7 @@ jobs:
             fetch_cam_ero.py \
             fetch_rap.py \
             fetch_hrrr_tle.py \
+            flash_flood_suite.py \
             fetch_nwm.py \
             tools/validate_model_package.py \
             tools/publish_pages_snapshot.py \
@@ -216,6 +228,8 @@ jobs:
               'static/ero_cam_metadata.json',
               'static/rap_metadata.json',
               'static/hrrr_tle_manifest.json',
+              'static/rrfs_tle_manifest.json',
+              'static/hrrr_rrfs_tle_manifest.json',
               'static/nwm_metadata.json',
               'static/leg_pwat.png',
           ):
