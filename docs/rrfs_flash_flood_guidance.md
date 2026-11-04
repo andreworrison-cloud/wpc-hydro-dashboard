@@ -171,6 +171,15 @@ the matching 18Z model/FFG cycles. The served site was approximately 90.66 MiB;
 the new product packages totaled approximately 5.29 MiB. The live snapshot
 had no commit parents. See `review/rrfs-flash-flood/production_readback_20261104.json`.
 
+Storage maintenance released 5,211,184,886 bytes of superseded derived GDI cache;
+the next inventory showed approximately 6.148 GiB remaining. The follow-up also
+identified an existing Day 1 GDI reader still expecting retired HREF metadata.
+Its window binding now accepts the current SPC/OMD CAM v3 contract, requiring
+identical synoptic cycles, agreeing window fields and complete hourly endpoints.
+All four 00/06/12/18Z window rules, José's GDI calculation and its aggregation
+remain unchanged. Legacy fixtures remain supported; unknown schemas and mixed
+current cycles fail closed.
+
 GitHub's [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 and [Actions billing/storage documentation](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 describe separate limits. The public API does not expose this account's billing
