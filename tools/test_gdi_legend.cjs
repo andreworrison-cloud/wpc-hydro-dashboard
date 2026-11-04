@@ -66,7 +66,9 @@ console.log('RAP change legend checks passed: source palette, zero boundary, fiv
 function sourceFunction(name){const a=source.indexOf('function '+name+'(');assert.ok(a>=0);return source.slice(a,source.indexOf('\n}',a)+2);}
 const active=new Set(),entries=[],entryIndex=new Map(),events=[];
 const rows=document.createElement('div');document.body.appendChild(rows);
+let guidanceSyncCalls=0;
 const rowContext={document,selectedDashboardLayerId:null,layerEntriesById:entryIndex,
+ modelGuidanceMenu:{sync(){guidanceSyncCalls++;}},
  map:{hasLayer:layer=>active.has(layer),addLayer:layer=>active.add(layer),removeLayer:layer=>active.delete(layer),fire:(type,event)=>events.push([type,event.name])},
  getAllDashboardLayerEntries:()=>entries,selectDashboardLayer(){},updateActiveLayerCount(){}};
 vm.createContext(rowContext);
@@ -82,4 +84,5 @@ inputs[1].click();assert.ok(active.has(entries[1].layer));assert.ok(!active.has(
 inputs[1].click();assert.equal(active.size,0,'checked GDI square can be switched off');assert.equal(inputs[1].checked,false);
 inputs[3].click();inputs[2].click();assert.equal(active.size,2,'independent layers remain available with GDI');
 rows.querySelector('[data-layer-id="analysis"] .layer-label').click();assert.ok(active.has(entries[0].layer));assert.ok(!active.has(entries[2].layer));assert.ok(active.has(entries[3].layer));
+assert.ok(guidanceSyncCalls>0,'native layer toggles notify the consolidated guidance control');
 console.log('Square layer-control checks passed: native toggling, label clicks, GDI exclusivity and independent overlays.');

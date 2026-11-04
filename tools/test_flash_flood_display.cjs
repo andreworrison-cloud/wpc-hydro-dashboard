@@ -33,9 +33,11 @@ async function check(suiteName,label,count) {
     const manifest=structuredClone(metadata);
     global.fetch=async url=>{fetches++; return {ok:true,json:async()=>structuredClone(url.includes('manifest')?manifest:metadata)};};
     const first=s.configs[0];active.add(first.label);
+    first.layer.setOpacity(.45); // a model switch may precede the first metadata read
     assert.equal(await s.refresh(),true);
     assert.equal(preloaded.length,1,'Only the active layer should decode during refresh');
-    assert.ok(s.configs.every(c=>c.layer.options.opacity===1));
+    assert.equal(first.layer.options.opacity,.45,'Initial metadata must retain a requested comparison opacity');
+    assert.ok(s.configs.slice(1).every(c=>c.layer.options.opacity===1));
     assert.ok(boxes.get(s.timeBoxIds[0]).innerHTML.includes('Valid:'));
     const before=fetches;assert.equal(await s.refresh(),false);assert.equal(fetches,before+1);
     first.layer.setOpacity(.45);

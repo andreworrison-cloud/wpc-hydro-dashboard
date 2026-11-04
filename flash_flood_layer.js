@@ -62,7 +62,9 @@
         function syncTimeBoxes() {
             configs.forEach(c => {
                 if (expired(c)) {
-                    if (!c.hiddenForExpiry) c.retainedOpacity = metadata ? Number(c.layer.options.opacity) : 1;
+                    const requestedOpacity=Number(c.layer.options.opacity);
+                    if (!metadata && requestedOpacity>0) c.retainedOpacity=requestedOpacity;
+                    else if (!c.hiddenForExpiry) c.retainedOpacity = metadata ? requestedOpacity : 1;
                     c.hiddenForExpiry = true;
                     c.layer.setOpacity(0);
                 }
@@ -113,7 +115,7 @@
                 // verified together by the producer before snapshot publication.
                 await Promise.all(activeConfigs().map(c => preload(url(c))));
                 const previouslyReady = !!metadata;
-                const opacities = configs.map(c => c.hiddenForExpiry ? c.retainedOpacity : previouslyReady ? Number(c.layer.options.opacity) : 1);
+                const opacities = configs.map(c => !previouslyReady && Number(c.layer.options.opacity)>0 ? Number(c.layer.options.opacity) : c.hiddenForExpiry ? c.retainedOpacity : previouslyReady ? Number(c.layer.options.opacity) : 1);
                 metadata = meta;
                 configs.forEach((c, i) => {
                     c.layer.setBounds(meta.bounds);
@@ -171,6 +173,7 @@
                     layers:entries(tle.filter(c => c.group === title))}))}
         ];
         return {configs, sections, timeBoxIds, activeConfigs, refresh, syncTimeBoxes, legend, validate,
+            getMetadata: () => metadata,
             onLayerChange(name, added) {
                 if (!byName.has(name)) return;
                 syncTimeBoxes();

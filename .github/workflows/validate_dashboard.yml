@@ -49,6 +49,8 @@ on:
       - 'fetch_hrrr_tle.py'
       - 'flash_flood_suite.py'
       - 'flash_flood_layer.js'
+      - 'model_guidance_menu.js'
+      - 'tools/test_model_guidance_menu.cjs'
       - 'tools/test_flash_flood*'
       - 'tools/flash_flood_v33_fixture.json'
       - 'cam_*.py'
@@ -116,6 +118,8 @@ on:
       - 'fetch_hrrr_tle.py'
       - 'flash_flood_suite.py'
       - 'flash_flood_layer.js'
+      - 'model_guidance_menu.js'
+      - 'tools/test_model_guidance_menu.cjs'
       - 'tools/test_flash_flood*'
       - 'tools/flash_flood_v33_fixture.json'
       - 'cam_*.py'
@@ -166,6 +170,7 @@ jobs:
           node --check surface_sampling.js
           node --check app.js
           node --check flash_flood_layer.js
+          node --check model_guidance_menu.js
           node tools/test_flash_flood_display.cjs
           node --check cam_display.js
           node tools/test_cam_display.cjs
@@ -207,6 +212,7 @@ jobs:
           GDI_TEST_DOM_MODULE: ${{ runner.temp }}/gdi-dom-test/node_modules/jsdom
         run: |
           npm install --prefix "$RUNNER_TEMP/gdi-dom-test" --no-audit --no-fund --no-save jsdom@26.1.0
+          node tools/test_model_guidance_menu.cjs
           node tools/test_gdi_legend.cjs
           node tools/test_winter_precip_dom.cjs
 
