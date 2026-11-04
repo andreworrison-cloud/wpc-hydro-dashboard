@@ -22,8 +22,9 @@ def audit(repository, output=None):
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
     repo = get('')
-    tree = get('/git/trees/pages-live?recursive=1')
-    commit = get('/git/commits/'+tree['sha'])
+    head = get('/git/ref/heads/pages-live')['object']['sha']
+    commit = get('/git/commits/'+head)
+    tree = get('/git/trees/'+commit['tree']['sha']+'?recursive=1')
     caches = get('/actions/caches?per_page=100')
     first = get('/actions/artifacts?per_page=100&page=1')
     pages = math.ceil(first['total_count']/100)
@@ -42,7 +43,8 @@ def audit(repository, output=None):
     report = {
         'observed_at_utc':datetime.now(timezone.utc).isoformat(), 'repository':repository,
         'repository_reported_kib':repo['size'], 'repository_reported_gib':repo['size']/1024**2,
-        'pages_head':tree['sha'], 'pages_parent_count':len(commit.get('parents',[])),
+        'pages_head':head, 'pages_tree_sha':tree['sha'],
+        'pages_parent_count':len(commit.get('parents',[])),
         'pages_tree_complete':not tree.get('truncated'),
         'pages_payload_bytes':sum(p.get('size',0) for p in tree['tree'] if p['type']=='blob'),
         'cache_count':caches['total_count'], 'cache_inventory_complete':caches['total_count'] <= 100,
