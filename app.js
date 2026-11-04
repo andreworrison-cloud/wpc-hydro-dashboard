@@ -1801,6 +1801,24 @@ let hrrrTLEReady = false;
 let hrrrTLELastManifestVersion = '';
 let hrrrTLEManifestCheckInFlight = false;
 
+// RRFS and pooled HRRR/RRFS inherit the exact HRRR product/menu definitions.
+const flashFloodSuites = [
+    {suite: 'rrfs', label: 'RRFS'},
+    {suite: 'hrrr_rrfs', label: 'HRRR/RRFS'}
+].map(model => WPCFlashFlood.create({
+    ...model, L,
+    diagnosticConfigs: HRRR_DIAGNOSTIC_LAYER_CONFIGS,
+    tleConfigs: HRRR_TLE_LAYER_CONFIGS,
+    isActive: name => activeLayerNames.has(name),
+    formatTime: formatHRRRTLEUTC,
+    legacyLegend: buildHRRRTLELegendHTML,
+    legendShell: hrrrTLELegendShell,
+    legendRows: hrrrTLEDiscreteRows,
+    preload: preloadDashboardRaster,
+    changed: () => { updateLegends(); refreshLegendDockSummary(); }
+}));
+
+
 const satOptions = { format: 'image/png', transparent: true, opacity: 0.6 };
 const goesEastVis = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch02' });
 const goesEastWV = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes_east.cgi", { ...satOptions, layers: 'conus_ch09' });
@@ -6721,6 +6739,18 @@ fetchMRMSFlash24hMetadata();
 refreshGLMFromManifest({forceMetadata: true});
 refreshLightningCastFromManifest({forceMetadata: true});
 refreshHRRRTLEFromManifest({forceMetadata: true});
+flashFloodSuites.forEach(suite => suite.refresh());
+window.setInterval(() => {
+    flashFloodSuites.forEach(suite => {
+        suite.syncTimeBoxes();
+        if (!document.hidden) suite.refresh();
+    });
+}, HRRR_TLE_MANIFEST_POLL_INTERVAL_MS);
+['focus', 'online'].forEach(event => window.addEventListener(event, () => flashFloodSuites.forEach(suite => suite.refresh())));
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) flashFloodSuites.forEach(suite => suite.refresh());
+});
+
 fetchNWMMetadata();
 // Legacy SPoRT updater retired; shared suites own publication and freshness.
 fetchNRCSHSGMetadata();
@@ -6929,6 +6959,7 @@ legendDockControl.onAdd = function () {
         'lightningcast-time-box',
         'hrrr-diagnostics-time-box',
         'hrrr-tle-time-box',
+        ...flashFloodSuites.flatMap(suite => suite.timeBoxIds),
         'nwm-time-box',
         'sport-time-box',
         'nrcs-hsg-time-box',
@@ -7531,6 +7562,11 @@ function updateLegends() {
     HRRR_TLE_LAYER_CONFIGS
         .filter(config => activeLayerNames.has(config.label))
         .forEach(config => addLegendBlock(buildHRRRTLELegendHTML(config)));
+    flashFloodSuites.forEach(suite => {
+        suite.activeConfigs().forEach(config => addLegendBlock(suite.legend(config)));
+        suite.syncTimeBoxes();
+    });
+
     
     const hasMRMS1hr = Array.from(activeLayerNames).some(name => name === 'MRMS 1-Hour QPE');
     const hasMRMSMulti = Array.from(activeLayerNames).some(name => name.includes('MRMS') && name.includes('QPE') && !name.includes('1-Hour'));
@@ -7569,6 +7605,7 @@ function updateLegends() {
 // Map overlay handling dynamically updates Sets and GUI
 map.on('overlayadd', function(eventLayer) {
     activeLayerNames.add(eventLayer.name);
+    flashFloodSuites.forEach(suite => suite.onLayerChange(eventLayer.name, true));
     updateLegends();
 
     const rapTimeBox = document.getElementById('rap-time-box');
@@ -7793,6 +7830,7 @@ map.on('overlayadd', function(eventLayer) {
 
 map.on('overlayremove', function(eventLayer) {
     activeLayerNames.delete(eventLayer.name);
+    flashFloodSuites.forEach(suite => suite.onLayerChange(eventLayer.name, false));
     updateLegends();
 
     const rapTimeBox = document.getElementById('rap-time-box');
@@ -8304,6 +8342,7 @@ const dashboardSections = [
             }
         ]
     },
+    ...flashFloodSuites.flatMap(suite => suite.sections),
     {
         id: 'cam-3-9',
         title: 'CAM Nowcasts (+3h to +9h)',

@@ -52,14 +52,17 @@ jobs:
       - name: Report upstream ingest failure after publishing retained status
         if: always() && steps.ingest.outcome == 'failure'
         run: exit 1
-      - name: Upload reviewable product and scientific provenance
+      - name: Upload compact provenance without duplicate operational rasters
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rfc-ffg-ingest-${{ github.run_id }}-${{ github.run_attempt }}
-          path: diagnostics/
+          # The verified current/prior science is already retained on the
+          # dedicated production data branch. Hourly copies of those TIFF/GRIB
+          # files were adding about 300 MiB per artifact; retain JSON here only.
+          path: diagnostics/**/*.json
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 2
 
   tendency:
     if: github.ref == 'refs/heads/main'
