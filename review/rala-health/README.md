@@ -11,3 +11,7 @@ The browser now bounds metadata/body requests and image preloads, including imag
 The empty Experimental Models menu placeholder has been removed. Existing experimental products remain in their populated product families.
 
 The [investigation record](investigation_20261104.json) contains source/run timestamps. Regression checks cover four publication-age cases and six browser refresh/recovery scenarios, plus existing radar playback, archive selection, winter classification and dashboard checks. Reflectivity values, palette, rendering resolution, ten-minute sampling and 2/4/6-hour playback are preserved. No new data archive or periodic artifact upload is introduced.
+
+Merged as [PR #38](https://github.com/andreworrison-cloud/wpc-hydro-dashboard/pull/38), source `7807733cfe810d0ecde8d02046039f436649003c`. Main validation and Pages source synchronization succeeded. The first three repaired production jobs completed in approximately 25, 27 and 40 seconds. The third scheduled run published the next 23:20:39Z observation at 23:23Z, with a measured age of 2.36 minutes and all 37 archive frames. The [verification record](verification_20261104.json) retains the run IDs and publication receipts.
+
+A separate read observed a GitHub raw CDN response one ten-minute frame behind the native branch, with `max-age=300` and `X-Cache: HIT`. The producer repair does not alter GitHub's CDN. The dashboard retains its twenty-minute stale cutoff rather than treating a recent generation time as evidence of fresh radar.
