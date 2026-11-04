@@ -19,6 +19,26 @@ def parse_time(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
 
+def publication_freshness(manifest, maximum_age_minutes, now=None):
+    """Publication-time observation age; generation time never refreshes old data."""
+    if maximum_age_minutes <= 0:
+        raise ValueError('Maximum publication age must be positive')
+    latest = manifest['latest_valid_time_utc']
+    if not manifest.get('frames') or manifest['frames'][-1]['valid_time_utc'] != latest:
+        raise ValueError('Latest MRMS observation does not match the final frame')
+    parsed = datetime.fromisoformat(latest.replace('Z','+00:00'))
+    if parsed.tzinfo is None:
+        raise ValueError('MRMS observation requires an explicit UTC offset')
+    checked = now or datetime.now(UTC)
+    age = (checked-parsed).total_seconds()/60.0
+    if age < -2:
+        raise ValueError('MRMS observation is more than two minutes in the future')
+    if age > maximum_age_minutes:
+        raise ValueError(f'MRMS observation is {age:.2f} minutes old at publication; limit is {maximum_age_minutes:g}')
+    return {'checked_at_utc':checked.isoformat(), 'latest_valid_time_utc':latest,
+            'age_minutes':round(max(0,age),3),'maximum_age_minutes':maximum_age_minutes}
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("output_dir", nargs="?", default="mrms_rala_loop_publish")
@@ -28,7 +48,11 @@ def main() -> int:
     p.add_argument("--max-gap-minutes", type=float, default=20.0)
     p.add_argument("--default-window-minutes", type=int, default=120)
     p.add_argument("--minimum-default-window-frames", type=int, default=12)
+    p.add_argument("--maximum-age-minutes", type=float)
+    p.add_argument("--record-publication", action="store_true")
     args = p.parse_args()
+    if args.record_publication and args.maximum_age_minutes is None:
+        p.error('--record-publication requires --maximum-age-minutes')
 
     root = Path(args.output_dir)
     manifest_path = root / "mrms_rala_loop_manifest.json"
@@ -150,11 +174,24 @@ def main() -> int:
                     if rgba.getchannel("A").getbbox() is None:
                         errors.append("Latest frame has no visible radar pixels")
 
+    publication = None
+    if not errors and args.maximum_age_minutes is not None:
+        try:
+            publication = publication_freshness(m,args.maximum_age_minutes)
+        except (ValueError,KeyError,TypeError) as exc:
+            errors.append(str(exc))
     if errors:
         print("MRMS RALA loop validation FAILED:")
         for error in errors:
             print(f" - {error}")
         return 1
+    if publication:
+        print('MRMS RALA publication freshness PASS: '+json.dumps(publication))
+        if args.record_publication:
+            m['publication_validation']=publication
+            temporary=manifest_path.with_suffix('.publication.tmp')
+            temporary.write_text(json.dumps(m,indent=2)+'\n',encoding='utf-8')
+            temporary.replace(manifest_path)
     print("MRMS RALA loop validation PASS: six-hour archive, 10-minute cadence, two-hour default")
     return 0
 

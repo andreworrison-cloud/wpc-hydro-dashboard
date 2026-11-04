@@ -1,6 +1,13 @@
 name: Update MRMS RALA Direct NOAA Loop
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/update_mrms_rala.yml'
+      - 'fetch_mrms_rala.py'
+      - 'fetch_mrms_rala_loop.py'
+      - 'tools/validate_mrms_rala_loop.py'
   workflow_dispatch:
     inputs:
       source_mode:
@@ -51,27 +58,16 @@ jobs:
           cache: 'pip'
 
       - name: Install MRMS decoding and rendering dependencies
+        timeout-minutes: 3
         shell: bash
         run: |
           set -euo pipefail
-          # GitHub-hosted Ubuntu runners may include unrelated third-party apt
-          # sources (notably Google Chrome). This workflow does not need Chrome;
-          # disable that source before refreshing package metadata so a transient
-          # Chrome repository hash mismatch cannot block the meteorological job.
-          for source_file in /etc/apt/sources.list.d/*; do
-            if [ -f "${source_file}" ] && sudo grep -q "dl.google.com/linux/chrome-stable/deb" "${source_file}" 2>/dev/null; then
-              echo "Disabling unused Google Chrome apt source: ${source_file}"
-              sudo rm -f "${source_file}"
-            fi
-          done
-
-          # Start from a clean apt-list snapshot and retry transient mirror failures.
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo apt-get clean
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y --no-install-recommends libeccodes0
-          python -m pip install --upgrade pip
-          python -m pip install numpy requests pillow pyproj rasterio eccodes
+          # These are the same ecCodes binaries already used by production.
+          # PyPI bundles the library; apt was adding up to 13 minutes before
+          # radar retrieval, blocking subsequent five-minute dispatches.
+          python -m pip install --disable-pip-version-check --only-binary=:all: \
+            numpy requests pillow pyproj rasterio \
+            'eccodes==2.50.0' 'eccodeslib==2.50.0.33'
           python -m eccodes selfcheck
 
       - name: Validate MRMS loop code
@@ -110,6 +106,7 @@ jobs:
       - name: Run MRMS 10-minute archive selection self-test
         run: |
           python fetch_mrms_rala_loop.py --self-test
+          python tools/test_mrms_rala_health.py
           python tools/test_winter_precip.py
           python tools/test_winter_precip_sources.py
 
@@ -158,6 +155,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Check the observation age now, after all optional processing, rather
+          # than relying on the clock captured at the beginning of the build.
+          python tools/validate_mrms_rala_loop.py "$MRMS_RALA_OUTPUT_DIR" \
+            --maximum-age-minutes 20 --record-publication
 
           valid_time=$(python -c "import json; print(json.load(open('$MRMS_RALA_OUTPUT_DIR/mrms_rala_loop_manifest.json'))['latest_valid_time_utc'])")
           publish_tree="$RUNNER_TEMP/mrms-rala-data-worktree"

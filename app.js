@@ -1378,6 +1378,8 @@ const MRMS_WINTER_LAYER_NAME = 'MRMS RALA — Precipitation Type & Intensity';
 const MRMS_RALA_DATA_ROOT = 'https://raw.githubusercontent.com/andreworrison-cloud/wpc-hydro-dashboard/mrms-rala-data';
 const MRMS_RALA_MANIFEST_URL = `${MRMS_RALA_DATA_ROOT}/mrms_rala_loop_manifest.json`;
 const MRMS_RALA_MANIFEST_POLL_INTERVAL_MS = 60 * 1000;
+const MRMS_RALA_METADATA_TIMEOUT_MS = 15000;
+const MRMS_RALA_IMAGE_TIMEOUT_MS = 20000;
 const MRMS_RALA_FRESHNESS_LIMIT_MINUTES = 20;
 const MRMS_RALA_DEFAULT_OPACITY = 0.85;
 const MRMS_RALA_OPACITY_STORAGE_KEY = 'wpc-mrms-rala-opacity-v2';
@@ -4538,6 +4540,16 @@ function preloadMRMSRALAFrame(frame) {
 
     const promise = new Promise((resolve, reject) => {
         const image = new Image();
+        let settled = false;
+        const finish = error => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
+            image.onload = null;
+            image.onerror = null;
+            if (error) {image.src='';reject(error);} else resolve(url);
+        };
+        const timer = window.setTimeout(() => finish(new Error(`MRMS RALA preload timed out: ${frame.valid_time_utc}`)),MRMS_RALA_IMAGE_TIMEOUT_MS);
         image.decoding = 'async';
         image.onload = async () => {
             try {
@@ -4546,9 +4558,9 @@ function preloadMRMSRALAFrame(frame) {
                 // onload already confirms the resource is usable; decode() may
                 // reject for browser-specific reasons without invalidating it.
             }
-            resolve(url);
+            finish();
         };
-        image.onerror = () => reject(new Error(`MRMS RALA frame failed to preload: ${frame.valid_time_utc}`));
+        image.onerror = () => finish(new Error(`MRMS RALA frame failed to preload: ${frame.valid_time_utc}`));
         image.src = url;
     }).catch(error => {
         mrmsRalaPreloadCache.delete(url);
@@ -4890,9 +4902,13 @@ function mrmsRalaManifestVersion(manifest) {
 }
 
 async function fetchMRMSRALAManifest() {
-    const response = await fetch(`${MRMS_RALA_MANIFEST_URL}?t=${Date.now()}`, {cache: 'no-store'});
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(),MRMS_RALA_METADATA_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${MRMS_RALA_MANIFEST_URL}?t=${Date.now()}`, {cache: 'no-store',signal:controller.signal});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } finally {window.clearTimeout(timer);}
 }
 
 async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
@@ -4911,7 +4927,6 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
             mrmsRalaLayer.setBounds(validated.bounds);
             mrmsRalaBufferLayer.setBounds(validated.bounds);
             mrmsRalaReady = true;
-            mrmsRalaLastManifestVersion = version;
             applyMRMSRALAFreshnessState();
 
             if (mrmsRalaFresh && (mrmsRalaDisplayMode !== 'ptype' || WinterPrecipDisplay.available(mrmsRalaMetadata))) {
@@ -4921,6 +4936,9 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
                     await showMRMSRALAFrame(map.timeDimension.getCurrentTime(), {force: true});
                 }
             }
+            // Failed image loads must be retried even when the producer has
+            // not issued another manifest yet.
+            mrmsRalaLastManifestVersion = version;
             if (typeof updateLegends === 'function') updateLegends();
             return true;
         }
@@ -4933,7 +4951,7 @@ async function refreshMRMSRALAFromManifest({forceMetadata = false} = {}) {
             mrmsRalaVisibleLayer.setOpacity(0);
             mrmsRalaHiddenLayer.setOpacity(0);
         }
-        updateMRMSRALATimeBox();
+        applyMRMSRALAFreshnessState();
         return false;
     } finally {
         mrmsRalaManifestCheckInFlight = false;
@@ -8408,12 +8426,6 @@ const dashboardSections = [
             {id: 'ero-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_spc_refs'], kind: 'raster', nested: true},
             {id: 'ero-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_omd_refs'], kind: 'raster', nested: true}
         ]
-    },
-    {
-        id: 'experimental',
-        title: 'Experimental Models',
-        layers: [],
-        emptyMessage: 'Ready for NLDAS-3 and other experimental products. New layers can be registered without rebuilding the sidebar.'
     }
 ];
 
@@ -8840,13 +8852,11 @@ function applyLayerSearch() {
             if (query && groupVisible) groupEl.open = true;
         });
 
-        const isExperimentalEmpty = sectionEl.dataset.sectionId === 'experimental' && rows.length === 0;
         const emptyNote = sectionEl.querySelector('.empty-section-note');
-        const noteMatches = isExperimentalEmpty && (!query || 'experimental nldas-3 model research'.includes(query));
-        if (emptyNote) emptyNote.hidden = !noteMatches;
+        if (emptyNote) emptyNote.hidden = Boolean(query);
 
         sectionEl.hidden = query
-            ? (visibleRows === 0 && !noteMatches)
+            ? visibleRows === 0
             : false;
         if (query && !sectionEl.hidden) sectionEl.open = true;
     });
