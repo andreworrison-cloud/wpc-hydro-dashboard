@@ -41,7 +41,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python -m pip install --disable-pip-version-check --only-binary=:all: requests xarray cfgrib matplotlib numpy scipy metpy 'eccodes==2.50.0' 'eccodeslib==2.50.0.33'
+          python -m pip install --disable-pip-version-check --only-binary=:all: -c constraints-grib.txt requests xarray cfgrib matplotlib numpy scipy metpy eccodes eccodeslib
           python -m eccodes selfcheck
 
       - name: Restore current RAP dashboard snapshot

@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Verify the protected cache namespace and current-frame budget
         run: python tools/test_cache_budget.py
-      - name: Retire superseded forecast, Day 1 and companion cache copies
+      - name: Retire superseded forecast, Day 1, RAP and native CAM caches
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/prune_actions_caches.py --delete-superseded

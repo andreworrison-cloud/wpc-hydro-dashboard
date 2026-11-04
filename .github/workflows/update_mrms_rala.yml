@@ -9,6 +9,7 @@ on:
       - 'fetch_mrms_rala_loop.py'
       - 'tools/validate_mrms_rala_loop.py'
       - 'requirements-mrms-rala.txt'
+      - 'constraints-grib.txt'
   workflow_dispatch:
     inputs:
       source_mode:
@@ -57,7 +58,9 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: requirements-mrms-rala.txt
+          cache-dependency-path: |
+            requirements-mrms-rala.txt
+            constraints-grib.txt
 
       - name: Install MRMS decoding and rendering dependencies
         timeout-minutes: 3

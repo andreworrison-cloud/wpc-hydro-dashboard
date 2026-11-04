@@ -68,7 +68,7 @@ def plan(rows, open_branches, now):
             reason = None
             if row['id'] in newest:
                 reason = 'newest-two'
-            elif now - stamp(row['created_at']) < MINIMUM_AGE:
+            elif now - stamp(row['created_at']) < (timedelta(minutes=10) if group == 'github-pages' else MINIMUM_AGE):
                 reason = 'recent-or-in-flight'
             elif branch in open_branches:
                 reason = 'open-pull-request'

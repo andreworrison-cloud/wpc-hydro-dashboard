@@ -1,4 +1,4 @@
-"""Retire superseded, rebuildable GDI cache copies in exact main namespaces.
+"""Retire superseded forecast checkpoints in exact main namespaces.
 
 No artifact, branch, publication or scientific archive deletion is supported.
 The normal command previews the plan; deletion needs --delete-superseded.
@@ -13,7 +13,10 @@ import urllib.request
 
 RETAIN = {'cam-gdi-dynamics-v1-': 1,
           'gdi-focused-forecast-': 2,
-          'gdi-focused-day1-': 2}
+          'gdi-focused-day1-': 2,
+          'rap-gdi-dynamics-': 2,
+          'cam-native-v2-cam-': 2,
+          'cam-native-v2-ero-': 2}
 
 
 def plan(rows):
