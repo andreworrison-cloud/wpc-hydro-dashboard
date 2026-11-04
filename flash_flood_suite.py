@@ -57,6 +57,10 @@ def member(family, lag=0):
 
 
 class OperationalSources(Sources):
+    def __init__(self, cache_dir, workers=4):
+        super().__init__(cache_dir, workers, value_reader=read_native_precip,
+                         decode_version='flash-flood-eccodes-v1')
+
     def probe_index(self, url):
         if url not in self._indexes:
             with requests.get(url+'.idx', timeout=(8,15), stream=True) as response:
@@ -74,7 +78,7 @@ class OperationalSources(Sources):
         return super().index(url)
 
     def fetch_cumulative(self, init, fxx):
-        path = self.cache/'rrfs-subh-endpoint-v1'/init.strftime('%Y%m%d%H')/f'f{fxx:03d}.npz'
+        path = self.cache/'rrfs-subh-endpoint-v2'/init.strftime('%Y%m%d%H')/f'f{fxx:03d}.npz'
         if path.is_file():
             with np.load(path, allow_pickle=False) as z:
                 values, meta = z['values'], json.loads(str(z['metadata'].item()))
@@ -114,7 +118,7 @@ class OperationalSources(Sources):
                         grid = Grid.from_source(src)
                         if self.grid is None: self.grid = grid
                         if not self.grid.matches(src): raise ValueError('RRFS native grid differs')
-                        values = src.read(1,masked=True).filled(np.nan).astype('float32')
+                        values = read_native_precip(temporary)
                         if not np.isfinite(values).all() or np.any(values < 0) or np.any(values > 4000):
                             raise ValueError('Invalid cumulative rainfall values')
                 meta = {'init_utc':init.isoformat(), 'fxx':fxx, 'source':transfer,
@@ -155,6 +159,24 @@ def subhourly_urls(init, fxx):
     relative = f'rrfs.{init:%Y%m%d}/{init:%H}/rrfs.t{init:%H}z.2dfld.3km.subh.f{fxx:03d}.conus.grib2'
     return ['https://noaa-rrfs-ops-pds.s3.amazonaws.com/'+relative,
             'https://nomads.ncep.noaa.gov/pub/data/nccf/com/rrfs/prod/'+relative]
+
+
+def read_native_precip(path):
+    """Match the original cfgrib/ecCodes float32 reader, in north-up order.
+
+    GDAL and ecCodes can round a decoded packed depth by a float32 ULP.
+    Use the original HRRR decoder for both models; no depth interpolation.
+    """
+    with open(path,'rb') as stream:
+        gid = ec.codes_grib_new_from_file(stream)
+        try:
+            if any(ec.codes_get(gid,k) for k in ('iScansNegatively','jPointsAreConsecutive','alternativeRowScanning')):
+                raise ValueError('Unqualified precipitation grid scan order')
+            shape = (ec.codes_get(gid,'Nj'),ec.codes_get(gid,'Ni'))
+            values = ec.codes_get_values(gid).reshape(shape).astype('float32')
+            if ec.codes_get(gid,'jScansPositively'): values = values[::-1].copy()
+            return values
+        finally: ec.codes_release(gid)
 
 
 def cumulative_entry(text, init, fxx):

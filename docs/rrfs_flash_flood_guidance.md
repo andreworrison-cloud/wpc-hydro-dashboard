@@ -80,6 +80,11 @@ endpoints, missing cells or an unexpected grid reject the member. No missing
 hour is represented as dry rainfall.
 
 Native HRRR/RRFS grids must match. No rainfall interpolation is introduced.
+Both families use the original HRRR ecCodes/float32 value decoder, with only
+the array row order reversed for the common north-up grid. A live HRRR check
+matched all 1,905,141 rainfall cells exactly against the original cfgrib reader.
+This avoids small float32 rounding differences in GDAL rainfall decoding; the
+existing CAM reader and its checkpoint version are unchanged.
 The producer fails if the grid cannot share the existing 3-km neighborhood.
 Each source record retains the model cycle, true forecast lead, interval,
 encoded model identity, source URL, retrieval time, HTTP modification metadata,

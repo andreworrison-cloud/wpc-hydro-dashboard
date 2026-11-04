@@ -180,10 +180,14 @@ class Grid:
 
 
 class Sources:
-    def __init__(self, cache_dir, workers=2):
+    def __init__(self, cache_dir, workers=2, *, value_reader=None, decode_version=DECODE_VERSION):
         self.cache = Path(cache_dir)
         self.cache.mkdir(parents=True, exist_ok=True)
         self.workers = workers
+        # Optional reader/version let the V3.3 flash-flood adapter preserve its
+        # original ecCodes rounding. Existing CAM callers keep this default.
+        self.value_reader = value_reader
+        self.decode_version = decode_version
         self._thread = threading.local()
         self._decode_lock = threading.Lock()
         self.grid = None
@@ -251,7 +255,7 @@ class Sources:
                 try:
                     with np.load(cached, allow_pickle=False) as z:
                         m = json.loads(str(z["metadata"].item()))
-                    expected = (DECODE_VERSION, member["family"], member.get("perturbation", "control"), init.isoformat(), fxx, "mm")
+                    expected = (self.decode_version, member["family"], member.get("perturbation", "control"), init.isoformat(), fxx, "mm")
                     if tuple(m[k] for k in ("decode_version", "family", "perturbation", "init_utc", "native_forecast_hour", "units")) == expected:
                         return {"member": member["id"], "init_utc": init.isoformat(), "terminal_fxx": fxx,
                                 "url": m["source"]["url"], "preflight": "validated hourly checkpoint; full values checked during processing"}
@@ -270,7 +274,7 @@ class Sources:
 
     def hour_path(self, member, init, fxx):
         identity = member["family"] + "_" + member.get("perturbation", "control")
-        return self.cache / DECODE_VERSION / identity / init.strftime("%Y%m%d%H") / f"f{fxx:03d}.npz"
+        return self.cache / self.decode_version / identity / init.strftime("%Y%m%d%H") / f"f{fxx:03d}.npz"
 
     def fetch_hour(self, member, reference_init, valid_end):
         init = reference_init - timedelta(hours=member["lag_hours"])
@@ -283,7 +287,7 @@ class Sources:
                     values = z["values"]
                     grid_meta = meta["grid"]
                     grid = Grid(tuple(grid_meta["shape"]), grid_meta["crs_wkt"], tuple(grid_meta["affine"]))
-                    expected = (DECODE_VERSION, member["family"], member.get("perturbation", "control"), init.isoformat(), fxx)
+                    expected = (self.decode_version, member["family"], member.get("perturbation", "control"), init.isoformat(), fxx)
                     actual = tuple(meta[k] for k in ("decode_version", "family", "perturbation", "init_utc", "native_forecast_hour"))
                     finite = values[np.isfinite(values)]
                     model_id = meta.get("validated_grib", {}).get("generatingProcessIdentifier")
@@ -317,11 +321,12 @@ class Sources:
                             self.grid = Grid.from_source(source)
                         if not self.grid.matches(source):
                             raise ValueError("Member grid differs; a new common-grid mapping must be qualified")
-                        values = source.read(1, masked=True).filled(np.nan).astype("float32")
+                        values = (self.value_reader(temporary) if self.value_reader else
+                                  source.read(1, masked=True).filled(np.nan).astype("float32"))
                         finite = values[np.isfinite(values)]
                         if not finite.size or np.any(finite < 0) or np.any(finite > 1000):
                             raise ValueError("Invalid native hourly precipitation depths")
-                meta = {"decode_version": DECODE_VERSION, "family": member["family"],
+                meta = {"decode_version": self.decode_version, "family": member["family"],
                         "perturbation": member.get("perturbation", "control"), "init_utc": init.isoformat(),
                         "native_forecast_hour": fxx, "valid_start_utc": (valid_end-timedelta(hours=1)).isoformat(),
                         "valid_end_utc": valid_end.isoformat(), "units": "mm", "grid": self.grid.metadata(),
