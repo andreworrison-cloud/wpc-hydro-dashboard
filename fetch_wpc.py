@@ -8,6 +8,7 @@ import re
 import time
 import tempfile
 import math
+import json
 from html import unescape
 from datetime import datetime, timezone, timedelta
 
@@ -18,7 +19,7 @@ MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
-SCRIPT_VERSION = "2026-08-04.0019-mpd-expiration-longitude-fix"
+SCRIPT_VERSION = "2026-11-05.0020-mpd-expired-snapshot-prune-fix"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -596,7 +597,69 @@ def main():
         final_gdfs.append(mpd_gdf)
 
     if not final_gdfs:
-        print("No valid data processed. GeoJSON not updated.")
+        # The workflow restores the last published pages-live snapshot before
+        # running this script. If all fresh sources are empty/unavailable, do
+        # not blindly republish an expired MPD from that restored snapshot.
+        # Retain non-MPD features as last-known-good data, but prune MPDs whose
+        # authoritative bulletin valid_end_utc has passed.
+        if os.path.exists(OUTPUT_FILENAME):
+            try:
+                retained_gdf = gpd.read_file(OUTPUT_FILENAME)
+                processing_time = utc_now()
+                keep_rows = []
+
+                for _, row in retained_gdf.iterrows():
+                    if str(row.get("dataType", "")).upper() != "MPD":
+                        keep_rows.append(True)
+                        continue
+
+                    valid_end_raw = row.get("valid_end_utc", "")
+                    try:
+                        valid_end = pd.to_datetime(
+                            valid_end_raw, utc=True, errors="raise"
+                        ).to_pydatetime()
+                    except Exception:
+                        # Unknown expiration is safer to retain than to delete.
+                        keep_rows.append(True)
+                        continue
+
+                    keep_rows.append(valid_end > processing_time)
+
+                pruned_gdf = retained_gdf.loc[keep_rows].copy()
+                removed = len(retained_gdf) - len(pruned_gdf)
+
+                if removed > 0:
+                    temporary_output = f"{OUTPUT_FILENAME}.tmp"
+                    try:
+                        if pruned_gdf.empty:
+                            with open(temporary_output, "w", encoding="utf-8") as handle:
+                                json.dump(
+                                    {"type": "FeatureCollection", "features": []},
+                                    handle,
+                                )
+                        else:
+                            pruned_gdf.to_file(temporary_output, driver="GeoJSON")
+                        os.replace(temporary_output, OUTPUT_FILENAME)
+                    finally:
+                        if os.path.exists(temporary_output):
+                            os.remove(temporary_output)
+
+                    print(
+                        f"No fresh WPC features available; pruned {removed} expired "
+                        f"MPD feature(s) from the retained dashboard snapshot."
+                    )
+                else:
+                    print(
+                        "No fresh WPC features available; retained existing "
+                        "non-expired dashboard snapshot."
+                    )
+            except Exception as error:
+                print(
+                    "No fresh WPC features available and retained-snapshot "
+                    f"pruning failed: {error}"
+                )
+        else:
+            print("No valid WPC data processed and no retained snapshot exists.")
         return
 
     combined_gdf = gpd.GeoDataFrame(
