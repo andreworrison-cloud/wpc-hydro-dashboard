@@ -2355,7 +2355,12 @@ async function fetchWPCData() {
         const data = await response.json();
         
         let eroFeatures = data.features.filter(f => f.properties.dataType === 'ERO');
-        const mpdFeatures = data.features.filter(f => f.properties.dataType === 'MPD');
+        const now = Date.now();
+        const mpdFeatures = data.features.filter(f => {
+            if (!f.properties || f.properties.dataType !== 'MPD') return false;
+            const validEnd = Date.parse(f.properties.valid_end_utc || '');
+            return !Number.isFinite(validEnd) || validEnd > now;
+        });
         
         eroFeatures.sort((a, b) => {
             const getRank = (feature) => {
