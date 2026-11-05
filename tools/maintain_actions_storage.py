@@ -88,6 +88,7 @@ class API:
         self.base = 'https://api.github.com/repos/' + REPOSITORY
         self.headers = {'Accept': 'application/vnd.github+json',
                         'User-Agent': 'WPC-Bounded-Actions-Storage/1',
+                        'Cache-Control': 'no-cache',
                         'X-GitHub-Api-Version': '2022-11-28'}
         if token:
             self.headers['Authorization'] = 'Bearer ' + token
@@ -141,6 +142,7 @@ def inventory(api):
                 rows.update({r['id']: r for r in result['artifacts']})
         if len(rows) >= count:
             return list(rows.values())
+        print(f'Storage inventory moved during scan {attempt+1}/3: {len(rows)} distinct IDs, {count} reported; rescanning.', flush=True)
         if attempt < 2:
             time.sleep(1)
     raise ValueError('Artifact inventory still incomplete after three bounded scans; no artifacts deleted')
