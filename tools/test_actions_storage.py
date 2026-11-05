@@ -38,6 +38,29 @@ class FakeAPI:
 
 
 class ArtifactRetentionTests(TestCase):
+    def test_inventory_rescans_when_uploads_move_page_boundaries(self):
+        class MovingAPI(FakeAPI):
+            calls=0
+            def request(self,path,method='GET'):
+                if path.startswith('/actions/artifacts?'):
+                    self.calls+=1
+                    return {'total_count':3,'artifacts':self.rows[:2] if self.calls==1 else self.rows}
+                return super().request(path,method)
+        api=MovingAPI([artifact(i) for i in range(1,4)])
+        with patch.object(storage.time,'sleep'):
+            rows=storage.inventory(api)
+        self.assertEqual({r['id'] for r in rows},{1,2,3});self.assertEqual(api.calls,2)
+
+    def test_persistently_incomplete_inventory_stops_without_deleting(self):
+        class IncompleteAPI(FakeAPI):
+            def request(self,path,method='GET'):
+                if path.startswith('/actions/artifacts?'):return {'total_count':3,'artifacts':self.rows[:2]}
+                return super().request(path,method)
+        api=IncompleteAPI([artifact(i) for i in range(1,4)])
+        with patch.object(storage.time,'sleep'),self.assertRaises(ValueError):
+            storage.maintain(api,apply=True,now=NOW)
+        self.assertFalse(api.deleted)
+
     def test_newest_two_are_preserved_in_each_exact_family(self):
         rows = [artifact(i, hours=10-i) for i in range(1, 6)]
         keep, obsolete, _ = storage.plan(rows, set(), NOW)

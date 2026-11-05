@@ -88,6 +88,7 @@ class API:
         self.base = 'https://api.github.com/repos/' + REPOSITORY
         self.headers = {'Accept': 'application/vnd.github+json',
                         'User-Agent': 'WPC-Bounded-Actions-Storage/1',
+                        'Cache-Control': 'no-cache',
                         'X-GitHub-Api-Version': '2022-11-28'}
         if token:
             self.headers['Authorization'] = 'Bearer ' + token
@@ -125,18 +126,26 @@ class API:
 
 
 def inventory(api):
-    first = api.request('/actions/artifacts?per_page=100&page=1')
-    count = first['total_count']
-    if count > 6000:
-        raise ValueError('Artifact inventory exceeds bounded 6000-row maintenance')
-    rows = {r['id']: r for r in first['artifacts']}
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        for result in pool.map(lambda page: api.request('/actions/artifacts?per_page=100&page=' + str(page)),
-                               range(2, (count + 99) // 100 + 1)):
-            rows.update({r['id']: r for r in result['artifacts']})
-    if len(rows) < count:
-        raise ValueError('Inventory changed during pagination; retry before deleting')
-    return list(rows.values())
+    # New uploads shift GitHub's page boundaries during a scan. Merge bounded
+    # rescans by immutable artifact ID; a missed new row is never a deletion
+    # target, and every candidate still passes age/producer/live-run checks.
+    rows = {}
+    for attempt in range(3):
+        first = api.request('/actions/artifacts?per_page=100&page=1')
+        count = first['total_count']
+        if count > 6000:
+            raise ValueError('Artifact inventory exceeds bounded 6000-row maintenance')
+        rows.update({r['id']: r for r in first['artifacts']})
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for result in pool.map(lambda page: api.request('/actions/artifacts?per_page=100&page=' + str(page)),
+                                   range(2, (count + 99) // 100 + 1)):
+                rows.update({r['id']: r for r in result['artifacts']})
+        if len(rows) >= count:
+            return list(rows.values())
+        print(f'Storage inventory moved during scan {attempt+1}/3: {len(rows)} distinct IDs, {count} reported; rescanning.', flush=True)
+        if attempt < 2:
+            time.sleep(1)
+    raise ValueError('Artifact inventory still incomplete after three bounded scans; no artifacts deleted')
 
 
 def open_branches(api):
