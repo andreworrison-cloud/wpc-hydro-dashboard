@@ -22,4 +22,21 @@ All observed operational data branches were root snapshots with no parents. GitH
 
 ## Validation
 
-Twenty-two artifact/operating-budget tests and eight cache tests pass, including protected reviews, active deployments, current backups, incomplete numerical history, namespace boundaries and age limits. The existing 59 SPoRT science/publication tests and dashboard validation also pass locally. Remote decoder checks and the first production maintenance receipt are recorded after deployment.
+Twenty-two artifact/operating-budget tests and eight cache tests pass, including protected reviews, active deployments, current backups, incomplete numerical history, namespace boundaries and age limits. The existing 59 SPoRT science/publication tests and dashboard validation also pass locally. Remote binary-install, decoder self-check and synthetic GRIB round-trip jobs pass on all three supported Python runtimes. The final production maintenance and operating-budget checks pass.
+
+## Verified production outcome
+
+[PR #39](https://github.com/andreworrison-cloud/wpc-hydro-dashboard/pull/39) deployed the dependency and retention changes. [PR #40](https://github.com/andreworrison-cloud/wpc-hydro-dashboard/pull/40) added bounded inventory rescans. Two initial maintenance attempts stopped before artifact deletion when concurrent uploads moved the inventory pages. The corrected [production run 41938200535](https://github.com/andreworrison-cloud/wpc-hydro-dashboard/actions/runs/41938200535) completed successfully, including all operating-budget checks.
+
+| Storage pool | Initial follow-up inventory | After maintenance |
+| --- | ---: | ---: |
+| Actions artifacts | 13.97 GiB | 1.20 GiB |
+| Actions caches | 5.82 GiB | 3.59 GiB |
+| Published Pages files | 89.84 MiB | 89.89 MiB |
+| GitHub-reported Git storage | 1.125 GiB | 1.125 GiB |
+
+The run deleted 234 obsolete artifacts totaling 13,951,007,993 bytes (12.99 GiB). Concurrent production uploads mean the net storage change differs from the total bytes deleted. The full per-ID [cleanup receipt](cleanup_20261104.json), [immediate pre-cleanup inventory](production_before_20261104.json), and [post-cleanup inventory](after_20261104.json) are retained here. The downloaded receipt ZIP was verified against GitHub's SHA-256 digest before extracting its three JSON files.
+
+The 344,898,904-byte SPoRT snapshot retained all 23 indexed numerical source versions. All 12 operational data branches were complete root snapshots, each below 512 MiB. Radar retained 37 frames from 18:00:39Z through 00:00:39Z, published at an observation age of 2.21 minutes. The served website remained approximately 90 MiB. Repository-level Git size is a separate GitHub-reported metric; neither artifact cleanup nor cache deletion forces immediate Git object garbage collection.
+
+This inventory cannot certify account-wide charges, included plan allowances, billing stop-spend settings, other repositories or Pages bandwidth. The operating budgets above are explicit local safeguards, not billing guarantees. GitHub's [cache rules](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching), [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits) and [billing documentation](https://docs.github.com/en/billing/concepts/product-billing/github-actions) describe the distinct pools and allowances.
