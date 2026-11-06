@@ -8373,63 +8373,63 @@ const dashboardSections = [
         id: 'cam-3-9',
         title: 'CAM Nowcasts (+3h to +9h)',
         layers: [
-            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster'},
-            {id: 'cam-3-9-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_super'], kind: 'raster'},
-            {id: 'cam-3-9-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-3-9-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_omd_refs'], kind: 'raster', nested: true}
+            {id: 'cam-3-9-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-3-9-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_3h_to_9h_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-3-9-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_3h_to_9h_0.5_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-3-9-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_3h_to_9h_1_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-3-9-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_3h_to_9h_2_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-3-9-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-3-9-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_3h_to_9h_3_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true}
         ]
     },
     {
         id: 'cam-9-15',
         title: 'CAM Nowcasts (+9h to +15h)',
         layers: [
-            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster'},
-            {id: 'cam-9-15-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_super'], kind: 'raster'},
-            {id: 'cam-9-15-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'cam-9-15-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_omd_refs'], kind: 'raster', nested: true}
+            {id: 'cam-9-15-ffg-super', label: '<b>SuperEnsemble</b>: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-9-15-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max FFG Exceedance (1/3/6h)', layer: camLayers['ffg_9h_to_15h_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q05-super', label: '<b>SuperEnsemble</b>: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-9-15-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 0.5"/hr', layer: camLayers['qpf_9h_to_15h_0.5_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q1-super', label: '<b>SuperEnsemble</b>: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-9-15-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 1.0"/hr', layer: camLayers['qpf_9h_to_15h_1_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q2-super', label: '<b>SuperEnsemble</b>: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-9-15-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 2.0"/hr', layer: camLayers['qpf_9h_to_15h_2_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q3-super', label: '<b>SuperEnsemble</b>: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'cam-9-15-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp): Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'cam-9-15-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS: Max Prob > 3.0"/hr', layer: camLayers['qpf_9h_to_15h_3_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true}
         ]
     },
     {
         id: 'ero-cams',
         title: 'Day 1 ERO CAMs',
         layers: [
-            {id: 'ero-ffg-super', label: '<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_super'], kind: 'raster'},
-            {id: 'ero-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_spc_refs'], kind: 'raster', nested: true},
-            {id: 'ero-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_omd_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q05-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_super'], kind: 'raster'},
-            {id: 'ero-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q1-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_super'], kind: 'raster'},
-            {id: 'ero-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q2-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_super'], kind: 'raster'},
-            {id: 'ero-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_omd_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q3-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_super'], kind: 'raster'},
-            {id: 'ero-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_spc_refs'], kind: 'raster', nested: true},
-            {id: 'ero-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_omd_refs'], kind: 'raster', nested: true}
+            {id: 'ero-ffg-super', label: '<b>SuperEnsemble [ERO]</b>: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'ero-ffg-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-ffg-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max FFG Exceedance (1/3/6h)', layer: eroCamLayers['ffg_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q05-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'ero-q05-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q05-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 0.5"/hr', layer: eroCamLayers['qpf_0.5_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q1-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'ero-q1-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q1-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 1.0"/hr', layer: eroCamLayers['qpf_1_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q2-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'ero-q2-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q2-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 2.0"/hr', layer: eroCamLayers['qpf_2_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q3-super', label: '<b>SuperEnsemble [ERO]</b>: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_super'], kind: 'raster', exclusiveGroup: 'cam-probability'},
+            {id: 'ero-q3-spc-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;SPC REFS (Exp) [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_spc_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true},
+            {id: 'ero-q3-omd-refs', label: '&nbsp;&nbsp;&nbsp;&nbsp;OMD REFS [ERO]: Max Prob > 3.0"/hr', layer: eroCamLayers['qpf_3_inch_omd_refs'], kind: 'raster', exclusiveGroup: 'cam-probability', nested: true}
         ]
     }
 ];
@@ -8521,10 +8521,9 @@ function setDashboardLayerActive(entry, shouldBeActive) {
     // Probability colors describe one numerical field. Stacking transparent
     // SPC/OMD/blend rasters creates colors and footprints with no probability
     // meaning, including bleed-through where the selected field is below 10%.
-    const camRasters = [...Object.values(camLayers), ...Object.values(eroCamLayers)];
-    if (shouldBeActive && camRasters.includes(entry.layer)) {
+    if (shouldBeActive && entry.exclusiveGroup === 'cam-probability') {
         getAllDashboardLayerEntries().forEach(other => {
-            if (other.layer !== entry.layer && camRasters.includes(other.layer) && map.hasLayer(other.layer)) {
+            if (other.layer !== entry.layer && other.exclusiveGroup === entry.exclusiveGroup && map.hasLayer(other.layer)) {
                 setDashboardLayerActive(other, false);
             }
         });

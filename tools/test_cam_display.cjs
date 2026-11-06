@@ -102,13 +102,15 @@ test('Switching any of the 45 CAM rasters replaces its predecessor and preserves
     const start=app.indexOf('function setDashboardLayerActive(');
     const body=app.slice(start,app.indexOf('\n}\n',start)+2);
     const refs=[...app.matchAll(/id: '([^']+)', label: '[^']+', layer: (camLayers|eroCamLayers)\['([^']+)'\]/g)];
-    const entries=refs.map(r=>({id:r[1],layer:{id:r[1],options:{opacity:.37}},onActivate(){this.activations=(this.activations||0)+1;},onDeactivate(){this.deactivations=(this.deactivations||0)+1;}}));
+    const camRows=app.split('\n').filter(line=>/id: '[^']+', label: '[^']+', layer: (camLayers|eroCamLayers)\[/.test(line));
+    assert.equal(camRows.length,45);
+    camRows.forEach(line=>assert.ok(line.includes("exclusiveGroup: 'cam-probability'")));
+    const entries=refs.map(r=>({id:r[1],exclusiveGroup:'cam-probability',layer:{id:r[1],options:{opacity:.37}},onActivate(){this.activations=(this.activations||0)+1;},onDeactivate(){this.deactivations=(this.deactivations||0)+1;}}));
     const radar={id:'radar',layer:{}},hazards={id:'hazards',layer:{}};
     const active=new Set([radar.layer,hazards.layer]);
     const events=[];
-    const context={camLayers:{},eroCamLayers:{},map:{hasLayer:l=>active.has(l),addLayer:l=>active.add(l),removeLayer:l=>active.delete(l)},
+    const context={map:{hasLayer:l=>active.has(l),addLayer:l=>active.add(l),removeLayer:l=>active.delete(l)},
         getAllDashboardLayerEntries:()=>[...entries,radar,hazards],dispatchOverlayEvent:(type,e)=>events.push([type,e.id]),syncSidebarWithMap:()=>{}};
-    refs.forEach((r,i)=>context[r[2]][r[3]]=entries[i].layer);
     vm.createContext(context);vm.runInContext(body,context);
     for(const entry of entries) {
         context.setDashboardLayerActive(entry,true);
@@ -127,8 +129,8 @@ test('Reselecting a CAM raster removes an existing stack without reactivating it
     const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
     const start=app.indexOf('function setDashboardLayerActive(');
     const body=app.slice(start,app.indexOf('\n}\n',start)+2);
-    const a={layer:{}},b={layer:{}},c={layer:{}};const active=new Set([a.layer,b.layer,c.layer]);
-    const context={camLayers:{a:a.layer,b:b.layer},eroCamLayers:{c:c.layer},map:{hasLayer:l=>active.has(l),addLayer:l=>{throw new Error('duplicate activation');},removeLayer:l=>active.delete(l)},
+    const a={layer:{},exclusiveGroup:'cam-probability'},b={layer:{},exclusiveGroup:'cam-probability'},c={layer:{},exclusiveGroup:'cam-probability'};const active=new Set([a.layer,b.layer,c.layer]);
+    const context={map:{hasLayer:l=>active.has(l),addLayer:l=>{throw new Error('duplicate activation');},removeLayer:l=>active.delete(l)},
         getAllDashboardLayerEntries:()=>[a,b,c],dispatchOverlayEvent:()=>{},syncSidebarWithMap:()=>{}};
     vm.createContext(context);vm.runInContext(body,context);context.setDashboardLayerActive(a,true);
     assert.deepEqual([...active],[a.layer]);
