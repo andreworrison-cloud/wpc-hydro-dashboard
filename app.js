@@ -8518,6 +8518,17 @@ function dispatchOverlayEvent(eventName, entry) {
 }
 
 function setDashboardLayerActive(entry, shouldBeActive) {
+    // Probability colors describe one numerical field. Stacking transparent
+    // SPC/OMD/blend rasters creates colors and footprints with no probability
+    // meaning, including bleed-through where the selected field is below 10%.
+    const camRasters = [...Object.values(camLayers), ...Object.values(eroCamLayers)];
+    if (shouldBeActive && camRasters.includes(entry.layer)) {
+        getAllDashboardLayerEntries().forEach(other => {
+            if (other.layer !== entry.layer && camRasters.includes(other.layer) && map.hasLayer(other.layer)) {
+                setDashboardLayerActive(other, false);
+            }
+        });
+    }
     const isActive = map.hasLayer(entry.layer);
 
     if (shouldBeActive && !isActive) {
@@ -9048,6 +9059,7 @@ setTimeout(() => {
 
     refreshLegendDockSummary();
 }, 1500);
+
 
 
 

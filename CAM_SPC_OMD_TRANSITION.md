@@ -150,6 +150,34 @@ from being relabeled as SPC. New metadata is required before images become
 visible. Each nowcast expires independently, and valid times update with the
 metadata rather than using only the hour-of-day from an old cycle.
 
+Only one CAM probability raster is displayed at a time across the two nowcast
+sections and Day 1 ERO CAMs. Selecting a new CAM field switches off the previous
+CAM raster while preserving radar, hazard and other context layers. Stacking
+the partly transparent SPC, OMD and SuperEnsemble images is not a numerical
+blend: colors overlap and lower layers show through wherever the top image is
+transparent. The legend explicitly identifies the below-10% transparency rule
+and that the two suite maxima can occur at different times.
+
+### 6 November 2026 12Z replay audit
+
+The published 12Z packages were replayed from the exact archived source data:
+120 member-hours and 24 OMD files for the nowcasts; 240 member-hours and 48 OMD
+files for Day 1. Every input hash matched the published provenance. The common
+official 12Z FFG file matched SHA256
+`5cb6bfe457c3c9d45784b1ec0b1c8e396ecc9fc2eab5d02c087ba26d883b4690`.
+At every grid cell and for all five fields in all three valid periods, the
+SuperEnsemble was the exact arithmetic midpoint of its two finite inputs;
+missing either suite left the blend unavailable. All 45 regenerated 6000×3600
+PNGs were pixel-identical to the published files, with matching map bounds.
+An independent literal disk-maximum and two-dimensional Gaussian calculation
+at the two nowcast blend-peak locations also matched all five SPC fields in
+all three periods within 0.00001 percentage point (30 point/field checks).
+The numerical blend, source cycles, FFG cycle, member population, windows and
+image bindings passed this audit. The reproduced display issue was simultaneous
+transparent CAM overlays; the single-CAM selection rule above corrects that
+ambiguity. This audit does not establish that overlapping layers caused any
+specific feature reported by a forecaster.
+
 ## Publication and bounded storage
 
 Existing workflow filenames and cron-job.org dispatch targets are preserved.
@@ -201,3 +229,4 @@ a v1 run does not certify a corrected FFG baseline.
 - Whole-field probability bounds, SPC 10-point quantization and equal-weight
   blend identities passed. The full 181-layer dashboard validator passed.
 - Existing standalone v0.2 notebooks were not changed by this integration.
+

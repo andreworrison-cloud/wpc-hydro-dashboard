@@ -58,6 +58,8 @@ test('Legends keep all five original colors and identify each suite',()=>{
         const html=display.legend(ffg,['SPC REFS (Exp): Max','OMD REFS: Max','SuperEnsemble: Max']);
         for (const c of display.colors[ffg?'ffg':'qpf'])assert.ok(html.includes(c));
         for (const n of ['SPC REFS','OMD REFS','50% SPC maximum + 50% OMD maximum'])assert.ok(html.includes(n));
+        assert.ok(html.includes('Below 10% or unavailable: transparent.'));
+        assert.ok(html.includes('Suite peaks can occur at different times.'));
         if(ffg)assert.ok(html.includes('Same official model-cycle RFC FFG for SPC and OMD'));
         assert.ok(!html.includes('producer FFG baseline'));
     }
@@ -95,4 +97,41 @@ test('Automatic refresh updates the real time-box element and tolerates pre-DOM 
     context.document.getElementById=()=>null;
     assert.doesNotThrow(()=>vm.runInNewContext('('+body+')()',context));
 });
+test('Switching any of the 45 CAM rasters replaces its predecessor and preserves context',()=>{
+    const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+    const start=app.indexOf('function setDashboardLayerActive(');
+    const body=app.slice(start,app.indexOf('\n}\n',start)+2);
+    const refs=[...app.matchAll(/id: '([^']+)', label: '[^']+', layer: (camLayers|eroCamLayers)\['([^']+)'\]/g)];
+    const entries=refs.map(r=>({id:r[1],layer:{id:r[1],options:{opacity:.37}},onActivate(){this.activations=(this.activations||0)+1;},onDeactivate(){this.deactivations=(this.deactivations||0)+1;}}));
+    const radar={id:'radar',layer:{}},hazards={id:'hazards',layer:{}};
+    const active=new Set([radar.layer,hazards.layer]);
+    const events=[];
+    const context={camLayers:{},eroCamLayers:{},map:{hasLayer:l=>active.has(l),addLayer:l=>active.add(l),removeLayer:l=>active.delete(l)},
+        getAllDashboardLayerEntries:()=>[...entries,radar,hazards],dispatchOverlayEvent:(type,e)=>events.push([type,e.id]),syncSidebarWithMap:()=>{}};
+    refs.forEach((r,i)=>context[r[2]][r[3]]=entries[i].layer);
+    vm.createContext(context);vm.runInContext(body,context);
+    for(const entry of entries) {
+        context.setDashboardLayerActive(entry,true);
+        assert.deepEqual([...active],[radar.layer,hazards.layer,entry.layer]);
+        assert.equal(entry.layer.options.opacity,.37);
+        assert.equal(entry.activations,1);
+    }
+    assert.equal(events.filter(e=>e[0]==='overlayremove').length,44);
+    assert.ok(entries.slice(0,-1).every(e=>e.deactivations===1));
+    context.setDashboardLayerActive(hazards,false);
+    assert.ok(active.has(entries[44].layer));
+    context.setDashboardLayerActive(entries[44],false);
+    assert.deepEqual([...active],[radar.layer]);
+});
+test('Reselecting a CAM raster removes an existing stack without reactivating it',()=>{
+    const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+    const start=app.indexOf('function setDashboardLayerActive(');
+    const body=app.slice(start,app.indexOf('\n}\n',start)+2);
+    const a={layer:{}},b={layer:{}},c={layer:{}};const active=new Set([a.layer,b.layer,c.layer]);
+    const context={camLayers:{a:a.layer,b:b.layer},eroCamLayers:{c:c.layer},map:{hasLayer:l=>active.has(l),addLayer:l=>{throw new Error('duplicate activation');},removeLayer:l=>active.delete(l)},
+        getAllDashboardLayerEntries:()=>[a,b,c],dispatchOverlayEvent:()=>{},syncSidebarWithMap:()=>{}};
+    vm.createContext(context);vm.runInContext(body,context);context.setDashboardLayerActive(a,true);
+    assert.deepEqual([...active],[a.layer]);
+});
 console.log(`${count} CAM presentation checks passed.`);
+

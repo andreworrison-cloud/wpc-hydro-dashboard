@@ -75,9 +75,10 @@
         return `<div style="background:white;padding:10px;border-radius:5px;font-family:sans-serif;text-align:center;color:black;font-size:13px;max-width:280px;">` +
             `<strong>${names.join(' / ')}</strong><br>${ffg ? 'Max FFG Exceedance' : 'Max Hourly QPF'} Probability (%)` +
             `<div style="display:flex;margin-top:5px;border:1px solid #333;">${boxes}</div>` +
-            `<div style="font-size:11px;margin-top:5px;">Nominal 40-km QPF neighborhood · smoothed probabilities · peak in the stated window${ffg ? '<br>Neighborhood-maximum QPF vs local 1-, 3- and 6-hour FFG<br>Same official model-cycle RFC FFG for SPC and OMD' : ''}</div>` +
-            (names.some(n => n.includes('SuperEnsemble')) ? '<div style="font-size:11px;margin-top:4px;">50% SPC maximum + 50% OMD maximum; configurations share members.</div>' : '') + '</div>';
+            `<div style="font-size:11px;margin-top:5px;">Nominal 40-km QPF neighborhood · smoothed probabilities · peak in the stated window${ffg ? '<br>Neighborhood-maximum QPF vs local 1-, 3- and 6-hour FFG<br>Same official model-cycle RFC FFG for SPC and OMD' : ''}<br>Below 10% or unavailable: transparent.</div>` +
+            (names.some(n => n.includes('SuperEnsemble')) ? '<div style="font-size:11px;margin-top:4px;">50% SPC maximum + 50% OMD maximum; configurations share members. Suite peaks can occur at different times.</div>' : '') + '</div>';
     }
     root.WPC_CAM = {SCHEMA, models, labels, colors, date, utc, modelFromKey, modelFromName, validate, state, timeHTML, legend};
     if (typeof module !== 'undefined' && module.exports) module.exports = root.WPC_CAM;
 })(typeof window === 'undefined' ? globalThis : window);
+
