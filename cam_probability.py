@@ -189,12 +189,15 @@ class ProducerNeighborhood:
             known[n] = self.operator.interior & ~self.operator.dilate(~finite[n])
         return output, known
 
-    def smooth(self, probability, domain=None):
+    def smooth(self, probability, domain=None, *, return_input_known=False):
         """Smooth each probability slot before the period maximum.
 
         EMC uses -10 for unavailable FFG before smoothing. Preserve that
         treatment, mask negative results, and retain missing FFG centers.
         Unknown member rainfall invalidates the smoothing footprint.
+        Optionally return input validity separately: a negative smoothed
+        no-data-edge value is unavailable for this slot, not missing rainfall
+        that invalidates every later slot in a period maximum.
         """
         p = np.asarray(probability, np.float64)
         domain = np.ones(p.shape, bool) if domain is None else np.asarray(domain, bool)
@@ -206,7 +209,8 @@ class ProducerNeighborhood:
         result = convolution(values)/convolution(np.ones(p.shape))
         bad = maximum_filter(unknown, size=2*self.half_width+1, mode="constant", cval=0)
         result[bad | ~domain | (result < 0)] = np.nan
-        return result.astype(np.float32)
+        result = result.astype(np.float32)
+        return (result, ~bad) if return_input_known else result
 
 
 class ProducerWindowAccumulator(WindowAccumulator):
@@ -235,8 +239,9 @@ class ProducerWindowAccumulator(WindowAccumulator):
             maximum, known = self.producer.maximum(total)
             domain = np.isfinite(self.ffg[d])
             probability = fixed_probability(maximum > self.ffg[d], known & domain, self.weights)
-            p = self.producer.smooth(probability, domain)
+            p, input_known = self.producer.smooth(probability, domain, return_input_known=True)
             np.fmax(self.ffg_peak[d], p, out=self.ffg_peak[d])
-            self.ffg_complete[d] &= np.isfinite(p)
+            self.ffg_complete[d] &= input_known
             self.slots.append((fxx, d))
         self.next_hour += 1
+

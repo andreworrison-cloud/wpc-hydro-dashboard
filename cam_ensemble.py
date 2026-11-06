@@ -32,7 +32,8 @@ from cam_probability import ProducerWindowAccumulator as WindowAccumulator, expe
 
 UTC = timezone.utc
 LOG = logging.getLogger(__name__)
-SCHEMA = "wpc-spc-omd-cam-v3"
+SCHEMA = "wpc-spc-omd-cam-v4"
+FFG_PEAK_POLICY = "maximum-of-finite-ffg-slots-v1"
 QPF_IN = (.5, 1, 2, 3)
 PROBABILITY_LEVELS = (10, 30, 50, 70, 90, 100.0001)
 QPF_COLORS = ("#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494")
@@ -144,13 +145,23 @@ def select_cycle(kind, sources, omd, members, now, pinned=None):
     raise RuntimeError("No complete aligned SPC/OMD suite: " + " | ".join(errors))
 
 
-def update_peak(peak, complete, value):
+def update_peak(peak, complete, value, *, require_all=True):
+    """Track a peak, keeping field completeness distinct from slot no-data.
+
+    Native FFG can be negative near the missing-domain edge after producer
+    smoothing. Those cells are unavailable in that slot; they must not erase
+    a valid later/hour/duration probability. Every required GRIB field is
+    still fetched and qualified before this reduction.
+    """
     if peak is None:
         peak = np.asarray(value, np.float32).copy()
         complete = np.isfinite(value)
     else:
         np.fmax(peak, value, out=peak)
-        complete &= np.isfinite(value)
+        if require_all:
+            complete &= np.isfinite(value)
+        else:
+            complete |= np.isfinite(value)
     return peak, complete
 
 
@@ -193,7 +204,7 @@ def compute(kind, init, windows, sources, omd, members, native_ffg, ffg_grid):
                 durations = expected_ffg_durations(fxx, start)
                 ffg, _ = omd.fetch(init, fxx, "ffri", durations, grid)
                 for d in durations:
-                    omd_ffg, f_known = update_peak(omd_ffg, f_known, ffg[d])
+                    omd_ffg, f_known = update_peak(omd_ffg, f_known, ffg[d], require_all=False)
                 del prob, cube, ffg
                 LOG.info("%s f%02d checked: 10/10 hourly members; OMD QPF + FFG %s", label, fxx, durations)
         spc = acc.finish(); del acc
@@ -293,6 +304,8 @@ def run(kind, *, cache=Path("grib_cache_cam_members"), output=Path("static"), pi
                        "native_neighborhood_radius_km": 39,
                        "probability_smoothing": {"kernel": "Gaussian", "sigma_grid_cells": 5, "half_width_grid_cells": 8, "sigma_km": 15, "half_width_km": 24},
                        "ffg_combination": "maximum across smoothed duration-specific probabilities and eligible times; no duration/time event union",
+                       "ffg_peak_missing_policy": FFG_PEAK_POLICY,
+                       "ffg_peak_missing_definition": "negative/unavailable FFG probabilities are skipped per slot; retain valid peaks from other slots; never replace no-data with zero; all required source fields and SPC member-hours remain mandatory",
                        "spc_neighborhood_radius_km": 40, "additional_display_smoothing": False,
                        "ffg_cadence": "1h hourly; 3h/6h at forecast hours divisible by 3; entire accumulation inside selected window",
                        "spc_ffg_baseline": "official RFC FFG for the exact synoptic ensemble cycle; publication after initialization is allowed",
@@ -317,7 +330,7 @@ def run(kind, *, cache=Path("grib_cache_cam_members"), output=Path("static"), pi
         bounds, files = render(kind, products, grid, stage, dpi)
         meta.update(bounds=bounds, expected_files=files, elapsed_seconds=round(time.monotonic()-began, 2))
         source_name = "cam_sources.json" if kind == "cam" else "ero_cam_sources.json"
-        atomic_json(stage/source_name, {"schema": SCHEMA, "probability_method": PRODUCER_METHOD, "init_utc": iso(init), "analysis_grid": grid.metadata(),
+        atomic_json(stage/source_name, {"schema": SCHEMA, "probability_method": PRODUCER_METHOD, "ffg_peak_missing_policy": FFG_PEAK_POLICY, "init_utc": iso(init), "analysis_grid": grid.metadata(),
                                       "spc_member_hours": hourly_sources, "omd_fields": omd.records,
                                       "ffg": ffg_meta, "expected_spc_member_hours": expected})
         meta["file_sha256"] = {name: hashlib.sha256((stage/name).read_bytes()).hexdigest()
@@ -358,3 +371,4 @@ def main(kind):
             except (ValueError, OSError):
                 pass
         raise
+

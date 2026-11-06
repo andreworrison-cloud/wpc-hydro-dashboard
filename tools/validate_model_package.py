@@ -104,11 +104,13 @@ def require_files(root: Path, names: list[str], label: str) -> None:
 def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict, datetime]:
     prefix = "cam" if kind == "cam" else "ero_cam"
     meta = load_json(root / (prefix + "_metadata.json"))
-    if meta.get("schema") != "wpc-spc-omd-cam-v3":
-        raise ValueError("Legacy or prior-hour FFG packages cannot be published as corrected SPC/OMD guidance")
+    if meta.get("schema") != "wpc-spc-omd-cam-v4":
+        raise ValueError("Legacy or FFG slot-intersection packages cannot be published as corrected SPC/OMD guidance")
     if meta.get("method", {}).get("probability_method") != "emc-neighborhood-qpf-local-ffg-gaussian-v1":
         raise ValueError("SPC probability processing does not match the qualified producer method")
     method = meta["method"]
+    if method.get("ffg_peak_missing_policy") != "maximum-of-finite-ffg-slots-v1":
+        raise ValueError("FFG no-data in one slot must not erase valid peaks in other slots")
     if (method.get("native_neighborhood_radius_grid_cells") != 13
             or method.get("probability_smoothing") != {"kernel": "Gaussian", "sigma_grid_cells": 5,
                 "half_width_grid_cells": 8, "sigma_km": 15, "half_width_km": 24}):
@@ -157,6 +159,8 @@ def validate_cam_generation(root: Path, now: datetime, kind: str) -> tuple[dict,
         raise ValueError("Source evidence belongs to a different generation")
     if sources.get("probability_method") != meta["method"]["probability_method"]:
         raise ValueError("CAM source manifest uses a different probability method")
+    if sources.get("ffg_peak_missing_policy") != method["ffg_peak_missing_policy"]:
+        raise ValueError("CAM source manifest uses a different FFG peak no-data policy")
     rows = sources.get("spc_member_hours") or []
     expected_keys = {(m["id"], iso_end) for m in members for h in expected_hours
                      for iso_end in [(spc+timedelta(hours=h)).isoformat()]}
@@ -315,4 +319,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

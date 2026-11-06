@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '..');
 let count = 0;
 function test(name, fn) { fn(); count++; console.log('PASS', name); }
 const meta = {schema:display.SCHEMA, spc_refs_init_utc:'2026-11-03T12:00:00Z', omd_refs_init_utc:'2026-11-03T12:00:00Z', spc_member_count:10,
-    method:{probability_method:'emc-neighborhood-qpf-local-ffg-gaussian-v1'},
+    method:{probability_method:'emc-neighborhood-qpf-local-ffg-gaussian-v1',ffg_peak_missing_policy:'maximum-of-finite-ffg-slots-v1'},
     common_ffg_reference_utc:'2026-11-03T12:00:00Z',
     ffg:{snapshot_time_utc:'2026-11-03T12:00:00Z', reference_time_utc:'2026-11-03T12:00:00Z',
         model_cycle_utc:'2026-11-03T12:00:00Z',ffg_cycle_policy:'official_synoptic_model_cycle'},
@@ -31,6 +31,10 @@ test('The prior 17Z-baseline schema cannot be relabeled as corrected guidance',(
 test('The obsolete SPC event-first method is rejected',()=>{
     assert.throws(()=>display.validate({...meta,schema:'wpc-spc-omd-cam-v2'},'ero'));
     assert.throws(()=>display.validate({...meta,method:{}},'ero'));
+});
+test('The FFG slot-intersection package cannot be displayed as corrected guidance',()=>{
+    assert.throws(()=>display.validate({...meta,schema:'wpc-spc-omd-cam-v3'},'cam'));
+    assert.throws(()=>display.validate({...meta,method:{...meta.method,ffg_peak_missing_policy:undefined}},'ero'));
 });
 test('First nowcast expires independently of the second',()=>{
     const now=new Date('2026-11-03T21:00:00Z');
@@ -75,7 +79,7 @@ test('All 45 menu layers bind to real new image keys',()=>{
     assert.ok(!refs.some(r=>r[1].includes('HREF')));
     const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
     assert.ok(html.indexOf('cam_display.js')<html.indexOf('app.js'));
-    assert.match(html,/app\.js\?cam=spc-omd-cam-v3/);
+    assert.match(html,/app\.js\?cam=spc-omd-cam-v4/);
 });
 test('Automatic refresh updates the real time-box element and tolerates pre-DOM startup',()=>{
     const app=fs.readFileSync(path.join(root,'app.js'),'utf8');

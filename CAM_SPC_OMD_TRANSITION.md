@@ -158,7 +158,7 @@ blend: colors overlap and lower layers show through wherever the top image is
 transparent. The legend explicitly identifies the below-10% transparency rule
 and that the two suite maxima can occur at different times.
 
-### 6 November 2026 12Z replay audit
+### 6 November 2026 12Z initial replay check and subsequent correction
 
 The published 12Z packages were replayed from the exact archived source data:
 120 member-hours and 24 OMD files for the nowcasts; 240 member-hours and 48 OMD
@@ -172,11 +172,35 @@ PNGs were pixel-identical to the published files, with matching map bounds.
 An independent literal disk-maximum and two-dimensional Gaussian calculation
 at the two nowcast blend-peak locations also matched all five SPC fields in
 all three periods within 0.00001 percentage point (30 point/field checks).
-The numerical blend, source cycles, FFG cycle, member population, windows and
-image bindings passed this audit. The reproduced display issue was simultaneous
-transparent CAM overlays; the single-CAM selection rule above corrects that
-ambiguity. This audit does not establish that overlapping layers caused any
-specific feature reported by a forecaster.
+Those checks established reproducibility and arithmetic consistency with the
+existing implementation, **not correctness of its FFG period masking**. The
+initial conclusion was incomplete. The forecaster's three single-layer
+screenshots subsequently identified a separate aggregation defect in southeast
+Virginia/northeast North Carolina. Reproducing the same incorrect masks in a
+second run did not validate those masks. The single-CAM selection rule prevents
+overlay ambiguity but does not correct the defect described below.
+
+### Schema v4: retain valid FFG peaks across unavailable slots
+
+The v3 OMD reduction tracked whether **every** smoothed hour/duration field was
+finite at each cell. A negative native PPFFG value is unavailable for that slot,
+but the old final mask erased a valid positive peak from another slot. Near
+36.6N, 76.6W in the 6 November 12Z +3–9-hour window, early 1-hour values were
+about -1.5%, while f09 3-hour/6-hour values were 25.5%/19.0%. The old mask
+discarded the valid 25.5% maximum and consequently withheld the blend.
+
+Schema `wpc-spc-omd-cam-v4` and policy `maximum-of-finite-ffg-slots-v1` reduce
+the FFG product over the finite, valid probabilities in the stated period.
+Negative native values remain unavailable, **never zero**. A cell with no valid
+slot remains missing. All required source files and every configured member/hour
+are still mandatory; missing hourly rainfall continues to invalidate affected
+SPC neighborhood/smoothing footprints. SPC now tracks that true missing-input
+condition separately from a negative smoothed FFG no-data-edge value, allowing
+a valid later SPC peak to survive the same situation. The common cycle-matched
+FFG, fixed population, neighborhood, Gaussian, cadence, palettes and 50/50
+arithmetic remain unchanged. The shared engine applies this correction to both
+CAM Nowcasts and Day 1 ERO CAMs. Publication and presentation reject v3 packages
+and packages without the corrected peak policy.
 
 ## Publication and bounded storage
 

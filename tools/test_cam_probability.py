@@ -12,6 +12,7 @@ import rasterio
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cam_probability import WindowAccumulator, ProducerWindowAccumulator, ProducerNeighborhood, expected_ffg_durations, blend_maxima
+from cam_ensemble import update_peak
 from cam_ensemble import windows_for, read_members, remove_legacy_images, load_cycle_ffg, require_cycle_ffg
 from cam_member_io import Grid, member_urls, load_ffg
 from cam_omd import decode, selected_ranges, product_urls
@@ -144,6 +145,25 @@ class ProbabilityTests(unittest.TestCase):
         a=blend_maxima([0,20,np.nan],[100,40,60])
         np.testing.assert_array_equal(a[:2],[50,30]);self.assertTrue(np.isnan(a[2]))
         with self.assertRaises(ValueError):blend_maxima([10],[10,20])
+
+    def test_native_ffg_late_valid_peak_survives_an_unavailable_earlier_slot(self):
+        peak=known=None
+        for values in ([np.nan,0,np.nan],[25.5,np.nan,np.nan],[19,5,np.nan]):
+            peak,known=update_peak(peak,known,np.array(values),require_all=False)
+        peak[~known]=np.nan
+        np.testing.assert_array_equal(peak[:2],[25.5,5])
+        self.assertTrue(np.isnan(peak[2]))
+        result=blend_maxima([43.42,20,30],peak)
+        np.testing.assert_allclose(result[:2],[34.46,12.5],atol=1e-5)
+        self.assertTrue(np.isnan(result[2]))
+
+    def test_missing_native_qpf_slot_still_invalidates_its_period_peak(self):
+        peak=known=None
+        for values in ([np.nan,0],[25.5,5]):
+            peak,known=update_peak(peak,known,np.array(values))
+        peak[~known]=np.nan
+        self.assertTrue(np.isnan(peak[0]))
+        self.assertEqual(peak[1],5)
 
     def test_roster_and_backup_order(self):
         members=read_members();self.assertEqual(len(members),10)
@@ -324,6 +344,39 @@ class ProducerProbabilityTests(unittest.TestCase):
             a.add(hour,q)
         self.assertTrue(np.isnan(a.finish()['FFG_MAX'][20,20]))
 
+    def test_negative_early_smoothed_ffg_slot_does_not_erase_late_peak(self):
+        a=self.make(radius=0,sigma=1,half_width=2)
+        for d in (1,3,6):
+            a.ffg[d][:]=10
+            a.ffg[d][:,21:]=np.nan
+        for hour in range(1,7):
+            q=np.full((10,41,41),20 if hour==6 else 0,np.float32)
+            a.add(hour,q)
+        domain=np.isfinite(a.ffg[1])
+        self.assertTrue(np.isnan(a.producer.smooth(np.zeros((41,41)),domain)[20,20]))
+        expected=a.producer.smooth(np.full((41,41),100.),domain)[20,20]
+        result=a.finish()['FFG_MAX']
+        self.assertGreater(expected,0)
+        self.assertAlmostEqual(float(result[20,20]),float(expected),places=5)
+        self.assertTrue(np.isnan(result[20,30]))
+
+    def test_all_unavailable_smoothed_ffg_slots_remain_missing(self):
+        a=self.make(radius=0,sigma=1,half_width=2)
+        for d in (1,3,6):a.ffg[d][:,21:]=np.nan
+        for hour in range(1,7):a.add(hour,np.zeros((10,41,41),np.float32))
+        self.assertTrue(np.isnan(a.finish()['FFG_MAX'][20,20]))
+
+    def test_missing_rainfall_near_ffg_edge_still_invalidates_late_peak(self):
+        a=self.make(radius=0,sigma=1,half_width=2)
+        for d in (1,3,6):
+            a.ffg[d][:]=10
+            a.ffg[d][:,21:]=np.nan
+        for hour in range(1,7):
+            q=np.full((10,41,41),20 if hour==6 else 0,np.float32)
+            if hour==1:q[0,20,20]=np.nan
+            a.add(hour,q)
+        self.assertTrue(np.isnan(a.finish()['FFG_MAX'][20,20]))
+
     def test_dashboard_uses_producer_accumulator(self):
         from cam_ensemble import WindowAccumulator as dashboard_accumulator
         self.assertIs(dashboard_accumulator,ProducerWindowAccumulator)
@@ -391,3 +444,4 @@ class DecoderTests(unittest.TestCase):
 
 
 if __name__ == '__main__':unittest.main()
+
