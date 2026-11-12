@@ -49,8 +49,9 @@ def cam_ero_contract(metadata, now):
     GDI is instantaneous, so include the initial boundary as well as the hourly
     endpoints. Accumulated CAM QPF instead describes the hours ending at them.
     """
-    current = metadata.get('schema') == 'wpc-spc-omd-cam-v3'
-    if metadata.get('schema') and not current:
+    schema = metadata.get('schema')
+    current = schema in {'wpc-spc-omd-cam-v3', 'wpc-spc-omd-cam-v4'}
+    if schema and not current:
         raise ValueError('Unsupported ERO CAM metadata schema')
     if current:
         h = utc(metadata['spc_refs_init_utc'])
