@@ -19,7 +19,7 @@ MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
-SCRIPT_VERSION = "2026-11-05.0020-mpd-expired-snapshot-prune-fix"
+SCRIPT_VERSION = "2026-11-12.0021-ero-authoritative-empty-clear-fix"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -370,9 +370,27 @@ def fetch_and_process_ero():
         response.raise_for_status()
         gdf = gpd.read_file(response.text, driver="GeoJSON")
         if gdf.empty or gdf.geometry.is_empty.all():
-            return None
+            print(
+                " -> WPC Day 1 ERO service returned no risk polygons; "
+                "treating this as an authoritative No Area update."
+            )
+            return gpd.GeoDataFrame(
+                columns=["dataType", "OUTLOOK", "geometry"],
+                geometry="geometry",
+                crs="EPSG:4326",
+            )
 
         gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+        if gdf.empty:
+            print(
+                " -> WPC Day 1 ERO response contained no usable risk geometry; "
+                "treating this as an authoritative No Area update."
+            )
+            return gpd.GeoDataFrame(
+                columns=["dataType", "OUTLOOK", "geometry"],
+                geometry="geometry",
+                crs="EPSG:4326",
+            )
         gdf["dataType"] = "ERO"
         outlook_col = next(
             (col for col in gdf.columns if col.upper() == "OUTLOOK"),
@@ -589,6 +607,7 @@ def main():
     final_gdfs = []
 
     ero_gdf = fetch_and_process_ero()
+    ero_authoritative = ero_gdf is not None
     if ero_gdf is not None and not ero_gdf.empty:
         final_gdfs.append(ero_gdf)
 
@@ -608,8 +627,22 @@ def main():
                 processing_time = utc_now()
                 keep_rows = []
 
+                removed_ero = 0
+                removed_mpd = 0
+
                 for _, row in retained_gdf.iterrows():
-                    if str(row.get("dataType", "")).upper() != "MPD":
+                    data_type = str(row.get("dataType", "")).upper()
+
+                    # A successful empty Day 1 ERO response means WPC has
+                    # explicitly issued "No Area". Clear any retained ERO
+                    # polygons from the previous issuance. Only preserve the
+                    # old ERO when the source fetch itself failed.
+                    if data_type == "ERO" and ero_authoritative:
+                        keep_rows.append(False)
+                        removed_ero += 1
+                        continue
+
+                    if data_type != "MPD":
                         keep_rows.append(True)
                         continue
 
@@ -623,7 +656,10 @@ def main():
                         keep_rows.append(True)
                         continue
 
-                    keep_rows.append(valid_end > processing_time)
+                    keep_mpd = valid_end > processing_time
+                    keep_rows.append(keep_mpd)
+                    if not keep_mpd:
+                        removed_mpd += 1
 
                 pruned_gdf = retained_gdf.loc[keep_rows].copy()
                 removed = len(retained_gdf) - len(pruned_gdf)
@@ -645,8 +681,9 @@ def main():
                             os.remove(temporary_output)
 
                     print(
-                        f"No fresh WPC features available; pruned {removed} expired "
-                        f"MPD feature(s) from the retained dashboard snapshot."
+                        "No fresh WPC features available; pruned retained snapshot: "
+                        f"{removed_ero} obsolete ERO feature(s), "
+                        f"{removed_mpd} expired MPD feature(s)."
                     )
                 else:
                     print(
