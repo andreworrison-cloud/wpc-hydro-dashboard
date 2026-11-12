@@ -47,11 +47,11 @@ def fake_frame(model, cycle, lead, cache, grids):
 
 
 class Contracts(unittest.TestCase):
-    def current_cam(self,hour=12):
+    def current_cam(self,hour=12,schema='wpc-spc-omd-cam-v4'):
         old=cam(hour)
         window={'valid_start_utc':old['ero_start_utc'],'valid_end_utc':old['ero_end_utc'],
                 'forecast_hours':old['href_forecast_hours']}
-        return {'schema':'wpc-spc-omd-cam-v3',
+        return {'schema':schema,
                 'spc_refs_init_utc':old['href_init_utc'],'omd_refs_init_utc':old['refs_init_utc'],
                 'valid_start_utc':old['ero_start_utc'],'valid_end_utc':old['ero_end_utc'],
                 'ero_start_utc':old['ero_start_utc'],'ero_end_utc':old['ero_end_utc'],
@@ -62,6 +62,14 @@ class Contracts(unittest.TestCase):
             now=NOW.replace(hour=max(hour+1,1))
             current=cam_ero_contract(self.current_cam(hour),now)
             self.assertEqual(current,cam_ero_contract(cam(hour),now))
+
+    def test_current_cam_v3_remains_backward_compatible(self):
+        for hour in (0,6,12,18):
+            now=NOW.replace(hour=max(hour+1,1))
+            self.assertEqual(
+                cam_ero_contract(self.current_cam(hour, 'wpc-spc-omd-cam-v3'), now),
+                cam_ero_contract(self.current_cam(hour, 'wpc-spc-omd-cam-v4'), now),
+            )
 
     def test_current_cam_rejects_mixed_cycles_or_incomplete_hours(self):
         broken=self.current_cam();broken['omd_refs_init_utc']=cam(6)['refs_init_utc']
