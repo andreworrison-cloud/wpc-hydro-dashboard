@@ -1,0 +1,26 @@
+MRMS RALA v2.11 — 10-minute cadence / 2-4-6 hour window refinement
+====================================================================
+
+Operational change:
+- NOAA MRMS RALA source/science is unchanged.
+- Backend retains six hours of real MRMS analyses sampled to nominal 10-minute slots.
+- Dashboard defaults to the latest two hours; users can select 4 h or 6 h instantly.
+- Current 100–1000 ms viewer-style speed control is retained. With only ~13 frames
+  in the default 2-h window, the animation is substantially faster in practice.
+- No temporal interpolation, averaging, or synthetic radar frames are introduced.
+
+Stability fix:
+- The previous generator only reused cached PNGs for timestamps still present in
+  the current live source inventory. A shallow live listing could therefore collapse
+  a nominal 2-h loop to ~98 minutes even though older good PNGs existed in the cache.
+- v2.11 lets the restored NOAA rolling cache fill historical nominal slots when
+  current live inventories are shallow, while the newest frame must still come from
+  a fresh live NOAA source.
+
+Validation:
+- Generator has an offline regression self-test for the 98-minute shallow-inventory
+  failure mode.
+- Standalone loop validator requires the six-hour/10-minute contract, at least 35
+  frames, >=350 nominal minutes, no >20-minute nominal gaps, and a usable >=110-minute
+  default two-hour window.
+- Existing EPSG:3857, >=5 dBZ, nearest-neighbor, no-smoothing and PNG checks remain.
