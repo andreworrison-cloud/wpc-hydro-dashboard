@@ -12,7 +12,10 @@ import urllib.error
 import urllib.request
 
 RETAIN = {'cam-gdi-dynamics-v1-': 1,
-          'gdi-focused-forecast-': 2,
+          # Forecast checkpoints are rebuildable from current model sources.
+          # One newest copy avoids multi-GB duplicate cache pressure while
+          # preserving a warm operational checkpoint.
+          'gdi-focused-forecast-': 1,
           'gdi-focused-day1-': 2,
           'rap-gdi-dynamics-': 2,
           'cam-native-v2-cam-': 2,
