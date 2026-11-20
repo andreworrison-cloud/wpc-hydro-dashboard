@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import zipfile
 import io
+import gzip
 import os
 import re
 import time
@@ -17,11 +18,13 @@ from shapely.geometry import Polygon
 
 ERO_REST_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query"
 ERO_PAGE_URL = "https://www.wpc.ncep.noaa.gov/qpf/excessive_rainfall_outlook_ero.php"
+ERO_POINTS_URL = "https://www.wpc.ncep.noaa.gov/qpf/94epoints.txt"
+AWC_STATIONS_URL = "https://aviationweather.gov/data/cache/stations.cache.json.gz"
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
-SCRIPT_VERSION = "2026-11-20.0023-ero-wpc-download-fallback"
+SCRIPT_VERSION = "2026-11-20.0024-ero-threat-text-fallback"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -319,6 +322,315 @@ def fetch_wpc_day1_downloads():
 
 
 
+ERO_RISK_LABELS = {
+    "MARGINAL": "Marginal (At Least 5%)",
+    "SLIGHT": "Slight (At Least 15%)",
+    "MODERATE": "Moderate (At Least 40%)",
+    "HIGH": "High (At Least 70%)",
+}
+
+COMPASS_BEARINGS = {
+    "N": 0.0, "NNE": 22.5, "NE": 45.0, "ENE": 67.5,
+    "E": 90.0, "ESE": 112.5, "SE": 135.0, "SSE": 157.5,
+    "S": 180.0, "SSW": 202.5, "SW": 225.0, "WSW": 247.5,
+    "W": 270.0, "WNW": 292.5, "NW": 315.0, "NNW": 337.5,
+}
+
+# WPC threat-point text still uses the legacy XFL identifier for Flagler
+# County Airport. FAA now identifies the same Palm Coast field as FIN/KFIN.
+WPC_STATION_ALIASES = {
+    "XFL": "KFIN",
+}
+
+
+def station_lookup_from_awc():
+    """Load the once-daily AWC station catalog and index common identifiers."""
+    response = requests.get(
+        AWC_STATIONS_URL,
+        headers=NO_CACHE_HEADERS,
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    try:
+        payload = gzip.decompress(response.content)
+    except OSError:
+        payload = response.content
+
+    rows = json.loads(payload.decode("utf-8"))
+    if isinstance(rows, dict):
+        rows = (
+            rows.get("features")
+            or rows.get("stations")
+            or rows.get("data")
+            or []
+        )
+
+    lookup = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        properties = row.get("properties") if isinstance(
+            row.get("properties"), dict
+        ) else row
+
+        geometry = row.get("geometry") if isinstance(
+            row.get("geometry"), dict
+        ) else None
+
+        lat = properties.get("lat", properties.get("latitude"))
+        lon = properties.get("lon", properties.get("longitude"))
+
+        if (lat is None or lon is None) and geometry:
+            coordinates = geometry.get("coordinates")
+            if isinstance(coordinates, list) and len(coordinates) >= 2:
+                lon, lat = coordinates[:2]
+
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (TypeError, ValueError):
+            continue
+
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+
+        identifiers = {
+            properties.get("icaoId"),
+            properties.get("stationId"),
+            properties.get("iataId"),
+            properties.get("faaId"),
+            properties.get("id"),
+        }
+
+        for identifier in identifiers:
+            if not identifier:
+                continue
+            key = str(identifier).upper().strip()
+            if key:
+                lookup.setdefault(key, (lon, lat))
+                # WPC/SPC threat-area products frequently use the domestic
+                # three-character identifier while AWC stores the ICAO K-code.
+                if len(key) == 4 and key.startswith("K"):
+                    lookup.setdefault(key[1:], (lon, lat))
+
+    if len(lookup) < 500:
+        raise ValueError(
+            f"AWC station catalog unexpectedly small ({len(lookup)} IDs)"
+        )
+
+    return lookup
+
+
+def resolve_threat_station(identifier, lookup):
+    key = identifier.upper().strip()
+    candidates = [key]
+    alias = WPC_STATION_ALIASES.get(key)
+    if alias:
+        candidates.insert(0, alias)
+    if len(key) == 3:
+        candidates.append("K" + key)
+
+    for candidate in candidates:
+        if candidate in lookup:
+            return lookup[candidate]
+
+    raise ValueError(f"Unresolved WPC threat-area station: {identifier}")
+
+
+def destination_point(lon, lat, bearing_degrees, statute_miles):
+    """Great-circle destination using WPC/NWS outlook distances in statute miles."""
+    radius_km = 6371.0088
+    distance_km = float(statute_miles) * 1.609344
+    angular = distance_km / radius_km
+    bearing = math.radians(float(bearing_degrees))
+    lat1 = math.radians(lat)
+    lon1 = math.radians(lon)
+
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(angular)
+        + math.cos(lat1) * math.sin(angular) * math.cos(bearing)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(angular) * math.cos(lat1),
+        math.cos(angular) - math.sin(lat1) * math.sin(lat2),
+    )
+    lon2 = (lon2 + math.pi) % (2 * math.pi) - math.pi
+    return (math.degrees(lon2), math.degrees(lat2))
+
+
+def parse_threat_vertices(raw_line, station_lookup):
+    tokens = re.findall(r"[A-Z0-9]+|-", raw_line.upper())
+    coordinates = []
+    index = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+
+        if token.isdigit():
+            if index + 2 >= len(tokens):
+                raise ValueError(
+                    f"Incomplete distance/direction/station triplet near {token}"
+                )
+            distance = int(token)
+            direction = tokens[index + 1]
+            station = tokens[index + 2]
+            lon, lat = resolve_threat_station(station, station_lookup)
+
+            if distance == 0 and direction == "-":
+                coordinate = (lon, lat)
+            else:
+                if direction not in COMPASS_BEARINGS:
+                    raise ValueError(
+                        f"Unknown WPC threat-area direction: {direction}"
+                    )
+                coordinate = destination_point(
+                    lon,
+                    lat,
+                    COMPASS_BEARINGS[direction],
+                    distance,
+                )
+            index += 3
+        else:
+            if token == "-":
+                raise ValueError("Unexpected standalone '-' in threat-area line")
+            coordinate = resolve_threat_station(token, station_lookup)
+            index += 1
+
+        if not coordinates or coordinate != coordinates[-1]:
+            coordinates.append(coordinate)
+
+    if len(coordinates) >= 2 and coordinates[0] == coordinates[-1]:
+        coordinates.pop()
+
+    if len(set(coordinates)) < 3:
+        raise ValueError("Threat-area contour has fewer than three unique vertices")
+
+    return coordinates
+
+
+def parse_ero_points_validity(text):
+    match = re.search(
+        r"Valid\s+(\d{1,2})Z\s+\w+\s+(\w+)\s+(\d{1,2})\s+(\d{4})"
+        r"\s*-\s*(\d{1,2})Z\s+\w+\s+(\w+)\s+(\d{1,2})\s+(\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None, None
+
+    start = datetime.strptime(
+        f"{match.group(1)} {match.group(2)} {match.group(3)} {match.group(4)}",
+        "%H %b %d %Y",
+    ).replace(tzinfo=timezone.utc)
+    end = datetime.strptime(
+        f"{match.group(5)} {match.group(6)} {match.group(7)} {match.group(8)}",
+        "%H %b %d %Y",
+    ).replace(tzinfo=timezone.utc)
+    return start, end
+
+
+def fetch_wpc_ero_threat_text():
+    """Build ERO polygons from WPC's current first-party 94epoints text."""
+    response = requests.get(
+        f"{ERO_POINTS_URL}?t={time.time_ns()}",
+        headers=NO_CACHE_HEADERS,
+        timeout=30,
+    )
+    response.raise_for_status()
+    text = response.text.replace("\r", "")
+
+    start, end = parse_ero_points_validity(text)
+    now = utc_now()
+    if start is None or end is None:
+        raise ValueError("WPC 94epoints validity line could not be parsed")
+    if now < start - timedelta(minutes=15) or now >= end:
+        raise ValueError(
+            f"WPC 94epoints is not current: valid {start.isoformat()} "
+            f"through {end.isoformat()}"
+        )
+
+    heading = re.compile(
+        r"(?P<risk>MARGINAL|SLIGHT|MODERATE|HIGH)\s+RISK\s+OF\s+"
+        r"RAINFALL\s+EXCEEDING\s+FFG\s+TO\s+THE\s+RIGHT\s+OF\s+A\s+LINE\s+FROM",
+        re.IGNORECASE,
+    )
+    matches = list(heading.finditer(text))
+
+    no_area = re.search(
+        r"NO\s+(?:ORGANIZED\s+)?AREAS?.*"
+        r"(?:EXCEED|EXCESSIVE|FLASH\s+FLOOD)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    if not matches:
+        if no_area:
+            print(
+                " -> WPC 94epoints explicitly contains no Day-1 risk areas."
+            )
+            return empty_ero_gdf()
+        raise ValueError(
+            "Current WPC 94epoints contains neither risk contours nor an "
+            "explicit No Area statement"
+        )
+
+    station_lookup = station_lookup_from_awc()
+    features = []
+
+    for position, match in enumerate(matches):
+        section_start = match.end()
+        section_end = (
+            matches[position + 1].start()
+            if position + 1 < len(matches)
+            else len(text)
+        )
+        raw_line = text[section_start:section_end]
+        raw_line = re.sub(r"\s+", " ", raw_line).strip(" .\n\t")
+        coordinates = parse_threat_vertices(raw_line, station_lookup)
+
+        polygon = Polygon(coordinates)
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
+        if polygon.is_empty or not polygon.is_valid:
+            raise ValueError(
+                f"{match.group('risk')} threat contour is invalid"
+            )
+
+        minx, miny, maxx, maxy = polygon.bounds
+        if not (
+            -130 <= minx <= -60
+            and -130 <= maxx <= -60
+            and 20 <= miny <= 55
+            and 20 <= maxy <= 55
+        ):
+            raise ValueError(
+                f"{match.group('risk')} threat contour has implausible CONUS bounds "
+                f"{polygon.bounds}"
+            )
+
+        risk = match.group("risk").upper()
+        features.append(
+            {
+                "dataType": "ERO",
+                "OUTLOOK": ERO_RISK_LABELS[risk],
+                "ero_source": "wpc_94epoints",
+                "ero_valid_start_utc": start.isoformat(),
+                "ero_valid_end_utc": end.isoformat(),
+                "geometry": polygon,
+            }
+        )
+
+    result = gpd.GeoDataFrame(features, geometry="geometry", crs="EPSG:4326")
+    print(
+        " -> WPC 94epoints fallback built "
+        f"{len(result)} authoritative risk polygon(s); "
+        f"valid {start.isoformat()} through {end.isoformat()}."
+    )
+    return result
+
+
 def extract_latest_mpd_rendition(text):
     """
     Return the bulletin rendition associated with the last LAT...LON block.
@@ -604,22 +916,33 @@ def fetch_and_process_ero():
         except Exception as fallback_error:
             print(
                 " -> Direct WPC Day-1 GIS fallback unavailable: "
-                f"{fallback_error}. Retaining the prior verified ERO."
+                f"{fallback_error}. Trying WPC 94epoints."
             )
-            return None
+            direct = None
 
         if direct is not None and not direct.empty:
             return direct
 
+        # The direct GIS packages can lag independently of the forecast.
+        # WPC's 94epoints text is a first-party, issuance-stamped threat-area
+        # representation. Use it before interpreting empty GIS as No Area.
+        try:
+            threat = fetch_wpc_ero_threat_text()
+        except Exception as threat_error:
+            print(
+                " -> WPC 94epoints fallback unavailable: "
+                f"{threat_error}. Retaining the prior verified ERO."
+            )
+            return None
+
+        if threat is not None and not threat.empty:
+            return threat
+
         print(
-            " -> NOAA ArcGIS and WPC direct GIS downloads contain no "
-            "risk polygons; treating this as an authoritative No Area update."
+            " -> WPC 94epoints confirms no Day-1 risk areas; "
+            "treating this as an authoritative No Area update."
         )
-        return gpd.GeoDataFrame(
-            columns=["dataType", "OUTLOOK", "ero_source", "geometry"],
-            geometry="geometry",
-            crs="EPSG:4326",
-        )
+        return empty_ero_gdf()
     except Exception as error:
         print(f"ERO failed: {error}")
         return None
