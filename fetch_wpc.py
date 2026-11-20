@@ -21,7 +21,7 @@ MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
-SCRIPT_VERSION = "2026-11-20.0022-ero-direct-geojson-fallback"
+SCRIPT_VERSION = "2026-11-20.0023-ero-wpc-download-fallback"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -105,19 +105,35 @@ def html_to_product_text(raw_html):
     return "\n".join(cleaned_lines)
 
 
+def empty_ero_gdf():
+    return gpd.GeoDataFrame(
+        columns=["dataType", "OUTLOOK", "ero_source", "geometry"],
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
+
+
 def normalize_ero_gdf(gdf, source_name):
-    """Normalize an ERO GeoDataFrame from either NOAA ArcGIS or WPC GeoJSON."""
+    """Normalize polygonal ERO risk areas from an official WPC GIS source."""
     if gdf is None or gdf.empty:
-        return gdf
+        return empty_ero_gdf()
 
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
     if gdf.empty:
-        return gdf
+        return empty_ero_gdf()
+
+    geometry_types = sorted(set(gdf.geometry.geom_type.astype(str)))
+    gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    if gdf.empty:
+        print(
+            f" -> {source_name} contains no polygon risk geometry "
+            f"(geometry types: {geometry_types})."
+        )
+        return empty_ero_gdf()
 
     if gdf.crs is not None and str(gdf.crs).upper() != "EPSG:4326":
         gdf = gdf.to_crs("EPSG:4326")
 
-    gdf["dataType"] = "ERO"
     outlook_col = next(
         (
             col for col in gdf.columns
@@ -127,7 +143,7 @@ def normalize_ero_gdf(gdf, source_name):
     )
 
     if outlook_col:
-        gdf["OUTLOOK"] = gdf[outlook_col]
+        gdf["OUTLOOK"] = gdf[outlook_col].astype(str)
     else:
         dn_col = next(
             (col for col in gdf.columns if str(col).lower() == "dn"),
@@ -140,53 +156,93 @@ def normalize_ero_gdf(gdf, source_name):
                 3: "Moderate (At Least 40%)",
                 4: "High (At Least 70%)",
             }
-            gdf["OUTLOOK"] = gdf[dn_col].map(labels)
+            gdf["OUTLOOK"] = pd.to_numeric(
+                gdf[dn_col], errors="coerce"
+            ).map(labels)
 
     if "OUTLOOK" not in gdf.columns:
         raise ValueError(
             f"{source_name} ERO data has no recognizable risk-category field"
         )
 
+    # Do not treat label/centroid features such as "None Expected" as risk
+    # polygons. Only the four operational ERO categories are displayable.
+    risk_mask = gdf["OUTLOOK"].fillna("").str.upper().str.contains(
+        r"MARGINAL|MRGL|SLIGHT|SLGT|MODERATE|MDT|HIGH",
+        regex=True,
+    )
+    gdf = gdf[risk_mask].copy()
+    if gdf.empty:
+        print(f" -> {source_name} contains no recognized ERO risk polygons.")
+        return empty_ero_gdf()
+
+    gdf["dataType"] = "ERO"
     gdf["ero_source"] = source_name
     return gdf[
         ["dataType", "OUTLOOK", "ero_source", "geometry"]
     ].copy()
 
 
-def extract_wpc_day1_geojson_url(raw_html):
-    """Find WPC's own Day-1 GeoJSON download link from the ERO page."""
-    # Prefer the Day1 anchor specifically inside the GeoJSON section. This
-    # avoids accidentally selecting the Day1 KML, shapefile, or ArcGIS links.
-    match = re.search(
-        r"GeoJSON(?:(?!ArcGIS\s+REST\s+Service).)*?"
-        r"href=[\"']([^\"']+)[\"'][^>]*>\s*Day\s*1\s*</a>",
-        raw_html,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if match:
-        return urljoin(ERO_PAGE_URL, unescape(match.group(1)))
+def extract_wpc_day1_download_url(raw_html, section_name, stop_name=None):
+    """Find WPC's Day-1 link within one GIS-download section."""
+    marker = re.search(re.escape(section_name), raw_html, re.IGNORECASE)
+    if not marker:
+        return None
 
-    # Defensive fallback for small HTML layout changes.
+    start = marker.end()
+    end = len(raw_html)
+    if stop_name:
+        stop = re.search(
+            re.escape(stop_name),
+            raw_html[start:],
+            re.IGNORECASE,
+        )
+        if stop:
+            end = start + stop.start()
+
+    section = raw_html[start:end]
     for href, body in re.findall(
         r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
-        raw_html,
+        section,
         re.IGNORECASE | re.DOTALL,
     ):
         label = re.sub(r"<[^>]+>", "", body)
         label = re.sub(r"\s+", "", unescape(label)).lower()
-        href_lower = unescape(href).lower()
-        if label == "day1" and (
-            "geojson" in href_lower
-            or ".geojson" in href_lower
-            or href_lower.endswith(".json")
-        ):
+        if label == "day1":
             return urljoin(ERO_PAGE_URL, unescape(href))
-
     return None
 
 
-def fetch_wpc_day1_geojson():
-    """Fetch the direct WPC Day-1 GeoJSON product advertised on the ERO page."""
+def wpc_page_advertises_ero_risk(raw_html):
+    """Return True when WPC's rendered Day-1 page advertises a risk category."""
+    text = html_to_product_text(raw_html).upper()
+    return any(
+        token in text
+        for token in (
+            "MARGINAL (AT LEAST 5%)",
+            "SLIGHT (AT LEAST 15%)",
+            "MODERATE (AT LEAST 40%)",
+            "HIGH (AT LEAST 70%)",
+        )
+    )
+
+
+def read_zipped_shapefile(content):
+    with tempfile.TemporaryDirectory() as temporary_dir:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            archive.extractall(temporary_dir)
+        shapefiles = []
+        for root, _, files in os.walk(temporary_dir):
+            for name in files:
+                if name.lower().endswith(".shp"):
+                    shapefiles.append(os.path.join(root, name))
+        if not shapefiles:
+            raise ValueError("WPC shapefile ZIP contains no .shp member")
+        return gpd.read_file(shapefiles[0])
+
+
+def fetch_wpc_day1_downloads():
+    """Try WPC's own Day-1 GeoJSON and shapefile GIS downloads."""
     page = requests.get(
         f"{ERO_PAGE_URL}?t={time.time_ns()}",
         headers=NO_CACHE_HEADERS,
@@ -194,25 +250,73 @@ def fetch_wpc_day1_geojson():
     )
     page.raise_for_status()
 
-    geojson_url = extract_wpc_day1_geojson_url(page.text)
-    if not geojson_url:
-        raise ValueError("WPC ERO page did not expose a Day-1 GeoJSON link")
+    advertised_risk = wpc_page_advertises_ero_risk(page.text)
+    candidates = [
+        (
+            "wpc_direct_geojson",
+            extract_wpc_day1_download_url(
+                page.text, "GeoJSON", "ArcGIS REST Service"
+            ),
+        ),
+        (
+            "wpc_direct_shapefile",
+            extract_wpc_day1_download_url(
+                page.text, "Shapefile", "GeoJSON"
+            ),
+        ),
+    ]
 
-    separator = "&" if "?" in geojson_url else "?"
-    response = requests.get(
-        f"{geojson_url}{separator}t={time.time_ns()}",
-        headers=NO_CACHE_HEADERS,
-        timeout=30,
-    )
-    response.raise_for_status()
+    available = [(name, url) for name, url in candidates if url]
+    if not available:
+        raise ValueError("WPC ERO page exposed no Day-1 GIS download links")
 
-    gdf = gpd.read_file(response.text, driver="GeoJSON")
-    gdf = normalize_ero_gdf(gdf, "wpc_direct_geojson")
-    print(
-        f" -> Direct WPC Day-1 GeoJSON fallback: {geojson_url}; "
-        f"{0 if gdf is None else len(gdf)} risk polygon(s)."
+    successful_empty = 0
+    failures = []
+    for source_name, source_url in available:
+        try:
+            separator = "&" if "?" in source_url else "?"
+            response = requests.get(
+                f"{source_url}{separator}t={time.time_ns()}",
+                headers=NO_CACHE_HEADERS,
+                timeout=30,
+            )
+            response.raise_for_status()
+
+            if source_name.endswith("shapefile"):
+                raw = read_zipped_shapefile(response.content)
+            else:
+                raw = gpd.read_file(response.text, driver="GeoJSON")
+
+            normalized = normalize_ero_gdf(raw, source_name)
+            print(
+                f" -> WPC Day-1 fallback {source_name}: {source_url}; "
+                f"{len(normalized)} risk polygon(s)."
+            )
+            if not normalized.empty:
+                return normalized
+
+            successful_empty += 1
+        except Exception as error:
+            failures.append(f"{source_name}: {error}")
+            print(f" -> {source_name} fallback failed: {error}")
+
+    if advertised_risk:
+        # The rendered WPC page says a risk exists, so empty/missing GIS
+        # downloads are a publication lag, not an authoritative No Area.
+        detail = "; ".join(failures) if failures else "GIS downloads were empty"
+        raise ValueError(
+            "WPC Day-1 page advertises active ERO risk but downloadable GIS "
+            f"polygons are unavailable ({detail})"
+        )
+
+    if successful_empty and not failures:
+        return empty_ero_gdf()
+
+    raise ValueError(
+        "WPC Day-1 GIS downloads could not be authoritatively resolved: "
+        + "; ".join(failures)
     )
-    return gdf
+
 
 
 def extract_latest_mpd_rendition(text):
@@ -496,10 +600,10 @@ def fetch_and_process_ero():
             "checking WPC's direct Day-1 GeoJSON before declaring No Area."
         )
         try:
-            direct = fetch_wpc_day1_geojson()
+            direct = fetch_wpc_day1_downloads()
         except Exception as fallback_error:
             print(
-                " -> Direct WPC Day-1 GeoJSON fallback unavailable: "
+                " -> Direct WPC Day-1 GIS fallback unavailable: "
                 f"{fallback_error}. Retaining the prior verified ERO."
             )
             return None
@@ -508,7 +612,7 @@ def fetch_and_process_ero():
             return direct
 
         print(
-            " -> Both NOAA ArcGIS and WPC direct Day-1 GeoJSON contain no "
+            " -> NOAA ArcGIS and WPC direct GIS downloads contain no "
             "risk polygons; treating this as an authoritative No Area update."
         )
         return gpd.GeoDataFrame(
