@@ -11,15 +11,17 @@ import math
 import json
 from html import unescape
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urljoin
 
 from shapely.geometry import Polygon
 
 ERO_REST_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query"
+ERO_PAGE_URL = "https://www.wpc.ncep.noaa.gov/qpf/excessive_rainfall_outlook_ero.php"
 MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
-SCRIPT_VERSION = "2026-11-12.0021-ero-authoritative-empty-clear-fix"
+SCRIPT_VERSION = "2026-11-20.0022-ero-direct-geojson-fallback"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -101,6 +103,116 @@ def html_to_product_text(raw_html):
             cleaned_lines.append(line)
 
     return "\n".join(cleaned_lines)
+
+
+def normalize_ero_gdf(gdf, source_name):
+    """Normalize an ERO GeoDataFrame from either NOAA ArcGIS or WPC GeoJSON."""
+    if gdf is None or gdf.empty:
+        return gdf
+
+    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+    if gdf.empty:
+        return gdf
+
+    if gdf.crs is not None and str(gdf.crs).upper() != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+
+    gdf["dataType"] = "ERO"
+    outlook_col = next(
+        (
+            col for col in gdf.columns
+            if str(col).lower() in {"outlook", "risk", "category", "label"}
+        ),
+        None,
+    )
+
+    if outlook_col:
+        gdf["OUTLOOK"] = gdf[outlook_col]
+    else:
+        dn_col = next(
+            (col for col in gdf.columns if str(col).lower() == "dn"),
+            None,
+        )
+        if dn_col:
+            labels = {
+                1: "Marginal (At Least 5%)",
+                2: "Slight (At Least 15%)",
+                3: "Moderate (At Least 40%)",
+                4: "High (At Least 70%)",
+            }
+            gdf["OUTLOOK"] = gdf[dn_col].map(labels)
+
+    if "OUTLOOK" not in gdf.columns:
+        raise ValueError(
+            f"{source_name} ERO data has no recognizable risk-category field"
+        )
+
+    gdf["ero_source"] = source_name
+    return gdf[
+        ["dataType", "OUTLOOK", "ero_source", "geometry"]
+    ].copy()
+
+
+def extract_wpc_day1_geojson_url(raw_html):
+    """Find WPC's own Day-1 GeoJSON download link from the ERO page."""
+    # Prefer the Day1 anchor specifically inside the GeoJSON section. This
+    # avoids accidentally selecting the Day1 KML, shapefile, or ArcGIS links.
+    match = re.search(
+        r"GeoJSON(?:(?!ArcGIS\s+REST\s+Service).)*?"
+        r"href=[\"']([^\"']+)[\"'][^>]*>\s*Day\s*1\s*</a>",
+        raw_html,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return urljoin(ERO_PAGE_URL, unescape(match.group(1)))
+
+    # Defensive fallback for small HTML layout changes.
+    for href, body in re.findall(
+        r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
+        raw_html,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        label = re.sub(r"<[^>]+>", "", body)
+        label = re.sub(r"\s+", "", unescape(label)).lower()
+        href_lower = unescape(href).lower()
+        if label == "day1" and (
+            "geojson" in href_lower
+            or ".geojson" in href_lower
+            or href_lower.endswith(".json")
+        ):
+            return urljoin(ERO_PAGE_URL, unescape(href))
+
+    return None
+
+
+def fetch_wpc_day1_geojson():
+    """Fetch the direct WPC Day-1 GeoJSON product advertised on the ERO page."""
+    page = requests.get(
+        f"{ERO_PAGE_URL}?t={time.time_ns()}",
+        headers=NO_CACHE_HEADERS,
+        timeout=30,
+    )
+    page.raise_for_status()
+
+    geojson_url = extract_wpc_day1_geojson_url(page.text)
+    if not geojson_url:
+        raise ValueError("WPC ERO page did not expose a Day-1 GeoJSON link")
+
+    separator = "&" if "?" in geojson_url else "?"
+    response = requests.get(
+        f"{geojson_url}{separator}t={time.time_ns()}",
+        headers=NO_CACHE_HEADERS,
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    gdf = gpd.read_file(response.text, driver="GeoJSON")
+    gdf = normalize_ero_gdf(gdf, "wpc_direct_geojson")
+    print(
+        f" -> Direct WPC Day-1 GeoJSON fallback: {geojson_url}; "
+        f"{0 if gdf is None else len(gdf)} risk polygon(s)."
+    )
+    return gdf
 
 
 def extract_latest_mpd_rendition(text):
@@ -362,46 +474,48 @@ def fetch_and_process_ero():
     print("Fetching WPC Day 1 ERO...")
     try:
         response = requests.get(
-            f"{ERO_REST_URL}?where=1=1&outFields=OUTLOOK&f=geojson"
+            f"{ERO_REST_URL}?where=1=1&outFields=*&f=geojson"
             f"&time_buster={time.time_ns()}",
             headers=NO_CACHE_HEADERS,
             timeout=30,
         )
         response.raise_for_status()
         gdf = gpd.read_file(response.text, driver="GeoJSON")
-        if gdf.empty or gdf.geometry.is_empty.all():
-            print(
-                " -> WPC Day 1 ERO service returned no risk polygons; "
-                "treating this as an authoritative No Area update."
-            )
-            return gpd.GeoDataFrame(
-                columns=["dataType", "OUTLOOK", "geometry"],
-                geometry="geometry",
-                crs="EPSG:4326",
-            )
+        gdf = normalize_ero_gdf(gdf, "noaa_arcgis")
 
-        gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
-        if gdf.empty:
-            print(
-                " -> WPC Day 1 ERO response contained no usable risk geometry; "
-                "treating this as an authoritative No Area update."
-            )
-            return gpd.GeoDataFrame(
-                columns=["dataType", "OUTLOOK", "geometry"],
-                geometry="geometry",
-                crs="EPSG:4326",
-            )
-        gdf["dataType"] = "ERO"
-        outlook_col = next(
-            (col for col in gdf.columns if col.upper() == "OUTLOOK"),
-            None,
+        if gdf is not None and not gdf.empty:
+            print(f" -> NOAA ArcGIS Day-1 ERO returned {len(gdf)} risk polygon(s).")
+            return gdf
+
+        # An empty ArcGIS layer is not by itself proof of an authoritative
+        # "No Area" issuance. The map service can lag or briefly clear while
+        # WPC's own ERO product has already updated. Confirm against the direct
+        # GeoJSON advertised by WPC before clearing the retained ERO.
+        print(
+            " -> NOAA ArcGIS Day-1 ERO returned no risk polygons; "
+            "checking WPC's direct Day-1 GeoJSON before declaring No Area."
         )
-        if outlook_col:
-            gdf["OUTLOOK"] = gdf[outlook_col]
+        try:
+            direct = fetch_wpc_day1_geojson()
+        except Exception as fallback_error:
+            print(
+                " -> Direct WPC Day-1 GeoJSON fallback unavailable: "
+                f"{fallback_error}. Retaining the prior verified ERO."
+            )
+            return None
 
-        return gdf[
-            [c for c in ["dataType", "OUTLOOK", "geometry"] if c in gdf.columns]
-        ].copy()
+        if direct is not None and not direct.empty:
+            return direct
+
+        print(
+            " -> Both NOAA ArcGIS and WPC direct Day-1 GeoJSON contain no "
+            "risk polygons; treating this as an authoritative No Area update."
+        )
+        return gpd.GeoDataFrame(
+            columns=["dataType", "OUTLOOK", "ero_source", "geometry"],
+            geometry="geometry",
+            crs="EPSG:4326",
+        )
     except Exception as error:
         print(f"ERO failed: {error}")
         return None
