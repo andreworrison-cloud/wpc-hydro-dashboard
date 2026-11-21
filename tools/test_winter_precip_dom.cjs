@@ -1,0 +1,32 @@
+/* Real menu-group lifecycle: one engine, exclusive choices, correct cleanup. */
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('app.js','utf8');
+const extract=name=>{const start=source.indexOf('function '+name+'(');assert.ok(start>=0);return source.slice(start,source.indexOf('\n}',start)+2);};
+const active=new Set();let stops=0;
+const map={hasLayer:l=>active.has(l),addLayer(l){active.add(l);l.hooks?.add?.();},removeLayer(l){active.delete(l);l.hooks?.remove?.();}};
+const engine={addTo(m){m.addLayer(this);return this;}};
+const context={L:{layerGroup:()=>({hooks:{},on(e,f){this.hooks[e]=f;return this;},addTo(m){m.addLayer(this);return this;}})},map,mrmsRalaLayer:engine,mrmsRalaFrameRequestSerial:0,mrmsRalaDisplayMode:'reflectivity',mrmsRalaCurrentImageUrl:'old',mrmsRalaVisibleLayer:{setOpacity(v){this.opacity=v;}},mrmsRalaHiddenLayer:{setOpacity(v){this.opacity=v;}},stopMRMSRALAAnimation(){stops++;}};
+vm.createContext(context);vm.runInContext(extract('createMRMSRadarMenuLayer'),context);
+context.mrmsReflectivityMenuLayer=context.createMRMSRadarMenuLayer('reflectivity');
+context.mrmsWinterMenuLayer=context.createMRMSRadarMenuLayer('ptype');
+map.addLayer(context.mrmsReflectivityMenuLayer);assert.ok(map.hasLayer(engine));
+map.addLayer(context.mrmsWinterMenuLayer);map.removeLayer(context.mrmsReflectivityMenuLayer);
+assert.equal(context.mrmsRalaDisplayMode,'ptype');assert.ok(map.hasLayer(engine));
+assert.equal(map.hasLayer(context.mrmsReflectivityMenuLayer),false);assert.equal(context.mrmsRalaCurrentImageUrl,'');
+map.removeLayer(context.mrmsWinterMenuLayer);assert.equal(map.hasLayer(engine),false);assert.ok(stops>0);
+map.addLayer(context.mrmsReflectivityMenuLayer);assert.equal(context.mrmsRalaDisplayMode,'reflectivity');assert.ok(map.hasLayer(engine));
+assert.ok(!source.includes('createMRMSRALADisplayModeControl'),'legend dropdown removed');
+assert.ok(source.indexOf("{id: 'mrms-rala-direct'") < source.indexOf("{id: 'mrms-winter-type'"));
+assert.ok(source.indexOf("{id: 'mrms-winter-type'") < source.indexOf("{id: 'nexrad-loop'"));
+assert.match(source,/mrms-winter-type[^\n]+exclusiveGroup: 'radar-primary'/);
+console.log('Winter menu PASS: separate adjacent choices, shared-engine switching, removal cleanup, no legend selector.');
+
+const backup={};
+const entries=[{id:'mrms-rala-direct',layer:context.mrmsReflectivityMenuLayer},{id:'mrms-winter-type',layer:context.mrmsWinterMenuLayer},{id:'nexrad-loop',layer:backup}].map(e=>({...e,exclusiveGroup:'radar-primary'}));
+Object.assign(context,{getAllDashboardLayerEntries:()=>entries,dispatchOverlayEvent(){},syncSidebarWithMap(){},updateMRMSRALATimeBox(){},dashboardTimeControl:null,syncRadarSpeedControlVisibility(){},mrmsRalaReady:false,mrmsRalaFresh:false,refreshMRMSRALAFromManifest(){},activateIEMRadarTimeline(){}});
+vm.runInContext(extract('setDashboardLayerActive')+'\n'+extract('enforceExclusiveRadarSelection'),context);
+map.addLayer(context.mrmsWinterMenuLayer);context.enforceExclusiveRadarSelection(entries[1]);
+assert.equal(map.hasLayer(entries[0].layer),false);assert.ok(map.hasLayer(entries[1].layer));assert.ok(map.hasLayer(engine));
+map.addLayer(backup);context.enforceExclusiveRadarSelection(entries[2]);
+assert.equal(map.hasLayer(entries[1].layer),false);assert.equal(map.hasLayer(engine),false);assert.ok(map.hasLayer(backup));
+console.log('Actual radar exclusivity PASS: type/reflectivity/backup leave one checked choice and no orphan engine.');

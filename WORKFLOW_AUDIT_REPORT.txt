@@ -1,0 +1,50 @@
+Workflow audit summary
+======================
+
+DIRECT APT EXPOSURE FOUND
+-------------------------
+Already fixed separately:
+  update_cam.yml
+  update_ero_cam.yml
+  update_rap.yml
+
+Patched in this package:
+  update_mrms_rala.yml
+  update_mrms_flash_24h.yml
+  fetch_nldas_rsm.yml
+  diagnostic_mrms_rala.yml
+  diagnose_mrms_ffd.yml
+  diagnose_mrms_ffd_24h.yml
+  diagnose_mrms_crest_24h.yml
+
+NO DIRECT APT EXPOSURE FOUND
+----------------------------
+  update_data.yml
+  fetch_nwm.yml
+  fetch_sport.yml
+  update_glm_mosaic.yml
+  update_lightningcast.yml
+  update_hrrr_tle.yml
+  validate_dashboard.yml
+  WFIGS current/ytd/history workflows
+  current GLM diagnostic/incremental workflow family
+
+SECOND RELIABILITY ISSUE FOUND
+------------------------------
+  update_lightningcast.yml and update_hrrr_tle.yml used one-shot main-branch
+  publication. They can fail when another dashboard workflow moves main between
+  checkout/build/commit/push. This package adds guarded 3-attempt pull/rebase/push.
+
+  update_mrms_flash_24h.yml already had a 3-attempt loop, but its pull/rebase was
+  unguarded under GitHub's bash -e behavior. This package makes that retry loop
+  actually survive a pull/rebase failure.
+
+NOT ALTERED
+-----------
+  scientific calculations
+  data-source logic
+  model-cycle logic
+  output filenames
+  schedules / workflow_dispatch inputs
+  workflow concurrency settings
+  rendering settings
