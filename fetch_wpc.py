@@ -24,7 +24,7 @@ MPD_FTP_URL = "https://ftp-wpc.ncep.noaa.gov/shapefiles/qpf/mpd/"
 MPD_ACTIVE_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php"
 MPD_TEXT_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd_multi.php"
 OUTPUT_FILENAME = "wpc_data.geojson"
-SCRIPT_VERSION = "2026-11-20.0024-ero-threat-text-fallback"
+SCRIPT_VERSION = "2026-11-23.0025-ero-no-area-wording-fix"
 
 # A malformed MPD that accidentally contains a second distant polygon creates
 # an extremely long connecting segment. Normal operational MPDs should not
@@ -559,8 +559,14 @@ def fetch_wpc_ero_threat_text():
     matches = list(heading.finditer(text))
 
     no_area = re.search(
+        r"(?:"
         r"NO\s+(?:ORGANIZED\s+)?AREAS?.*"
-        r"(?:EXCEED|EXCESSIVE|FLASH\s+FLOOD)",
+        r"(?:EXCEED|EXCESSIVE|FLASH\s+FLOOD)"
+        r"|"
+        r"RAINFALL\s+IS\s+NOT\s+EXPECTED\s+TO\s+EXCEED\s+"
+        r"FLASH\s+FLOOD\s+GUIDANCE(?:\s+VALUES)?\s+"
+        r"THIS\s+FORECAST\s+PERIOD"
+        r")",
         text,
         re.IGNORECASE | re.DOTALL,
     )
