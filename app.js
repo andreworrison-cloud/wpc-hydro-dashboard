@@ -243,6 +243,13 @@ updateDashboardViewportHeight();
 // Initialize the map, centered roughly over the CONUS
 const map = L.map('map', {
     zoomControl: true,
+    // Keep +/- controls at one full level, but make mouse-wheel zooming
+    // more measured. Leaflet's default is 60 wheel pixels per zoom level;
+    // doubling that and allowing half-level snaps prevents large jumps from
+    // high-resolution mouse wheels and touchpads.
+    zoomDelta: 1,
+    zoomSnap: 0.5,
+    wheelPxPerZoomLevel: 120,
     center: [39.8283, -98.5795], 
     zoom: 5
 });
