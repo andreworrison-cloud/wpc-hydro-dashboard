@@ -3,6 +3,12 @@ name: WPC IDSS briefing heartbeat
 on:
   schedule:
     - cron: '7,17,27,37,47,57 * * * *'
+  # The existing Hydro update is externally dispatched every five minutes.
+  # Its completed runs provide a second clock when GitHub's own schedule queues.
+  workflow_run:
+    workflows: ['Update WPC Data']
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
   push:
     branches: [main]
@@ -17,6 +23,15 @@ concurrency:
 
 jobs:
   refresh:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       (contains(github.event.workflow_run.created_at, ':05:') ||
+        contains(github.event.workflow_run.created_at, ':15:') ||
+        contains(github.event.workflow_run.created_at, ':25:') ||
+        contains(github.event.workflow_run.created_at, ':35:') ||
+        contains(github.event.workflow_run.created_at, ':45:') ||
+        contains(github.event.workflow_run.created_at, ':55:')))
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
