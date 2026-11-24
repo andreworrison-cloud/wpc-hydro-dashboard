@@ -1,0 +1,72 @@
+name: WPC IDSS briefing heartbeat
+
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/idss-briefing-heartbeat.yml'
+
+permissions: {}
+
+concurrency:
+  group: wpc-idss-public-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Refresh and verify the public IDSS collection
+        shell: python
+        run: |
+          import datetime
+          import json
+          import time
+          import urllib.request
+
+          url = 'https://wpc-impact-briefing.aorrison.chatgpt.site/api/status'
+          headers = {'User-Agent': 'WPC-IDSS-public-heartbeat/1.0',
+                     'Accept': 'application/json', 'Cache-Control': 'no-cache'}
+          def read_status():
+              request = urllib.request.Request(url + '?check=' + str(time.time_ns()), headers=headers)
+              with urllib.request.urlopen(request, timeout=45) as response:
+                  result = json.load(response)
+              if result.get('mode') != 'collector' or result.get('storage') != 'available':
+                  raise RuntimeError('The live collector or its snapshot store is unavailable')
+              return result
+
+          def parsed(stamp):
+              return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+
+          for attempt in range(3):
+              try:
+                  first = read_status()
+                  current = read_status()
+                  revision = parsed(current['revision'])
+                  now = datetime.datetime.now(datetime.timezone.utc)
+                  if revision < parsed(first['revision']) or not -120 <= (now - revision).total_seconds() <= 1200:
+                      raise RuntimeError('Could not verify a recent, persisted IDSS revision')
+                  names = ('alerts', 'reports', 'ero', 'outlook', 'winter', 'messages')
+                  sources = current['sources']
+                  print('Verified revision', current['revision'])
+                  for name in names:
+                      state = sources[name]['status']
+                      print(name, state, sources[name].get('retrieved_at'))
+                      if state not in ('ok', 'current'):
+                          print('::warning::' + name + ' source status is ' + state)
+                  for name in ('alerts', 'reports'):
+                      stamp = sources[name].get('retrieved_at')
+                      if sources[name]['status'] not in ('ok', 'current') and (
+                          not stamp or (now - parsed(stamp)).total_seconds() > 2700
+                      ):
+                          raise RuntimeError(name + ' has lacked a verified current collection for 45 minutes')
+                  break
+              except Exception as error:
+                  if attempt == 2:
+                      raise
+                  print('Retrying IDSS collection check:', type(error).__name__)
+                  time.sleep(10)
